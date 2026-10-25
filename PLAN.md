@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.0 (2026-10-25). Phase 1 implemented (CI not yet run: no GitHub repo yet). Next: Phase 2.
+**Status:** Final v1.0 (2026-10-25). Phase 1 complete (CI green on Windows + Linux). Next: Phase 2.
 
 ## 0. Decisions
 | Topic | Decision |
