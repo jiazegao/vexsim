@@ -208,7 +208,7 @@ class Robot:
     def pose(self) -> tuple[float, float, float]:
         """(x m, y m, heading rad) of the footprint center in the field frame."""
         center = self.cg_position - self._rotate(self.cg_offset, self.heading)
-        return float(center[0]), float(center[1]), self.heading
+        return float(center[0]), float(center[1]), float(self.heading)
 
     @property
     def body_velocity(self) -> tuple[float, float, float]:

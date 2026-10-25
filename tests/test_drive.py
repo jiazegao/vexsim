@@ -297,3 +297,10 @@ def test_xdrive_strafes_on_the_generic_wheel_model():
     u, v, w = r.body_velocity
     assert v > 1.0 and abs(u) < 0.02 * v and abs(w) < 0.01
     assert abs(r.pose[2]) < 0.01
+
+
+def test_readouts_are_plain_floats():
+    r = robot()
+    drive(r, 1.0, 0.5)
+    r.run(0.2)
+    assert all(type(v) is float for v in (*r.pose, *r.body_velocity, *r.field_velocity))
