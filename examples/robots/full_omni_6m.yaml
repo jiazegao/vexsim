@@ -40,3 +40,9 @@ sensors:
     reversed: false
     tracking_wheel: {pos_in: [-3, 0], heading_deg: 90, diameter_in: 2.0}
   - {type: distance, port: 13, pos_in: [7, 0], heading_deg: 0}
+
+# Optional model tuning (see docs/models.md for every parameter and how to measure it):
+# overrides:
+#   wheel.omni.lateral_mu: 0.25          # roller friction: lower = more drift
+#   wheel.omni.rolling_resistance: 0.08  # coast-down losses
+#   motor.free_current_a: 0.2

@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.0 (2026-10-25). Phases 1-2 complete. Next: Phase 3.
+**Status:** Final v1.0 (2026-10-25). Phases 1-3 complete. Next: Phase 4.
 
 ## 0. Decisions
 | Topic | Decision |
@@ -293,7 +293,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 |---|---|---|
 | 1 | **[done]** Scaffolding: package layout, config schema and loader, world loop, sim clock, RNG, CLI skeleton, CI (Windows + Linux) | `vexsim validate-config` works on the example robot; CI is green |
 | 2 | **[done]** Motor and battery models | Motor, thermal and battery tests pass; torque–speed plot generated |
-| 3 | Chassis and omni wheel contact (full-omni tank) | Drive and drift tests pass |
+| 3 | **[done]** Chassis and omni wheel contact (full-omni tank) | Drive and drift tests pass |
 | 4 | Device registry and sensors; Python odometry baselines | Odometry tests pass; noise presets in place |
 | 5 | Python control API and baseline controllers; live viewer and plots | Drive a scenario from the keyboard/gamepad and run a Python autonomous route visually |
 | 6 | Benchmark harness | 100-seed comparison of two localizers and two controllers produces an HTML report |

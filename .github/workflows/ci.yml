@@ -33,11 +33,15 @@ jobs:
       - name: Validate example configs
         run: vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/v5rc_empty.yaml --strict
 
-      - name: Motor curves plot
-        run: vexsim motor-curves --cartridge green --out motor_curves_green.png
+      - name: Plots
+        run: |
+          vexsim motor-curves --cartridge green --out motor_curves_green.png
+          vexsim drift examples/robots/full_omni_6m.yaml --out drift_arc.png
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'windows-latest' && matrix.python == '3.13'
         with:
-          name: motor-curves
-          path: motor_curves_green.png
+          name: plots
+          path: |
+            motor_curves_green.png
+            drift_arc.png

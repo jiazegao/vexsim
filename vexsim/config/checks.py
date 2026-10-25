@@ -23,6 +23,32 @@ def _fmt(xy: tuple[float, ...]) -> str:
     return "(" + ", ".join(f"{v:g}" for v in xy) + ")"
 
 
+def _cross(o: tuple[float, ...], a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Counter-clockwise convex hull (monotone chain); collinear points are dropped."""
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+    lower: list[tuple[float, float]] = []
+    upper: list[tuple[float, float]] = []
+    for p in pts:
+        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= _EPS:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= _EPS:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def _inside_convex(point: tuple[float, ...], hull: list[tuple[float, float]]) -> bool:
+    return all(_cross(hull[i], hull[(i + 1) % len(hull)], point) >= -_EPS for i in range(len(hull)))
+
+
 def _parallel_to_x(heading_deg: float, tol_deg: float = 0.5) -> bool:
     off = math.remainder(heading_deg, 180.0)
     return abs(off) <= tol_deg
@@ -186,7 +212,8 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
         add(
             "warning",
             "drivetrain.type",
-            f"{dt.type!r} drivetrains are not simulated yet (planned for Phase 9)",
+            f"{dt.type!r} drivetrains run on the generic wheel model but are not validated "
+            "until Phase 9",
         )
     for wtype in sorted({w.type for w in dt.wheels} - SIMULATED_WHEEL_TYPES):
         add(
@@ -194,6 +221,24 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
             "drivetrain.wheels",
             f"{wtype!r} wheels are not simulated yet (planned for Phase 9)",
         )
+
+    # Support polygon: the CG must sit over the wheels or the robot tips over.
+    if len(wheel_index) >= 1:
+        contacts = [dt.wheels[i].pos_in for i in wheel_index.values()]
+        hull = _convex_hull(contacts)
+        if len(hull) < 3:
+            add(
+                "error",
+                "drivetrain.wheels",
+                "wheels must not all lie on one line; the robot would tip over",
+            )
+        elif not _inside_convex(body.cg_in[:2], hull):
+            add(
+                "error",
+                "body.cg_in",
+                f"center of gravity {_fmt(body.cg_in[:2])} is outside the polygon formed by "
+                "the wheels; the robot would tip over",
+            )
 
     # Motor budget
     n_motors = sum(len(g.motors) for g in dt.gearing.values())

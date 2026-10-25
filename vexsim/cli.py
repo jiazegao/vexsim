@@ -75,6 +75,44 @@ def cmd_motor_curves(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_drift(args: argparse.Namespace) -> int:
+    from vexsim.viz import drift
+
+    report = validate_robot(args.robot)
+    if not report.ok or report.config is None:
+        _print_issues(report.issues)
+        return EXIT_INVALID
+    try:
+        mus = [float(v) for v in args.lateral_mu.split(",")]
+    except ValueError:
+        print(f"error: --lateral-mu must be comma-separated numbers, got {args.lateral_mu!r}")
+        return EXIT_INVALID
+    runs = [
+        drift.run_arc(report.config, mu, left=args.left, right=args.right, seconds=args.seconds)
+        for mu in mus
+    ]
+    for run in runs:
+        x, y = run.true_xy[-1]
+        print(
+            f"roller friction {run.lateral_mu:g}: ends at ({x:.1f}, {y:.1f}) in, "
+            f"drive-encoder odometry off by {run.final_error_in:.1f} in"
+        )
+    if args.csv:
+        sys.stdout.write(drift.to_csv(runs))
+    if args.out:
+        title = (
+            f"Arc at left {args.left:g} / right {args.right:g} of rated speed for "
+            f"{args.seconds:g} s: solid = true path, dashed = odometry"
+        )
+        try:
+            path = drift.plot(runs, args.out, title=title)
+        except ModuleNotFoundError:
+            print('error: plotting needs matplotlib; install it with: pip install -e ".[viz]"')
+            return EXIT_INVALID
+        print(f"wrote {path}")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vexsim",
@@ -112,6 +150,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="PNG file to write (needs the viz extra)")
     p.add_argument("--csv", action="store_true", help="print the data as CSV")
     p.set_defaults(func=cmd_motor_curves)
+
+    p = sub.add_parser(
+        "drift",
+        help="drive an arc and compare the true path with drive-encoder odometry",
+        description=(
+            "Drive a differential robot with fixed left/right speeds (fractions of rated "
+            "speed) for several omni roller friction values. Compare the plot with a video "
+            "of your real robot to calibrate wheel.omni.lateral_mu."
+        ),
+    )
+    p.add_argument("robot", help="robot YAML file")
+    p.add_argument("--left", type=float, default=1.0, help="left side, fraction of rated speed")
+    p.add_argument("--right", type=float, default=0.4, help="right side, fraction of rated speed")
+    p.add_argument("--seconds", type=float, default=1.5)
+    p.add_argument(
+        "--lateral-mu", default="0.4,0.2,0.1", help="up to 3 comma-separated values to compare"
+    )
+    p.add_argument("--out", help="PNG file to write (needs the viz extra)")
+    p.add_argument("--csv", action="store_true", help="print the sampled paths as CSV")
+    p.set_defaults(func=cmd_drift)
 
     return parser
 

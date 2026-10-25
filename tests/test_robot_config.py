@@ -255,8 +255,21 @@ def test_unsimulated_features_warn(robot_data):
     report = validate_robot(robot_data)
     assert (
         "drivetrain.type",
-        "'xdrive' drivetrains are not simulated yet (planned for Phase 9)",
+        "'xdrive' drivetrains run on the generic wheel model but are not validated until Phase 9",
     ) in (issues_at(report, "warning"))
+
+
+def test_cg_must_be_over_the_wheels(robot_data):
+    # Narrow the wheelbase to the front half; the centered CG now sits behind it.
+    for wheel in robot_data["drivetrain"]["wheels"]:
+        wheel["pos_in"][0] = 5.5 if wheel["pos_in"][0] > 0 else 2.0
+    report = validate_robot(robot_data)
+    assert ("body.cg_in") in {loc for loc, _ in issues_at(report, "error")}
+
+    for wheel in robot_data["drivetrain"]["wheels"]:
+        wheel["pos_in"][0] = 0.0  # all wheels on one line
+    report = validate_robot(robot_data)
+    assert "drivetrain.wheels" in {loc for loc, _ in issues_at(report, "error")}
 
 
 def test_overrides_key_format(robot_data):

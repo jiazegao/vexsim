@@ -43,10 +43,24 @@ def test_bad_overrides_raise(overrides):
 
 
 def test_future_groups_only_warn():
-    assert check_overrides({"wheel.omni.lateral_mu": 0.08}) == [
-        ("warning", "wheel.omni.lateral_mu", "'wheel' parameters take effect in Phase 3")
+    assert check_overrides({"wheel.traction.lateral_mu": 0.9}) == [
+        (
+            "warning",
+            "wheel.traction.lateral_mu",
+            "'wheel.traction' parameters take effect in Phase 9",
+        )
     ]
-    assert resolve_params({"wheel.omni.lateral_mu": 0.08}).motor == MotorSpec()
+    assert resolve_params({"wheel.traction.lateral_mu": 0.9}).motor == MotorSpec()
+
+
+def test_wheel_and_chassis_overrides():
+    params = resolve_params({"wheel.omni.lateral_mu": 0.08, "chassis.wheel_stiffness_n_per_m": 5e4})
+    assert params.omni_wheel.lateral_mu == 0.08
+    assert params.chassis.wheel_stiffness_n_per_m == 5e4
+    with pytest.raises(ValueError):
+        resolve_params({"wheel.omni.lateral_mu": -1.0})
+    with pytest.raises(ValueError):
+        resolve_params({"wheel.square.lateral_mu": 0.1})
 
 
 def test_robot_config_reports_override_problems(robot_data):
@@ -58,4 +72,6 @@ def test_robot_config_reports_override_problems(robot_data):
 
     robot_data["overrides"] = {"motor.free_current_a": 0.2, "wheel.omni.lateral_mu": 0.08}
     cfg = load_robot(robot_data)
-    assert resolve_params(cfg.overrides).motor.free_current_a == 0.2
+    params = resolve_params(cfg.overrides)
+    assert params.motor.free_current_a == 0.2
+    assert params.omni_wheel.lateral_mu == 0.08

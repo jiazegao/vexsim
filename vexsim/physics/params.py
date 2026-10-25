@@ -1,7 +1,8 @@
 """Model parameter groups and the robot config's dotted ``overrides``.
 
-A key ``group.name`` replaces one scalar field of that group's spec dataclass,
-e.g. ``motor.free_current_a: 0.2`` or ``battery.internal_resistance_ohm: 0.15``.
+A key ``<group>.<name>`` replaces one scalar field of that group's spec
+dataclass, e.g. ``motor.free_current_a: 0.2``, ``battery.internal_resistance_ohm: 0.15``
+or ``wheel.omni.lateral_mu: 0.08``.
 """
 
 from __future__ import annotations
@@ -13,16 +14,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from vexsim.physics.battery import BatterySpec
+from vexsim.physics.chassis import ChassisSpec
 from vexsim.physics.motor import MotorSpec
 from vexsim.physics.thermal import ThermalSpec
+from vexsim.physics.wheel import OmniWheelSpec
 
 PARAM_GROUPS: dict[str, type] = {
     "motor": MotorSpec,
     "thermal": ThermalSpec,
     "battery": BatterySpec,
+    "chassis": ChassisSpec,
+    "wheel.omni": OmniWheelSpec,
 }
 # Groups whose models arrive in later phases: accepted now, applied then.
-FUTURE_GROUPS = {"wheel": 3, "chassis": 3, "sensor": 4, "field": 9}
+FUTURE_GROUPS = {"wheel.traction": 9, "wheel.mecanum": 9, "sensor": 4, "field": 9}
 
 
 def scalar_fields(group: str) -> list[str]:
@@ -33,12 +38,20 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def _future_group(key: str) -> str | None:
+    for group in FUTURE_GROUPS:
+        if key.startswith(group + "."):
+            return group
+    return None
+
+
 def check_overrides(overrides: Mapping[str, Any]) -> list[tuple[str, str, str]]:
     """Return (severity, key, message) for every problem with the given overrides."""
     problems: list[tuple[str, str, str]] = []
     per_group: dict[str, dict[str, Any]] = {}
     for key, value in overrides.items():
-        group, _, name = key.partition(".")
+        group, _, name = key.rpartition(".")
+        future = _future_group(key)
         if group in PARAM_GROUPS:
             known = scalar_fields(group)
             if name not in known:
@@ -49,17 +62,12 @@ def check_overrides(overrides: Mapping[str, Any]) -> list[tuple[str, str, str]]:
                 problems.append(("error", key, f"must be a number, got {value!r}"))
             else:
                 per_group.setdefault(group, {})[name] = value
-        elif group in FUTURE_GROUPS:
-            problems.append(
-                (
-                    "warning",
-                    key,
-                    f"'{group}' parameters take effect in Phase {FUTURE_GROUPS[group]}",
-                )
-            )
+        elif future is not None:
+            phase = FUTURE_GROUPS[future]
+            problems.append(("warning", key, f"'{future}' parameters take effect in Phase {phase}"))
         else:
             groups = ", ".join([*PARAM_GROUPS, *FUTURE_GROUPS])
-            problems.append(("error", key, f"unknown parameter group {group!r} (known: {groups})"))
+            problems.append(("error", key, f"unknown parameter group (known: {groups})"))
 
     # Values can be valid one by one yet inconsistent together (e.g. free current above stall).
     for group, values in per_group.items():
@@ -75,6 +83,22 @@ class PhysicsParams:
     motor: MotorSpec
     thermal: ThermalSpec
     battery: BatterySpec
+    chassis: ChassisSpec
+    omni_wheel: OmniWheelSpec
+
+    def wheel(self, wheel_type: str) -> OmniWheelSpec:
+        if wheel_type == "omni":
+            return self.omni_wheel
+        raise NotImplementedError(f"{wheel_type!r} wheels are not simulated yet (Phase 9)")
+
+
+_FIELD_FOR_GROUP = {
+    "motor": "motor",
+    "thermal": "thermal",
+    "battery": "battery",
+    "chassis": "chassis",
+    "wheel.omni": "omni_wheel",
+}
 
 
 def resolve_params(overrides: Mapping[str, Any] | None = None) -> PhysicsParams:
@@ -85,7 +109,9 @@ def resolve_params(overrides: Mapping[str, Any] | None = None) -> PhysicsParams:
         raise ValueError("invalid overrides: " + "; ".join(errors))
     values: dict[str, dict[str, Any]] = {group: {} for group in PARAM_GROUPS}
     for key, value in overrides.items():
-        group, _, name = key.partition(".")
+        group, _, name = key.rpartition(".")
         if group in PARAM_GROUPS:
             values[group][name] = float(value)
-    return PhysicsParams(**{group: cls(**values[group]) for group, cls in PARAM_GROUPS.items()})
+    return PhysicsParams(
+        **{_FIELD_FOR_GROUP[group]: cls(**values[group]) for group, cls in PARAM_GROUPS.items()}
+    )

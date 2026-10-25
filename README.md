@@ -7,7 +7,7 @@ A VEX V5 robot mechanics simulator. It models:
 
 It's built to test localization and motion-control algorithms, and eventually to run unmodified PROS 4 / LemLib robot code.
 
-**Status: Phases 1-2 of 10 are done** (configs and world loop; V5 motor, thermal, battery and power models). The drivetrain and chassis come next in Phase 3. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
+**Status: Phases 1-3 of 10 are done**: configs and world loop; V5 motor, thermal, battery and power models; full-omni drivetrain and chassis with drift, weight transfer and traction limits. Sensors and odometry come next in Phase 4. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
 
 ## Install
 
@@ -55,6 +55,12 @@ vexsim motor-curves --cartridge red --csv               # the same data as CSV
 ```
 ![Simulated V5 motor curves, red cartridge](docs/img/motor_curves_red.png)
 
+**Drift**: drive a fast arc and compare the true path with drive-encoder odometry:
+```
+vexsim drift examples/robots/full_omni_6m.yaml --left 1.0 --right 0.4 --out drift.png
+```
+![True path vs. drive-encoder odometry in a fast arc](docs/img/drift_arc.png)
+
 **Writing a robot config**
 - Copy `examples/robots/full_omni_6m.yaml`. Its comments explain every field.
 - [docs/conventions.md](docs/conventions.md) covers frames, units, gear ratios and port rules.
@@ -71,7 +77,20 @@ world.every(10, lambda w: print(w.time), priority=PRIORITY_SENSOR)
 world.run_for(0.05)
 ```
 
-Drive a motor on a test rig:
+Drive a robot built from its config:
+```python
+from vexsim.config import load_robot
+from vexsim.physics.robot import Robot
+
+robot = Robot(load_robot("examples/robots/full_omni_6m.yaml"))
+left, right = robot.group("left"), robot.group("right")
+left.set_velocity(left.rated_speed)  # motor shaft rad/s; positive = forward
+right.set_velocity(0.5 * right.rated_speed)
+robot.run(2.0)  # or world.add_system(robot)
+print(robot.pose, robot.body_velocity, robot.contacts.normal)
+```
+
+Drive a single motor on a test rig:
 ```python
 from vexsim.physics import BrakeMode, PowerSystem, V5Motor, World
 from vexsim.physics.rig import ShaftRig
@@ -100,8 +119,8 @@ CI runs on Windows and Linux with Python 3.11 and 3.13 (`.github/workflows/ci.ym
 vexsim/
   config/    robot + field schemas, strict YAML loading, cross-field checks, summaries
   core/      integer-microsecond clock, deterministic event scheduler, named RNG streams
-  physics/   world loop; V5 motor, thermal, battery, power distribution; test rigs; parameter overrides
-  viz/       plots (motor curves)
+  physics/   world loop; V5 motor, thermal, battery, power; wheel contact, chassis, robot; overrides
+  viz/       plots (motor curves, drift)
   cli.py     `vexsim` command
 examples/    robot and field configs
 docs/        conventions, physics models and parameter sources
