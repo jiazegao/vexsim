@@ -1,0 +1,42 @@
+# Example robot: 6-motor full-omni tank drive with two tracking wheels and an IMU.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, origin at
+# the center of the footprint, angles counter-clockwise from +x.
+# See docs/conventions.md for the full reference.
+
+version: 1
+name: Example 6-motor full omni
+
+body:
+  mass_kg: 6.5
+  inertia_kgm2: auto            # auto = uniform box over the footprint, or a number in kg*m^2
+  footprint_in: [15, 15]        # length (x), width (y)
+  cg_in: [0, 0, 3.5]            # x, y, height above the floor
+  battery: v5_default
+
+drivetrain:
+  type: differential            # differential (simulated); xdrive | mecanum | hdrive in Phase 9
+  wheels:                       # every wheel is listed explicitly, so any mix of types works
+    - {name: lf, pos_in: [ 5.5,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: lm, pos_in: [ 0.0,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: lb, pos_in: [-5.5,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: rf, pos_in: [ 5.5, -6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: rm, pos_in: [ 0.0, -6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: rb, pos_in: [-5.5, -6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+  gearing:
+    # ratio "36:48" = 36-tooth gear on the motor driving 48 teeth on the wheel.
+    # Negative motor ports are reversed, exactly like PROS 4.
+    left:  {motors: [1, 2, 3],    cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb]}
+    right: {motors: [-4, -5, -6], cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb]}
+
+sensors:
+  - {type: imu, port: 10, pos_in: [0, 0], mount_yaw_deg: 0, noise: default}
+  - type: rotation              # vertical (forward-tracking) wheel
+    port: 11
+    reversed: false
+    tracking_wheel: {pos_in: [0, -1.5], heading_deg: 0, diameter_in: 2.0}
+  - type: rotation              # horizontal (sideways-tracking) wheel
+    port: 12
+    reversed: false
+    tracking_wheel: {pos_in: [-3, 0], heading_deg: 90, diameter_in: 2.0}
+  - {type: distance, port: 13, pos_in: [7, 0], heading_deg: 0}

@@ -1,0 +1,71 @@
+"""Human-readable summaries of configs (ASCII only, so Windows consoles never choke)."""
+
+from __future__ import annotations
+
+import math
+from collections import Counter
+
+from vexsim.config.field import FieldConfig
+from vexsim.config.robot import RobotConfig
+from vexsim.units import kg_to_lb
+
+
+def _xy(v: tuple[float, ...]) -> str:
+    return "(" + ", ".join(f"{c:.1f}" for c in v) + ") in"
+
+
+def robot_summary(cfg: RobotConfig) -> list[str]:
+    body, dt = cfg.body, cfg.drivetrain
+    lines = []
+    if cfg.name:
+        lines.append(f"  name        {cfg.name}")
+    inertia_note = "auto: uniform box" if body.inertia_kgm2 == "auto" else "explicit"
+    lines += [
+        f"  body        {body.mass_kg:.2f} kg ({kg_to_lb(body.mass_kg):.1f} lb), "
+        f"footprint {body.footprint_in[0]:.1f} x {body.footprint_in[1]:.1f} in, "
+        f"CG {_xy(body.cg_in)}",
+        f"              yaw inertia {body.yaw_inertia_kgm2():.3f} kg*m^2 ({inertia_note})",
+    ]
+
+    types = Counter(w.type for w in dt.wheels)
+    type_text = ", ".join(f"{n} {t}" for t, n in types.items())
+    lines.append(f"  drivetrain  {dt.type}, {len(dt.wheels)} wheels ({type_text})")
+    names = {w.name: w for w in dt.wheels}
+    for gname, group in dt.gearing.items():
+        ports = ", ".join(str(p) for p in group.motors)
+        diameters = sorted({names[w].diameter_in for w in group.wheels if w in names})
+        speeds = ", ".join(
+            f"{d:g} in -> {group.wheel_free_rpm / 60.0 * math.pi * d:.1f} in/s" for d in diameters
+        )
+        lines.append(
+            f"    {gname:<9} motors {ports} | {group.cartridge} {group.motor_free_rpm:g} rpm"
+            f" | ratio {group.ratio} -> {group.wheel_free_rpm:g} rpm | {speeds} free speed"
+        )
+
+    if not cfg.sensors:
+        lines.append("  sensors     none")
+    for k, s in enumerate(cfg.sensors):
+        label = "  sensors     " if k == 0 else "              "
+        if s.type == "imu":
+            detail = f"at {_xy(s.pos_in)}, mount yaw {s.mount_yaw_deg:g} deg"
+        elif s.type == "distance":
+            detail = f"at {_xy(s.pos_in)}, facing {s.heading_deg:g} deg"
+        elif s.tracking_wheel is not None:
+            tw = s.tracking_wheel
+            detail = (
+                f"tracking wheel {tw.diameter_in:.2f} in at {_xy(tw.pos_in)}, "
+                f"heading {tw.heading_deg:g} deg"
+            )
+        else:
+            detail = "not a tracking wheel"
+        if s.type == "rotation" and s.reversed:
+            detail += ", reversed"
+        lines.append(f"{label}port {s.port:<3} {s.type:<9} {detail}, noise {s.noise}")
+
+    if cfg.overrides:
+        lines.append(f"  overrides   {', '.join(f'{k}={v}' for k, v in cfg.overrides.items())}")
+    return lines
+
+
+def field_summary(cfg: FieldConfig) -> list[str]:
+    return [f"  {cfg.name}, {cfg.size_in[0]:.1f} x {cfg.size_in[1]:.1f} in inside the walls"]

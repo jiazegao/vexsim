@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vexsim"
+version = "0.1.0"
+description = "VEX V5 robot mechanics simulator: drive physics, motor model, sensors, odometry, and PROS/LemLib code in the loop"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pydantic>=2.6",
+    "PyYAML>=6.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+vexsim = "vexsim.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vexsim*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

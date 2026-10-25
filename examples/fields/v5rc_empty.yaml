@@ -1,0 +1,6 @@
+# Empty V5RC field. Origin at the field center, axes parallel to the walls.
+version: 1
+name: V5RC field (empty)
+# Nominal 6x6 grid of 24 in tiles. Real fields measure slightly less between
+# the walls; measure yours if you rely on distance-sensor wall resets.
+size_in: [144, 144]
