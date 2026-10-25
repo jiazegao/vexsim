@@ -59,6 +59,22 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
     return EXIT_INVALID if failed else EXIT_OK
 
 
+def cmd_motor_curves(args: argparse.Namespace) -> int:
+    from vexsim.viz import motor_curves
+
+    curves = motor_curves.compute(args.cartridge, args.supply_voltage, points=args.points)
+    if args.csv:
+        sys.stdout.write(motor_curves.to_csv(curves))
+    if args.out:
+        try:
+            path = motor_curves.plot(curves, args.out)
+        except ModuleNotFoundError:
+            print('error: plotting needs matplotlib; install it with: pip install -e ".[viz]"')
+            return EXIT_INVALID
+        print(f"wrote {path}")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vexsim",
@@ -79,6 +95,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--strict", action="store_true", help="treat warnings as failures")
     p.add_argument("-q", "--quiet", action="store_true", help="print only problems and the result")
     p.set_defaults(func=cmd_validate_config)
+
+    p = sub.add_parser(
+        "motor-curves",
+        help="plot or tabulate a V5 motor's torque/current/power vs. speed",
+        description=(
+            "Measure the simulated motor on a dynamometer under move_velocity(max) and "
+            "move_voltage(12000), and write a plot (--out) and/or CSV (--csv)."
+        ),
+    )
+    p.add_argument("--cartridge", choices=["red", "green", "blue"], default="green")
+    p.add_argument(
+        "--supply-voltage", type=float, default=12.8, help="battery voltage (default 12.8)"
+    )
+    p.add_argument("--points", type=int, default=61, help="speed samples (default 61)")
+    p.add_argument("--out", help="PNG file to write (needs the viz extra)")
+    p.add_argument("--csv", action="store_true", help="print the data as CSV")
+    p.set_defaults(func=cmd_motor_curves)
 
     return parser
 

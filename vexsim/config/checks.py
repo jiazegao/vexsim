@@ -10,6 +10,7 @@ import math
 
 from vexsim.config.issues import ConfigIssue, Severity
 from vexsim.config.robot import RobotConfig
+from vexsim.physics.params import check_overrides
 from vexsim.v5 import MOTOR_11W_POWER_W, MOTOR_POWER_BUDGET_W, STARTING_SIZE_LIMIT_IN
 
 _EPS = 1e-9
@@ -203,5 +204,9 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
             f"{n_motors} drive motors ({n_motors * MOTOR_11W_POWER_W:g} W) exceed the usual "
             f"{MOTOR_POWER_BUDGET_W:g} W V5RC motor budget; check this season's game manual",
         )
+
+    # Model parameter overrides
+    for severity, key, message in check_overrides(cfg.overrides):
+        add(severity, f"overrides.{key}", message)
 
     return issues

@@ -19,6 +19,9 @@ dev = [
     "pytest>=8",
     "ruff>=0.5",
 ]
+viz = [
+    "matplotlib>=3.8",
+]
 
 [project.scripts]
 vexsim = "vexsim.cli:main"
