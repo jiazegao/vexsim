@@ -74,6 +74,11 @@ def run_odometry(
 
     Localizers update every 10 ms, right after the sensors are sampled.
     """
+    if not {"left", "right"} <= set(config.drivetrain.gearing):
+        raise ValueError(
+            "odometry scripts drive the gearing groups 'left' and 'right' "
+            f"(this {config.drivetrain.type} has {', '.join(config.drivetrain.gearing)})"
+        )
     segments = SCRIPTS[script] if isinstance(script, str) else list(script)
     world = World(seed=seed)
     robot = world.add_system(Robot(config))

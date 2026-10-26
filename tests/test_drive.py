@@ -69,13 +69,6 @@ def test_initial_pose_and_cg_offset():
     assert r.cg_position == pytest.approx([1.0, -0.5 + in_to_m(2.0)])
 
 
-def test_unsupported_wheels_are_refused():
-    data = copy.deepcopy(load_yaml_file(EXAMPLE_ROBOT))
-    data["drivetrain"]["wheels"][1]["type"] = "traction"
-    with pytest.raises(NotImplementedError):
-        Robot(load_robot(data))
-
-
 # --- normal loads -------------------------------------------------------------------
 
 

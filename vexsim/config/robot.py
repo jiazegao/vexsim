@@ -120,6 +120,15 @@ class WheelConfig(_Model):
     type: WheelType
     diameter_in: PositiveFloat
     drop_in: Annotated[float, Field(ge=0, le=0.5)] = 0.0  # lowered by this much (drop center)
+    # Mecanum only: axis of the rollers touching the ground, CCW from the rolling
+    # direction, seen from above. The usual layout is -45 front-left and back-right,
+    # +45 front-right and back-left.
+    roller_angle_deg: Annotated[float, Field(gt=-90, lt=90, allow_inf_nan=False)] | None = None
+
+    @property
+    def roller_angle(self) -> float:
+        """Roller angle in degrees (0 for omni and traction wheels)."""
+        return self.roller_angle_deg or 0.0
 
 
 class GearGroupConfig(_Model):
@@ -195,8 +204,7 @@ class RobotConfig(_Model):
     body: BodyConfig
     drivetrain: DrivetrainConfig
     sensors: tuple[SensorConfig, ...] = ()
-    # Dotted model-parameter overrides (e.g. "wheel.omni.lateral_mu"). Accepted
-    # now; applied once the targeted models exist (Phase 2+).
+    # Dotted model-parameter overrides, e.g. "wheel.omni.lateral_mu" (docs/models.md).
     overrides: dict[OverrideKey, bool | int | float | str] = Field(default_factory=dict)
 
 

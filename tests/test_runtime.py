@@ -13,6 +13,7 @@ from vexsim.config import load_robot
 from vexsim.runtime.program import load_program
 from vexsim.runtime.recorder import Log
 from vexsim.runtime.simulation import ScriptedInput, Simulation
+from vexsim.units import in_to_m
 
 CONFIG = load_robot(EXAMPLE_ROBOT)
 TOUR = ROOT / "examples" / "programs" / "tour.py"
@@ -104,14 +105,16 @@ def test_program_errors_propagate():
 
 
 def test_driver_mode_with_scripted_input_uses_default_arcade():
-    inputs = ScriptedInput([(2.5, {"LEFT_Y": 127}, set()), (3.5, {}, set())])
-    sim = Simulation(CONFIG, input_source=inputs, noise="ideal", echo=None)
+    inputs = ScriptedInput([(2.5, {"LEFT_Y": 127}, set()), (3.2, {}, set())])
+    start = Pose(-60, 0, 0)  # room to drive and coast before the far wall
+    sim = Simulation(CONFIG, input_source=inputs, noise="ideal", start=start, echo=None)
     sim.start("driver")
-    sim.run_for(3.5)
-    assert sim.robot.body_velocity[0] > 1.5  # driving forward at the 3.5 s release
+    sim.run_for(3.2)
+    assert sim.robot.body_velocity[0] > 1.5  # driving forward at the 3.2 s release
     sim.run_for(2.5)  # releasing the stick sends 0 V: the default brake mode coasts to a stop
     x, y, heading = sim.robot.pose
-    assert x > 0.5 and abs(y) < 0.01 and abs(heading) < 0.01
+    assert x > in_to_m(-60) + 0.5 and abs(y) < 0.01 and abs(heading) < 0.01
+    assert sim.robot.wall_hits == 0
     assert abs(sim.robot.body_velocity[0]) < 0.01
 
 

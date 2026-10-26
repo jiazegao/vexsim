@@ -27,7 +27,7 @@ class DriveCommand:
 
 @dataclass(frozen=True)
 class ChassisGeometry:
-    """Differential drivetrain facts a controller needs (inches)."""
+    """Facts about the left and right sides a controller needs (inches)."""
 
     track_width_in: float
     wheel_diameter_in: float
@@ -36,8 +36,11 @@ class ChassisGeometry:
     @classmethod
     def from_config(cls, config: RobotConfig) -> ChassisGeometry:
         dt = config.drivetrain
-        if dt.type != "differential":
-            raise ValueError("chassis motions need a differential drivetrain")
+        if dt.type not in ("differential", "hdrive"):
+            raise ValueError(
+                "chassis motions drive the left and right sides of a differential drive or "
+                f"H-drive; an {dt.type} needs its own controller (e.g. in C++, kind: pros)"
+            )
         left, right = dt.gearing["left"], dt.gearing["right"]
 
         def side_y(group) -> float:

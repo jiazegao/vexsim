@@ -120,3 +120,31 @@ def test_replay_source(tmp_path):
     v = Viewer(source, headless=True)
     v.frame(1 / 60)
     pygame.quit()
+
+
+def test_mecanum_strafes_on_the_arrow_keys_and_hits_walls(tmp_path):
+    from tests.conftest import ROOT
+    from vexsim.algorithms.localization.base import Pose
+
+    mecanum = load_robot(ROOT / "examples" / "robots" / "mecanum_4m.yaml")
+
+    def factory():
+        sim = Simulation(mecanum, noise="ideal", start=Pose(0, 50, 0), echo=None)
+        sim.start("driver")
+        return sim
+
+    v = Viewer(LiveSource(factory), headless=True)
+    for _ in range(140):  # IMU calibration
+        v.frame(1 / 60)
+    key(v, "left")  # LEFT_X to the left: strafe toward +y, into the wall at y = 72
+    for _ in range(120):
+        v.frame(1 / 60)
+    snap = v.source.snapshot()
+    assert snap.true_pose.y == pytest.approx(72 - 7.5, abs=0.1)
+    assert snap.wall_contacts
+    assert all(y == pytest.approx(72, abs=0.1) for _, y in snap.wall_contacts)
+    assert {round(w.roller_angle, 3) for w in snap.wheels} == {-0.785, 0.785}
+    out = tmp_path / "mecanum.png"
+    v.save(str(out))
+    assert out.stat().st_size > 5_000
+    pygame.quit()

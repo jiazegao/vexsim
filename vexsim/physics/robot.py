@@ -7,13 +7,16 @@ Degrees of freedom (all velocities):
 All wheels in a group turn together at ``ratio * g_k``. Contact forces are
 smoothed Coulomb friction (see wheel.py) of contact velocities that are linear
 in the velocity vector, ``c = C @ qdot``. Generalized forces are therefore
-``-C.T @ F(c)``, and their Jacobian ``-C.T @ diag(F'(c)) @ C`` is symmetric and
-dissipative. Each step solves the linearly implicit Euler update
+``-C.T @ F(c)``, and their Jacobian ``-C.T @ D @ C`` is symmetric and
+dissipative. ``D`` is diagonal except for a 2x2 block per traction wheel (its
+friction circle couples two channels). Each step solves the linearly implicit
+Euler update
 
     (M - dt * J) dq = dt * Q
 
 which stays stable at a 1 ms step even though tire friction is far stiffer.
 Motor torques, Coriolis terms and external forces are treated explicitly.
+Field walls, if given, then push the footprint back inside (see field.py).
 
 Motor direction: a negative port in the config means the motor is mounted so
 that its raw positive direction drives the group backward. Group commands
@@ -33,13 +36,14 @@ import numpy as np
 from vexsim.config.robot import RobotConfig
 from vexsim.physics.battery import Battery
 from vexsim.physics.chassis import NormalLoads
+from vexsim.physics.field import WallContact, Walls
 from vexsim.physics.motor import BrakeMode, V5Motor
 from vexsim.physics.params import PhysicsParams, resolve_params
 from vexsim.physics.power import PowerSystem
-from vexsim.physics.wheel import smoothed_coulomb
+from vexsim.physics.wheel import friction_circle, smoothed_coulomb
 from vexsim.units import in_to_m
 
-CHANNELS = 3  # slip, lateral, rolling (see wheel.py)
+CHANNELS = 3  # slip, free, rolling (see wheel.py)
 
 
 @dataclass
@@ -85,10 +89,10 @@ class ContactState:
     """Per-wheel results of the latest step (SI, body frame)."""
 
     normal: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    slip: np.ndarray = field(default_factory=lambda: np.zeros(0))  # w*r - v_long (m/s)
-    lateral_velocity: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    traction_force: np.ndarray = field(default_factory=lambda: np.zeros(0))  # along rolling dir
-    lateral_force: np.ndarray = field(default_factory=lambda: np.zeros(0))  # along wheel axle
+    slip: np.ndarray = field(default_factory=lambda: np.zeros(0))  # in the grip direction (m/s)
+    lateral_velocity: np.ndarray = field(default_factory=lambda: np.zeros(0))  # free direction
+    traction_force: np.ndarray = field(default_factory=lambda: np.zeros(0))  # along grip dir
+    lateral_force: np.ndarray = field(default_factory=lambda: np.zeros(0))  # along free dir
 
 
 class Robot:
@@ -99,8 +103,12 @@ class Robot:
         params: PhysicsParams | None = None,
         battery_soc: float = 1.0,
         pose: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        walls: Walls | None = None,
     ):
-        """Build the robot. ``pose`` is (x m, y m, heading rad) of the footprint center."""
+        """Build the robot. ``pose`` is (x m, y m, heading rad) of the footprint center.
+
+        Without ``walls`` the robot drives on an endless floor.
+        """
         self.config = config
         self.params = params or resolve_params(config.overrides)
         body = config.body
@@ -116,9 +124,11 @@ class Robot:
         mount = np.array([[in_to_m(w.pos_in[0]), in_to_m(w.pos_in[1])] for w in wheels])
         self.wheel_pos = mount - self.cg_offset  # relative to the CG
         self.wheel_heading = np.radians([w.heading_deg for w in wheels])
+        self.roller_angle = np.radians([w.roller_angle for w in wheels])
         self.wheel_radius = np.array([in_to_m(w.diameter_in) / 2 for w in wheels])
         self.wheel_drop = np.array([in_to_m(w.drop_in) for w in wheels])
         specs = [self.params.wheel(w.type) for w in wheels]
+        self.grip_mu = np.array([s.grip_mu for s in specs])
 
         self.groups: list[DriveGroup] = []
         self.motors: dict[int, V5Motor] = {}
@@ -151,6 +161,8 @@ class Robot:
         self._channel_coeff = np.concatenate(coeff)
         self._channel_scale = np.concatenate(scale)
         self._channel_wheel = np.repeat(np.arange(len(wheels)), CHANNELS)
+        # slip rows of the wheels whose slip and free channels share a friction circle
+        self._coupled_rows = [CHANNELS * i for i, s in enumerate(specs) if s.coupled]
         chassis = self.params.chassis
         self.normal_loads = NormalLoads(
             self.wheel_pos,
@@ -172,24 +184,35 @@ class Robot:
         self._ground_force = (0.0, 0.0)
         self.contacts.normal = self.normal_loads()
 
+        length, width = (in_to_m(v) for v in body.footprint_in)
+        half = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]]) * (length / 2, width / 2)
+        self.footprint_corners = half - self.cg_offset  # body frame, relative to the CG
+        self.footprint_radius = float(np.hypot(*self.footprint_corners.T).max())
+        self.walls = walls
+        self.wall_contacts: list[WallContact] = []  # this step's
+        self.wall_hits = 0  # times the robot started touching a wall
+
     # --- construction helpers ---------------------------------------------------------
 
     def _build_contact_matrix(self, n: int) -> np.ndarray:
         rows = np.zeros((CHANNELS * len(self.wheel_names), n))
         group_of = {w: g for g in self.groups for w in g.wheels}
-        for i, ((px, py), phi, r) in enumerate(
-            zip(self.wheel_pos, self.wheel_heading, self.wheel_radius, strict=True)
-        ):
-            c, s = math.cos(phi), math.sin(phi)
+        geometry = zip(
+            self.wheel_pos, self.wheel_heading, self.roller_angle, self.wheel_radius, strict=True
+        )
+        for i, ((px, py), phi, gamma, r) in enumerate(geometry):
+            # grip direction: the rolling direction turned by the roller angle
+            c, s = math.cos(phi + gamma), math.sin(phi + gamma)
             group = group_of[i]
             spin = group.ratio * r  # wheel surface speed per unit motor shaft speed
             # contact point velocity: (u - w*py, v + w*px)
-            v_long = np.array([c, s, -py * c + px * s])
-            v_lat = np.array([-s, c, py * s + px * c])
-            slip, lateral, rolling = CHANNELS * i, CHANNELS * i + 1, CHANNELS * i + 2
-            rows[slip, :3] = -v_long
-            rows[slip, group.index] = spin
-            rows[lateral, :3] = v_lat
+            v_grip = np.array([c, s, -py * c + px * s])
+            v_free = np.array([-s, c, py * s + px * c])
+            slip, free, rolling = CHANNELS * i, CHANNELS * i + 1, CHANNELS * i + 2
+            rows[slip, :3] = -v_grip
+            rows[slip, group.index] = spin * math.cos(gamma)
+            rows[free, :3] = v_free
+            rows[free, group.index] = spin * math.sin(gamma)
             rows[rolling, group.index] = spin
         return rows
 
@@ -252,6 +275,10 @@ class Robot:
         contact_vel = C @ qdot
         limit = self._channel_coeff * normal[self._channel_wheel]
         friction, slope = smoothed_coulomb(contact_vel, limit, self._channel_scale)
+        if self._coupled_rows:
+            jacobian = -C.T @ self._friction_circles(contact_vel, limit, friction, slope) @ C
+        else:
+            jacobian = -(C.T * slope) @ C
         contact_forces = -C.T @ friction
         forces += contact_forces
 
@@ -264,7 +291,6 @@ class Robot:
             forces[1] += ext[1]
             forces[2] += self.external_torque
 
-        jacobian = -(C.T * slope) @ C
         qdot += np.linalg.solve(self.mass_matrix - dt * jacobian, dt * forces)
 
         u, v, w = qdot[:3]
@@ -275,6 +301,10 @@ class Robot:
         self.heading += w * dt
         self.time += dt
         self.power.end_step(dt)
+        if self.walls is not None:
+            touching = bool(self.wall_contacts)
+            self.wall_contacts = self.walls.resolve(self)
+            self.wall_hits += bool(self.wall_contacts) and not touching
 
         self._ground_force = (float(contact_forces[0]), float(contact_forces[1]))
         state = self.contacts
@@ -283,6 +313,21 @@ class Robot:
         state.lateral_velocity = contact_vel[1::CHANNELS]
         state.traction_force = friction[0::CHANNELS]
         state.lateral_force = -friction[1::CHANNELS]
+
+    def _friction_circles(self, contact_vel, limit, friction, slope) -> np.ndarray:
+        """Replace the traction wheels' slip and free forces with their friction circle;
+        returns the channel damping matrix ``D`` (diagonal plus their 2x2 blocks)."""
+        damping = np.diag(slope)
+        for i in self._coupled_rows:
+            j = i + 1
+            friction[i], friction[j], damping[i, i], damping[j, j], cross = friction_circle(
+                float(contact_vel[i]),
+                float(contact_vel[j]),
+                float(limit[i]),
+                float(self._channel_scale[i]),
+            )
+            damping[i, j] = damping[j, i] = cross
+        return damping
 
     def run(self, seconds: float, dt: float = 0.001) -> None:
         for _ in range(round(seconds / dt)):

@@ -22,10 +22,13 @@ from vexsim.algorithms.localization.baselines import baseline_localizers
 from vexsim.api import delay
 from vexsim.api.chassis import Chassis
 from vexsim.api.devices import ANALOG, Controller, Distance, Imu, Motor, MotorGroup, Rotation
+from vexsim.api.drive import Drive
 from vexsim.config.field import FieldConfig
 from vexsim.config.robot import RobotConfig
 from vexsim.devices.devices import ImuDevice
 from vexsim.devices.suite import SensorSuite
+from vexsim.physics.field import Walls
+from vexsim.physics.params import resolve_params
 from vexsim.physics.robot import Robot
 from vexsim.physics.world import PRIORITY_CONTROL, PRIORITY_RECORD, World
 from vexsim.runtime.program import Coroutine, as_generator
@@ -73,14 +76,19 @@ class ScriptedInput:
 
 
 class Bot:
-    """What a robot program receives: device constructors, the controller, a chassis, a clock."""
+    """What a robot program receives: device constructors, the controller, the drive, a clock.
+
+    ``bot.drive`` drives any drivetrain from stick-style inputs. ``bot.chassis`` adds
+    LemLib-style motions on the left and right sides (differential drives and H-drives).
+    """
 
     def __init__(self, sim: Simulation):
         self._sim = sim
         self.controller = sim.controller
         drive = sim.robot.config.drivetrain
+        self.drive = Drive(sim)
         self.chassis: Chassis | None = None
-        if drive.type == "differential":
+        if drive.type in ("differential", "hdrive"):
             left = MotorGroup(sim, drive.gearing["left"].motors)
             right = MotorGroup(sim, drive.gearing["right"].motors)
             self.chassis = Chassis(sim, left, right)
@@ -124,13 +132,17 @@ def default_initialize(bot: Bot) -> Iterator[Any]:
 
 
 def default_opcontrol(bot: Bot) -> Iterator[Any]:
-    """Arcade drive: left stick forward/back, right stick turns."""
-    if bot.chassis is None:
-        return
+    """Arcade drive: left stick forward/back, right stick turns. Drivetrains that can
+    strafe also strafe with the left stick's sideways axis."""
+    controller = bot.controller
     while True:
-        bot.chassis.arcade(
-            bot.controller.get_analog("LEFT_Y"), bot.controller.get_analog("RIGHT_X")
-        )
+        forward, turn = controller.get_analog("LEFT_Y"), controller.get_analog("RIGHT_X")
+        if bot.drive.holonomic:
+            bot.drive.move(forward, controller.get_analog("LEFT_X"), turn)
+        elif bot.chassis is not None:
+            bot.chassis.arcade(forward, turn)
+        else:
+            bot.drive.move(forward, 0.0, turn)
         yield delay(10)
 
 
@@ -150,12 +162,21 @@ class Simulation:
         input_source: InputSource | None = None,
         record: bool = True,
         echo: Callable[[str], None] | None = print,
+        walls: bool = True,
     ):
         self.config = config
         self.field = field or FieldConfig()
         self.world = World(seed=seed)
         si_start = (in_to_m(start.x), in_to_m(start.y), start.heading * 3.141592653589793 / 180)
-        self.robot = self.world.add_system(Robot(config, pose=si_start, battery_soc=battery_soc))
+        params = resolve_params(config.overrides)
+        robot = Robot(
+            config,
+            params=params,
+            pose=si_start,
+            battery_soc=battery_soc,
+            walls=Walls.of(self.field, params.field) if walls else None,
+        )
+        self.robot = self.world.add_system(robot)
         self.sensors = SensorSuite(self.robot, self.world.rng, field=self.field, noise=noise)
         self.sensors.attach(self.world)
         native = bool(getattr(program, "native", False))

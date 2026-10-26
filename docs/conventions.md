@@ -17,12 +17,30 @@ Conversions happen only at those boundaries, using `vexsim.units`.
 
 **Field frame**
 - Origin at the field center, axes parallel to the walls. Right-handed, with angles counter-clockwise from +x.
+- The walls' inside faces are at `x = ±size_in[0]/2` and `y = ±size_in[1]/2` (default 144 x 144 in, from the field config).
 - PROS and LemLib use a different convention: heading clockwise from +y. Robot code never sees vexsim's frame. `vexsim::report_pose` takes the LemLib convention and converts it ([cpp.md](cpp.md#whats-simulated)).
 
 ## Robot config semantics
 **Wheels**
-- `heading_deg` is the direction the wheel rolls when driven forward. Differential drive wheels use 0.
-- `drop_in` lowers a wheel relative to the others, as in a drop-center drivetrain.
+- `heading_deg` is the direction the wheel rolls when its gear group turns forward (positive).
+  - Differential drive wheels use 0.
+  - H-drive strafe wheels use 90, so a positive strafe group pushes the robot to its left.
+  - X-drive wheels use ±45. In the examples every wheel rolls forward-ish (front-left -45, front-right 45, back-left 45, back-right -45), so driving straight ahead turns every group forward.
+- `drop_in` lowers a wheel relative to the others, as in a drop-center drivetrain. A lowered wheel carries more of the robot's weight.
+- `roller_angle_deg` (mecanum wheels only, required) is the axis of the rollers touching the ground, counter-clockwise from the rolling direction, seen from above.
+  - The usual layout is -45 at front-left and back-right, and 45 at front-right and back-left.
+  - Looking down on such a robot, the rollers on top of the wheels form an "X". The ground rollers are their mirror image.
+  - Check it with `vexsim run`: the left stick's sideways axis should strafe the robot that way.
+
+**Drivetrain types**
+| `type` | Gearing groups | Validation |
+|---|---|---|
+| `differential` | exactly `left` and `right` | wheels parallel to x, sides on the right sides |
+| `hdrive` | `left`, `right`, plus one or more strafe groups (any names) | as differential; strafe wheels perpendicular |
+| `xdrive` | any, usually one per wheel | must be able to strafe; warns about non-omni wheels |
+| `mecanum` | any, usually one per wheel | must be able to strafe; warns about non-mecanum wheels |
+
+Any wheel type works in any drivetrain: a tank drive with traction wheels in the middle is a `differential` drive.
 
 **Gearing**
 - `ratio: "36:48"` means a 36-tooth gear on the motor side drives a 48-tooth gear on the wheel side, so the wheel turns at 0.75x motor speed. A bare number is wheel speed divided by motor speed.

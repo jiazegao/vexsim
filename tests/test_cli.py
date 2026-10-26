@@ -47,3 +47,15 @@ def test_version_and_usage(capsys):
     with pytest.raises(SystemExit) as info:
         main([])
     assert info.value.code == 2
+
+
+def test_tank_only_commands_reject_holonomic_robots(capsys):
+    from tests.conftest import ROOT
+
+    xdrive = str(ROOT / "examples" / "robots" / "xdrive_4m.yaml")
+    assert main(["drift", xdrive]) == 1
+    assert "drift runs need a differential drivetrain, not xdrive" in capsys.readouterr().out
+    assert main(["odometry", xdrive]) == 1
+    assert "odometry scripts drive the gearing groups 'left' and 'right'" in (
+        capsys.readouterr().out
+    )

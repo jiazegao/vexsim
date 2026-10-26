@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.1 (2026-10-26). Phases 1-8 complete. Next: Phase 9.
+**Status:** Final v1.1 (2026-10-26). Phases 1-9 complete. Next: Phase 10.
 
 **v1.1:** Phase 7 runs robot code in a separate host process over pipes instead of a DLL loaded with `ctypes`, and compiles with g++ directly instead of CMake and Ninja. Sections 0, 2, 3 and 7 are updated.
 
@@ -85,7 +85,7 @@ body:
   battery: v5_default
 
 drivetrain:
-  type: differential            # differential | xdrive | mecanum | hdrive (later)
+  type: differential            # differential | xdrive | mecanum | hdrive
   wheels:                       # explicit per wheel → any omni/traction mix
     - {name: lf, pos_in: [ 5.5,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25, drop_in: 0}
     - {name: lm, pos_in: [ 0.0,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25, drop_in: 0}
@@ -133,8 +133,8 @@ Configs are validated on load. Errors include duplicate ports, wheels assigned t
 - Friction uses a smoothed Coulomb/brush model inside a friction ellipse: `|F| ≤ μ·N`.
 - Wheel types are parameter sets:
   - **Omni:** high longitudinal μ. Lateral motion is resisted only by roller rolling friction plus a small saturating side force.
-  - **Traction:** high lateral μ (later phase).
-  - **Mecanum:** rollers at 45° (later phase).
+  - **Traction:** one isotropic friction circle for slip and sideways sliding (Phase 9).
+  - **Mecanum:** grip along the ground rollers' axis, free across it, with the rollers at a configured angle, usually ±45° (Phase 9).
 - Drift appears on its own when lateral demand exceeds the friction limit. A fast turn on full omni slides outward and corrupts heading and odometry the way it does on a real robot.
 
 ### 5.3 Chassis
@@ -303,7 +303,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 6 | **[done]** Benchmark harness | 100-seed comparison of two localizers and two controllers produces an HTML report |
 | 7 | **[done]** C++ bridge: PROS 4 shim, lockstep scheduler, robot host process over pipes, `vexsim build` and `vexsim doctor` | `minimal_pros4` runs unchanged on Windows and Linux; scheduler tests pass |
 | 8 | **[done]** LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
-| 9 | Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
+| 9 | **[done]** Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
 | 10 | Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |
 
 ## 12. Risks and mitigations

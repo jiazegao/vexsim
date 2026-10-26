@@ -1,0 +1,46 @@
+# Example robot: 4-motor mecanum drive in the usual layout: looking down on the
+# robot, the rollers on top of the wheels form an "X". The rollers touching the
+# ground are their mirror image (a diamond): -45 degrees from the rolling direction
+# at front-left and back-right, +45 degrees at front-right and back-left.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, origin at
+# the center of the footprint, angles counter-clockwise from +x.
+# See docs/conventions.md for the full reference.
+
+version: 1
+name: Example 4-motor mecanum
+
+body:
+  mass_kg: 6.0
+  inertia_kgm2: auto
+  footprint_in: [15, 15]
+  cg_in: [0, 0, 3.5]
+
+drivetrain:
+  type: mecanum
+  wheels:
+    # roller_angle_deg: axis of the ground rollers, CCW from the rolling direction.
+    # With these angles, strafing right turns front-left and back-right forward.
+    - {name: fl, pos_in: [ 5.0,  6.0], type: mecanum, diameter_in: 4.0, roller_angle_deg: -45}
+    - {name: fr, pos_in: [ 5.0, -6.0], type: mecanum, diameter_in: 4.0, roller_angle_deg:  45}
+    - {name: bl, pos_in: [-5.0,  6.0], type: mecanum, diameter_in: 4.0, roller_angle_deg:  45}
+    - {name: br, pos_in: [-5.0, -6.0], type: mecanum, diameter_in: 4.0, roller_angle_deg: -45}
+  gearing:
+    front_left:  {motors: [1],  cartridge: blue, ratio: "36:72", wheels: [fl]}
+    front_right: {motors: [-2], cartridge: blue, ratio: "36:72", wheels: [fr]}
+    back_left:   {motors: [3],  cartridge: blue, ratio: "36:72", wheels: [bl]}
+    back_right:  {motors: [-4], cartridge: blue, ratio: "36:72", wheels: [br]}
+
+sensors:
+  - {type: imu, port: 10, pos_in: [0, 0]}
+  - type: rotation
+    port: 11
+    tracking_wheel: {pos_in: [0, -1.5], heading_deg: 0, diameter_in: 2.0}
+  - type: rotation
+    port: 12
+    tracking_wheel: {pos_in: [-3, 0], heading_deg: 90, diameter_in: 2.0}
+
+# Optional model tuning (docs/models.md):
+# overrides:
+#   wheel.mecanum.roller_mu: 0.1    # resistance of the free-turning rollers
+#   wheel.mecanum.grip_mu: 0.7      # grip along the roller axes

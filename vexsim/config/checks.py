@@ -1,7 +1,7 @@
 """Cross-field checks on a structurally valid robot config.
 
 Errors make the robot unsimulatable or are near-certain mistakes. Warnings flag
-things that are legal but suspicious, or not simulated yet.
+things that are legal but suspicious.
 """
 
 from __future__ import annotations
@@ -10,13 +10,14 @@ import math
 
 from vexsim.config.issues import ConfigIssue, Severity
 from vexsim.config.robot import RobotConfig
+from vexsim.physics.kinematics import DriveKinematics
 from vexsim.physics.params import check_overrides
 from vexsim.v5 import MOTOR_11W_POWER_W, MOTOR_POWER_BUDGET_W, STARTING_SIZE_LIMIT_IN
 
 _EPS = 1e-9
-SIMULATED_DRIVETRAINS = {"differential"}
-SIMULATED_WHEEL_TYPES = {"omni"}
 PLAUSIBLE_MASS_KG = (2.0, 15.0)
+TANK_GROUPS = ("left", "right")
+USUAL_WHEELS = {"xdrive": "omni", "mecanum": "mecanum"}
 
 
 def _fmt(xy: tuple[float, ...]) -> str:
@@ -104,6 +105,19 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
                 f"{loc}.pos_in",
                 f"wheel {wheel.name!r} at {_fmt(wheel.pos_in)} is outside the {footprint}",
             )
+        if wheel.type == "mecanum" and wheel.roller_angle_deg is None:
+            add(
+                "error",
+                f"{loc}.roller_angle_deg",
+                f"mecanum wheel {wheel.name!r} needs roller_angle_deg: the angle of its ground "
+                "rollers' axis from the rolling direction (usually -45 or 45)",
+            )
+        elif wheel.type != "mecanum" and wheel.roller_angle_deg is not None:
+            add(
+                "error",
+                f"{loc}.roller_angle_deg",
+                f"only mecanum wheels have angled rollers ({wheel.name!r} is {wheel.type})",
+            )
 
     # Gearing groups
     owner: dict[str, str] = {}
@@ -177,50 +191,28 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
                 )
 
     # Drivetrain layout
-    if dt.type == "differential":
-        groups = set(dt.gearing)
-        if groups != {"left", "right"}:
+    if dt.type in ("differential", "hdrive"):
+        _check_tank(cfg, wheel_index, add)
+    usual = USUAL_WHEELS.get(dt.type)
+    if usual is not None:
+        others = sorted({w.name for w in dt.wheels if w.type != usual})
+        if others:
+            add(
+                "warning",
+                "drivetrain.wheels",
+                f"{dt.type} drivetrains normally use {usual} wheels; "
+                f"{', '.join(repr(n) for n in others)} are not",
+            )
+    groups_ok = all(w in wheel_index for g in dt.gearing.values() for w in g.wheels)
+    if dt.type != "differential" and groups_ok and not any(i.severity == "error" for i in issues):
+        if not DriveKinematics.from_config(cfg).holonomic:
+            angles = ", wheel headings and roller angles" if dt.type == "mecanum" else ""
             add(
                 "error",
-                "drivetrain.gearing",
-                "a differential drivetrain needs exactly the gearing groups 'left' and 'right' "
-                f"(found: {', '.join(dt.gearing)})",
+                "drivetrain",
+                f"this {dt.type} can't strafe independently of driving and turning; "
+                f"check the gearing groups{angles or ' and wheel headings'}",
             )
-        for i, wheel in enumerate(dt.wheels):
-            if not _parallel_to_x(wheel.heading_deg):
-                add(
-                    "warning",
-                    f"drivetrain.wheels[{i}].heading_deg",
-                    f"wheel {wheel.name!r} is not parallel to the robot's x axis "
-                    "(differential wheels normally use heading 0)",
-                )
-        for side, sign in (("left", 1), ("right", -1)):
-            group = dt.gearing.get(side)
-            if group is None:
-                continue
-            for wname in group.wheels:
-                if wname in wheel_index:
-                    y = dt.wheels[wheel_index[wname]].pos_in[1]
-                    if y * sign <= 0:
-                        add(
-                            "warning",
-                            f"drivetrain.gearing.{side}",
-                            f"wheel {wname!r} is in group {side!r} but sits at y={y:g} in "
-                            "(+y is the robot's left side)",
-                        )
-    if dt.type not in SIMULATED_DRIVETRAINS:
-        add(
-            "warning",
-            "drivetrain.type",
-            f"{dt.type!r} drivetrains run on the generic wheel model but are not validated "
-            "until Phase 9",
-        )
-    for wtype in sorted({w.type for w in dt.wheels} - SIMULATED_WHEEL_TYPES):
-        add(
-            "warning",
-            "drivetrain.wheels",
-            f"{wtype!r} wheels are not simulated yet (planned for Phase 9)",
-        )
 
     # Support polygon: the CG must sit over the wheels or the robot tips over.
     if len(wheel_index) >= 1:
@@ -255,3 +247,58 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
         add(severity, f"overrides.{key}", message)
 
     return issues
+
+
+def _check_tank(cfg: RobotConfig, wheel_index: dict[str, int], add) -> None:
+    """Left/right sides of a differential drive, or of an H-drive plus its strafe groups."""
+    dt = cfg.drivetrain
+    groups = set(dt.gearing)
+    if dt.type == "differential" and groups != set(TANK_GROUPS):
+        add(
+            "error",
+            "drivetrain.gearing",
+            "a differential drivetrain needs exactly the gearing groups 'left' and 'right' "
+            f"(found: {', '.join(dt.gearing)})",
+        )
+    if dt.type == "hdrive" and (not groups > set(TANK_GROUPS)):
+        add(
+            "error",
+            "drivetrain.gearing",
+            "an H-drive needs the gearing groups 'left' and 'right' plus a strafe group "
+            f"(found: {', '.join(dt.gearing)})",
+        )
+    for gname, group in dt.gearing.items():
+        sideways = gname not in TANK_GROUPS
+        for wname in group.wheels:
+            if wname not in wheel_index:
+                continue
+            i = wheel_index[wname]
+            heading = dt.wheels[i].heading_deg
+            if not sideways and not _parallel_to_x(heading):
+                add(
+                    "warning",
+                    f"drivetrain.wheels[{i}].heading_deg",
+                    f"wheel {wname!r} is not parallel to the robot's x axis "
+                    "(left and right wheels normally use heading 0)",
+                )
+            if sideways and not _parallel_to_x(heading - 90.0):
+                add(
+                    "warning",
+                    f"drivetrain.wheels[{i}].heading_deg",
+                    f"strafe wheel {wname!r} is not perpendicular to the robot's x axis "
+                    "(strafe wheels normally use heading 90)",
+                )
+    for side, sign in (("left", 1), ("right", -1)):
+        group = dt.gearing.get(side)
+        if group is None:
+            continue
+        for wname in group.wheels:
+            if wname in wheel_index:
+                y = dt.wheels[wheel_index[wname]].pos_in[1]
+                if y * sign <= 0:
+                    add(
+                        "warning",
+                        f"drivetrain.gearing.{side}",
+                        f"wheel {wname!r} is in group {side!r} but sits at y={y:g} in "
+                        "(+y is the robot's left side)",
+                    )

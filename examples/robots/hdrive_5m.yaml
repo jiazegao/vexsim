@@ -1,0 +1,43 @@
+# Example robot: 5-motor H-drive. A 4-omni tank drive plus a center omni wheel
+# turned sideways on its own motor, so the robot can strafe.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, origin at
+# the center of the footprint, angles counter-clockwise from +x.
+# See docs/conventions.md for the full reference.
+
+version: 1
+name: Example 5-motor H-drive
+
+body:
+  mass_kg: 6.0
+  inertia_kgm2: auto
+  footprint_in: [15, 15]
+  cg_in: [0, 0, 3.5]
+
+drivetrain:
+  type: hdrive
+  wheels:
+    - {name: lf, pos_in: [ 5.5,  6.0], type: omni, diameter_in: 3.25}
+    - {name: lb, pos_in: [-5.5,  6.0], type: omni, diameter_in: 3.25}
+    - {name: rf, pos_in: [ 5.5, -6.0], type: omni, diameter_in: 3.25}
+    - {name: rb, pos_in: [-5.5, -6.0], type: omni, diameter_in: 3.25}
+    # Rolls toward the robot's left (+y) when its group turns forward. It sits a
+    # little lower so it carries more weight: level with the others it would carry
+    # a fifth, and its grip would barely beat the corner wheels' roller friction.
+    # The price is less load, so less launch traction, on the corner wheels.
+    - {name: center, pos_in: [0, 0], heading_deg: 90, type: omni, diameter_in: 3.25, drop_in: 0.04}
+  gearing:
+    # left and right work like a differential drive; any other group strafes.
+    # One motor pushes the whole robot sideways, so the strafe wheel is geared for torque.
+    left:   {motors: [1, 2],   cartridge: blue, ratio: "36:48", wheels: [lf, lb]}
+    right:  {motors: [-3, -4], cartridge: blue, ratio: "36:48", wheels: [rf, rb]}
+    strafe: {motors: [5],      cartridge: blue, ratio: "36:60", wheels: [center]}
+
+sensors:
+  - {type: imu, port: 10, pos_in: [0, 0]}
+  - type: rotation
+    port: 11
+    tracking_wheel: {pos_in: [0, -1.5], heading_deg: 0, diameter_in: 2.0}
+  - type: rotation
+    port: 12
+    tracking_wheel: {pos_in: [-3, 0], heading_deg: 90, diameter_in: 2.0}

@@ -19,7 +19,7 @@ def autonomous(bot):
     bot.print("done at", chassis.pose)
 
 
-def opcontrol(bot):  # optional; the default is arcade drive
+def opcontrol(bot):  # optional; the default is arcade drive (plus strafing, if it can)
     while True:
         bot.chassis.arcade(
             bot.controller.get_analog("LEFT_Y"), bot.controller.get_analog("RIGHT_X")
@@ -78,8 +78,24 @@ bot.print("text")  # console panel + terminal
 - `set_zero_position(p)` makes the motor's current position read `p` and `tare_position()` reads 0, as in PROS 4. The zero belongs to the motor on that port, so every object using the port sees it.
 - Every class and method is in `vexsim/api/devices.py`.
 
+## Driving any drivetrain (`bot.drive`)
+`bot.drive.move(forward, strafe, turn)` drives any drivetrain from stick-style inputs, -127..127, as from `LEFT_Y`, `LEFT_X` and `RIGHT_X`:
+- positive `strafe` is to the right, and positive `turn` is clockwise, like `chassis.arcade`;
+- each input at 127 is the top speed in that direction alone; when a combination asks a gear group for more than its rated speed, every group slows together, so the robot keeps the commanded direction;
+- it uses voltage control, and a drivetrain that can't strafe ignores `strafe`.
+
+```python
+def opcontrol(bot):  # robot-centric strafing, the default when the robot can strafe
+    c = bot.controller
+    while True:
+        bot.drive.move(c.get_analog("LEFT_Y"), c.get_analog("LEFT_X"), c.get_analog("RIGHT_X"))
+        yield delay(10)
+```
+
+That is also the default `opcontrol` on X-drive, mecanum and H-drive robots. `bot.drive.holonomic` tells whether the robot can strafe. The group speeds come from the drivetrain's kinematics (`vexsim/physics/kinematics.py`), built from the wheel positions, headings, roller angles and gearing in the config.
+
 ## Chassis motions (`bot.chassis`)
-The chassis is built from the robot's `left` and `right` gear groups and localizes with the best baseline the robot's sensors allow (tracking wheels + IMU on the example robot).
+The chassis is built from the robot's `left` and `right` gear groups, so it exists on differential drives and H-drives (where the strafe groups stay idle). It localizes with the best baseline the robot's sensors allow (tracking wheels + IMU on the example robot). X-drive and mecanum robots have no `bot.chassis`; drive them with `bot.drive`, your own controller, or your C++ code.
 
 - **Poses and pose control:** poses are inches and degrees **counter-clockwise** in the field frame. `chassis.set_pose(x, y, heading)` re-zeros odometry.
 - **Running motions:** each motion is used as `yield from chassis.<motion>(...)`. It returns when the motion settles or after `timeout_ms`, then stops the drive.
@@ -111,7 +127,8 @@ These were measured on the example 6-motor full-omni robot, with the tests in `t
 - the robot (true pose), and a blue outline for where its odometry *thinks* it is;
 - path trails;
 - the active motion's target or path (orange);
-- wheels shaded from dark (gripping) to red (sliding), and sideways roller forces (orange ticks);
+- wheels shaded from dark (gripping) to red (sliding), and sideways roller forces (orange ticks); mecanum wheels show their ground rollers' axis as a light stroke;
+- wall contacts (orange dots);
 - a side panel with poses, odometry error, speed, battery, per-motor current and temperature, controller sticks, the brain screen (C++ programs' `pros::lcd` lines) and the program console.
 
 | Key | Action |
@@ -126,7 +143,7 @@ These were measured on the example 6-motor full-omni robot, with the tests in `t
 | W / S | left stick Y (arcade throttle) |
 | A / D | right stick X (arcade turn) |
 | Up / Down | right stick Y (tank) |
-| Left / Right | left stick X |
+| Left / Right | left stick X (strafe) |
 | Shift | half stick |
 | Q / Z, E / C | L1 / L2, R1 / R2 |
 | I / L / K / J | X / A / B / Y |

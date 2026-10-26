@@ -62,7 +62,8 @@ class WheelView:
     heading: float  # radians
     length: float  # inches
     slip: float  # 0..1 (share of the friction limit in use)
-    lateral_force: float  # N, along the axle (+left)
+    lateral_force: float  # N, across the grip direction (+left of it)
+    roller_angle: float = 0.0  # radians; mecanum rollers turn the grip direction
 
 
 @dataclass
@@ -83,6 +84,8 @@ class Snapshot:
     overlay_path: np.ndarray | None = None  # (n, 2) inches
     overlay_target: tuple[float, float, float | None] | None = None
     sticks: dict[str, int] = field(default_factory=dict)
+    field_in: tuple[float, float] = (144.0, 144.0)  # inside the walls
+    wall_contacts: list[tuple[float, float]] = field(default_factory=list)  # inches
 
 
 class KeyboardInput:
@@ -188,11 +191,10 @@ class LiveSource:
         x, y, h = robot.pose
         c, s = math.cos(h), math.sin(h)
         contacts = robot.contacts
-        spec = robot.params.omni_wheel
         wheels = []
         for i, w in enumerate(cfg.drivetrain.wheels):
             wx, wy = w.pos_in
-            limit = max(spec.longitudinal_mu * contacts.normal[i], 1e-9)
+            limit = max(robot.grip_mu[i] * contacts.normal[i], 1e-9)
             slip = min(1.0, abs(contacts.traction_force[i]) / limit) if len(contacts.slip) else 0.0
             wheels.append(
                 WheelView(
@@ -202,6 +204,7 @@ class LiveSource:
                     length=w.diameter_in,
                     slip=slip,
                     lateral_force=float(contacts.lateral_force[i]) if len(contacts.slip) else 0.0,
+                    roller_angle=math.radians(w.roller_angle),
                 )
             )
         u, v, _ = robot.body_velocity
@@ -239,6 +242,8 @@ class LiveSource:
             overlay_path=overlay_path,
             overlay_target=overlay_target,
             sticks=dict(sim.controller.analog),
+            field_in=sim.field.size_in,
+            wall_contacts=[(m_to_in(c.point[0]), m_to_in(c.point[1])) for c in robot.wall_contacts],
         )
 
 
@@ -423,7 +428,10 @@ class Viewer:
             a = MARGIN + round(k * 24 * scale)
             pg.draw.line(scr, GRID, (a, MARGIN), (a, FIELD_PX - MARGIN))
             pg.draw.line(scr, GRID, (MARGIN, a), (FIELD_PX - MARGIN, a))
-        pg.draw.rect(scr, WALL, (MARGIN, MARGIN, FIELD_PX - 2 * MARGIN, FIELD_PX - 2 * MARGIN), 3)
+        half_x, half_y = snap.field_in[0] / 2, snap.field_in[1] / 2
+        left, top = self._to_px(-half_x, half_y)
+        right, bottom = self._to_px(half_x, -half_y)
+        pg.draw.rect(scr, WALL, (left, top, right - left, bottom - top), 3)
 
         if snap.time - self._last_trail_t >= 0.03 or snap.time < self._last_trail_t:
             self.trail_true.append(self._to_px(snap.true_pose.x, snap.true_pose.y))
@@ -471,11 +479,20 @@ class Viewer:
             a = self._to_px(w.x - half * math.cos(w.heading), w.y - half * math.sin(w.heading))
             b = self._to_px(w.x + half * math.cos(w.heading), w.y + half * math.sin(w.heading))
             pg.draw.line(scr, color, a, b, 6)
+            if w.roller_angle:  # mecanum: a stroke along the ground rollers' axis
+                g = w.heading + w.roller_angle
+                q = 0.35 * w.length
+                a = self._to_px(w.x - q * math.cos(g), w.y - q * math.sin(g))
+                b = self._to_px(w.x + q * math.cos(g), w.y + q * math.sin(g))
+                pg.draw.line(scr, SURFACE, a, b, 2)
             if self.show_forces and abs(w.lateral_force) > 0.2:
-                n = w.heading + math.pi / 2
+                n = w.heading + w.roller_angle + math.pi / 2
                 d = w.lateral_force * 0.6  # inches per newton
                 end = self._to_px(w.x + d * math.cos(n), w.y + d * math.sin(n))
                 pg.draw.line(scr, TARGET, self._to_px(w.x, w.y), end, 2)
+
+        for x, y in snap.wall_contacts:
+            pg.draw.circle(scr, TARGET, self._to_px(x, y), 5)
 
         self._draw_panel(snap)
 
@@ -496,11 +513,11 @@ class Viewer:
         y = self._text(state, (x, y), color=TEXT_2)
 
         t, e = snap.true_pose, snap.est_pose
-        y = self._text(f"true  x {t.x:7.1f}  y {t.y:7.1f}  h {t.heading % 360:6.1f}", (x, y + 8))
+        y = self._text(f"true  x {t.x:7.1f}  y {t.y:7.1f}  h {t.heading_360:6.1f}", (x, y + 8))
         if e is not None:
             err = e.distance_to(t)
             y = self._text(
-                f"est   x {e.x:7.1f}  y {e.y:7.1f}  h {e.heading % 360:6.1f}",
+                f"est   x {e.x:7.1f}  y {e.y:7.1f}  h {e.heading_360:6.1f}",
                 (x, y),
                 color=ESTIMATE,
             )

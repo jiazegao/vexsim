@@ -2,9 +2,12 @@ import math
 
 import pytest
 
-from tests.conftest import EXAMPLE_ROBOT
+from tests.conftest import EXAMPLE_ROBOT, ROOT
 from vexsim.config import ConfigError, load_robot, validate_robot
 from vexsim.config.robot import ratio_value
+from vexsim.config.yaml_io import load_yaml_file
+
+EXAMPLES = ROOT / "examples"
 
 
 def issues_at(report, severity):
@@ -245,18 +248,65 @@ def test_size_mass_and_motor_budget_warnings(robot_data):
     }
 
 
-def test_unsimulated_features_warn(robot_data):
-    robot_data["drivetrain"]["wheels"][0]["type"] = "traction"
-    report = validate_robot(robot_data)
-    assert report.ok
-    assert any("not simulated yet" in msg for _, msg in issues_at(report, "warning"))
+@pytest.mark.parametrize(
+    "name", ["traction_6m", "xdrive_4m", "mecanum_4m", "hdrive_5m", "lemlib_example"]
+)
+def test_every_example_robot_is_clean(name):
+    report = validate_robot(EXAMPLES / "robots" / f"{name}.yaml")
+    assert report.ok, messages(report)
+    assert report.warnings == []
 
-    robot_data["drivetrain"]["type"] = "xdrive"
+
+def test_roller_angles_belong_to_mecanum_wheels(robot_data):
+    robot_data["drivetrain"]["wheels"][0]["type"] = "mecanum"
     report = validate_robot(robot_data)
-    assert (
-        "drivetrain.type",
-        "'xdrive' drivetrains run on the generic wheel model but are not validated until Phase 9",
-    ) in (issues_at(report, "warning"))
+    assert "drivetrain.wheels[0].roller_angle_deg" in {loc for loc, _ in issues_at(report, "error")}
+    assert "needs roller_angle_deg" in messages(report)
+
+    robot_data["drivetrain"]["wheels"][0]["type"] = "omni"
+    robot_data["drivetrain"]["wheels"][0]["roller_angle_deg"] = 45
+    assert "only mecanum wheels have angled rollers" in messages(validate_robot(robot_data))
+
+    robot_data["drivetrain"]["wheels"][0]["roller_angle_deg"] = 90
+    with pytest.raises(ConfigError):
+        load_robot(robot_data)
+
+
+def test_holonomic_layouts_must_strafe(robot_data):
+    robot_data["drivetrain"]["type"] = "xdrive"  # but the wheels all point forward
+    report = validate_robot(robot_data)
+    assert "this xdrive can't strafe" in messages(report)
+
+    mecanum = load_yaml_file(EXAMPLES / "robots" / "mecanum_4m.yaml")
+    for wheel in mecanum["drivetrain"]["wheels"]:
+        wheel["roller_angle_deg"] = 45  # rollers all the same way
+    assert "check the gearing groups, wheel headings and roller angles" in messages(
+        validate_robot(mecanum)
+    )
+
+
+def test_layouts_warn_about_unusual_wheels():
+    xdrive = load_yaml_file(EXAMPLES / "robots" / "xdrive_4m.yaml")
+    xdrive["drivetrain"]["wheels"][0]["type"] = "traction"
+    report = validate_robot(xdrive)
+    assert report.ok
+    assert ("drivetrain.wheels", "xdrive drivetrains normally use omni wheels; 'fl' are not") in (
+        issues_at(report, "warning")
+    )
+
+
+def test_hdrive_needs_a_strafe_group():
+    hdrive = load_yaml_file(EXAMPLES / "robots" / "hdrive_5m.yaml")
+    hdrive["drivetrain"]["wheels"][4]["heading_deg"] = 0
+    report = validate_robot(hdrive)
+    assert "strafe wheel 'center' is not perpendicular" in messages(report, "warning")
+    assert "this hdrive can't strafe" in messages(report)
+
+    del hdrive["drivetrain"]["gearing"]["strafe"]
+    hdrive["drivetrain"]["wheels"].pop()
+    assert "an H-drive needs the gearing groups 'left' and 'right' plus a strafe group" in (
+        messages(validate_robot(hdrive))
+    )
 
 
 def test_cg_must_be_over_the_wheels(robot_data):

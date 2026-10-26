@@ -7,7 +7,8 @@ from collections import Counter
 
 from vexsim.config.field import FieldConfig
 from vexsim.config.robot import RobotConfig
-from vexsim.units import kg_to_lb
+from vexsim.physics.kinematics import DriveKinematics
+from vexsim.units import kg_to_lb, m_to_in
 
 
 def _xy(v: tuple[float, ...]) -> str:
@@ -31,6 +32,7 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
     type_text = ", ".join(f"{n} {t}" for t, n in types.items())
     lines.append(f"  drivetrain  {dt.type}, {len(dt.wheels)} wheels ({type_text})")
     names = {w.name: w for w in dt.wheels}
+    width = max(9, *(len(g) for g in dt.gearing))
     for gname, group in dt.gearing.items():
         ports = ", ".join(str(p) for p in group.motors)
         diameters = sorted({names[w].diameter_in for w in group.wheels if w in names})
@@ -38,8 +40,15 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
             f"{d:g} in -> {group.wheel_free_rpm / 60.0 * math.pi * d:.1f} in/s" for d in diameters
         )
         lines.append(
-            f"    {gname:<9} motors {ports} | {group.cartridge} {group.motor_free_rpm:g} rpm"
+            f"    {gname:<{width}} motors {ports} | {group.cartridge} {group.motor_free_rpm:g} rpm"
             f" | ratio {group.ratio} -> {group.wheel_free_rpm:g} rpm | {speeds} free speed"
+        )
+    if all(w in names for g in dt.gearing.values() for w in g.wheels):
+        forward, sideways, turn = DriveKinematics.from_config(cfg).top_speeds()
+        strafe = f", sideways {m_to_in(sideways):.1f} in/s" if sideways else ""
+        lines.append(
+            f"    top speed forward {m_to_in(forward):.1f} in/s{strafe}, "
+            f"turning {math.degrees(turn):.0f} deg/s (kinematic, rated motor speed)"
         )
 
     if not cfg.sensors:

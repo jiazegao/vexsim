@@ -42,15 +42,17 @@ def test_bad_overrides_raise(overrides):
         resolve_params(overrides)
 
 
-def test_future_groups_only_warn():
-    assert check_overrides({"wheel.traction.lateral_mu": 0.9}) == [
-        (
-            "warning",
-            "wheel.traction.lateral_mu",
-            "'wheel.traction' parameters take effect in Phase 9",
-        )
-    ]
-    assert resolve_params({"wheel.traction.lateral_mu": 0.9}).motor == MotorSpec()
+def test_phase9_groups_apply():
+    params = resolve_params(
+        {"wheel.traction.mu": 0.8, "wheel.mecanum.roller_mu": 0.1, "field.wall_restitution": 0}
+    )
+    assert params.traction_wheel.mu == 0.8
+    assert params.mecanum_wheel.roller_mu == 0.1
+    assert params.field.wall_restitution == 0.0
+    assert params.wheel("traction") is params.traction_wheel
+    assert check_overrides({"wheel.traction.lateral_mu": 0.9})[0][0] == "error"  # one mu
+    with pytest.raises(ValueError, match="0..1"):
+        resolve_params({"field.wall_restitution": 1.5})
 
 
 def test_wheel_and_chassis_overrides():

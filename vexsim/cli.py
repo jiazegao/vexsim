@@ -78,6 +78,10 @@ def cmd_drift(args: argparse.Namespace) -> int:
     except ValueError:
         print(f"error: --lateral-mu must be comma-separated numbers, got {args.lateral_mu!r}")
         return EXIT_INVALID
+    if report.config.drivetrain.type != "differential":
+        kind = report.config.drivetrain.type
+        print(f"error: drift runs need a differential drivetrain, not {kind}")
+        return EXIT_INVALID
     runs = [
         drift.run_arc(report.config, mu, left=args.left, right=args.right, seconds=args.seconds)
         for mu in mus
@@ -112,7 +116,11 @@ def cmd_odometry(args: argparse.Namespace) -> int:
     if not report.ok or report.config is None:
         _print_issues(report.issues)
         return EXIT_INVALID
-    run = run_odometry(report.config, args.script, seed=args.seed, noise=args.noise)
+    try:
+        run = run_odometry(report.config, args.script, seed=args.seed, noise=args.noise)
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return EXIT_INVALID
     if not run.estimates:
         print("this robot has no sensors any baseline localizer can use")
         return EXIT_INVALID
@@ -261,10 +269,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         true = Pose.from_si(sim.robot.pose)
         est = sim.estimated_pose
         print(f"{mode} finished at t = {sim.world.time:.2f} s")
-        print(
-            f"  true pose      x {true.x:7.2f}  y {true.y:7.2f}  heading {true.heading % 360:6.1f}"
-        )
-        print(f"  estimated pose x {est.x:7.2f}  y {est.y:7.2f}  heading {est.heading % 360:6.1f}")
+        print(f"  true pose      x {true.x:7.2f}  y {true.y:7.2f}  heading {true.heading_360:6.1f}")
+        print(f"  estimated pose x {est.x:7.2f}  y {est.y:7.2f}  heading {est.heading_360:6.1f}")
         if args.screenshot:
             from vexsim.viz.viewer import LiveSource, Viewer
 
@@ -491,7 +497,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Run a Python robot program (initialize/autonomous/opcontrol generators, see "
             "vexsim.api) in the live viewer. Without a program, drive the robot with the "
-            "keyboard or a gamepad (arcade). Press H in the viewer for keys."
+            "keyboard or a gamepad (arcade, plus strafing on robots that can). Press H in the "
+            "viewer for keys."
         ),
     )
     p.add_argument("robot", help="robot YAML file")

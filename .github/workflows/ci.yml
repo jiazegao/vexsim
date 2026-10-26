@@ -55,7 +55,11 @@ jobs:
         run: python .github/scripts/pytest_annotations.py pytest.xml
 
       - name: Validate example configs
-        run: vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/v5rc_empty.yaml --strict
+        shell: bash
+        run: |
+          for robot in examples/robots/*.yaml; do
+            vexsim validate-config "$robot" --field examples/fields/v5rc_empty.yaml --strict -q
+          done
 
       - name: Plots
         shell: bash  # stop at the first failing command (Windows pwsh only checks the last)
@@ -65,6 +69,7 @@ jobs:
           vexsim odometry examples/robots/full_omni_6m.yaml --out odometry.png
           vexsim run examples/robots/full_omni_6m.yaml --program examples/programs/tour.py --headless --record tour.csv --screenshot tour.png
           vexsim plot tour.csv --out telemetry.png
+          vexsim run examples/robots/mecanum_4m.yaml --input examples/inputs/strafe_square.csv --headless --seconds 10 --start=-12,12,0 --screenshot mecanum_square.png
           vexsim bench examples/scenarios/s_curve.yaml --seeds 4 --workers 2 --out bench
           vexsim build examples/pros_projects/minimal_pros4
           vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/minimal_pros4 --headless --start 0,0,90 --record cpp_square.csv --screenshot cpp_square.png
@@ -82,6 +87,7 @@ jobs:
             tour.png
             telemetry.png
             tour.csv
+            mecanum_square.png
             cpp_square.png
             cpp_square.csv
             lemlib.png

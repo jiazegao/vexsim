@@ -111,11 +111,27 @@ Each wheel produces three forces. Each is smoothed Coulomb friction, `coeff * N 
 
 | Channel | Velocity | Force |
 |---|---|---|
-| traction | slip `s = w_wheel * r - v_long` | along the rolling direction (drives the robot) |
-| roller | sideways velocity `v_lat` | across the wheel (resists sliding) |
+| grip (slip) | `s = w_wheel * r * cos(g) - a . v` | along the grip direction `a` (drives the robot) |
+| free | `f . v + w_wheel * r * sin(g)` | across it (resists sliding, or turning the rollers) |
 | rolling | `w_wheel * r` | resists wheel rotation (coast-down losses) |
 
-On an **omni** wheel the main wheel and the rollers are mechanically separate, so the channels are independent. An omni wheel rolling sideways on its rollers keeps full drive traction, which is how X-drives work. Traction and mecanum wheels need a coupled friction ellipse and arrive in Phase 9.
+- `v` is the ground velocity of the contact point.
+- The grip direction `a` is the rolling direction turned by the roller angle `g`. The free direction `f` is `a` turned another 90°.
+- Omni and traction wheels have `g = 0`, so `a` is the rolling direction and `f` points along the axle.
+
+**Omni wheels.** The main wheel grips along the rolling direction and the rollers roll freely across it. The two are mechanically separate, so the channels are independent. An omni wheel rolling sideways on its rollers keeps full drive traction, which is how X-drives work.
+
+**Mecanum wheels** are the same with `g = ±45°` (`roller_angle_deg` in the config). A mecanum wheel grips along its ground rollers' axis and rolls freely across it. Driving it pushes the robot diagonally, and four of them in the usual layout add up to driving, strafing or turning.
+- Strafing turns every wheel at full speed and the rollers at about 1.4x that, so the rollers' resistance loads the motors. On 12 V the example robot strafes at about 86% of its forward speed.
+- Driving straight, the rollers don't turn at all.
+
+**Traction wheels** grip the same in every direction, so their grip and free channels share one friction circle:
+```
+F = mu * N * tanh(|c| / x_s) * c / |c|,   c = (grip slip, sideways slip)
+```
+- A wheel sliding sideways (turning scrub) loses drive traction. A wheel spinning in place loses its sideways grip.
+- The circle's Jacobian is a symmetric, positive-definite 2x2 block, so the integrator stays stable (see [Robot dynamics](#robot-dynamics-vexsimphysicsrobotpy)).
+- A smoothed model creeps slowly under any sideways force below breakaway (about 2 cm/s at 60% of breakaway). Real tires do too, a little.
 
 | Omni parameter (`wheel.omni.*`) | Default | Source |
 |---|---|---|
@@ -126,11 +142,33 @@ On an **omni** wheel the main wheel and the rollers are mechanically separate, s
 | `rolling_resistance`: lumped coast-down loss (foam, bearings, chain) | 0.10 | Estimate, sized so coast mode glides about 5 ft from full speed |
 | `mass_kg`: per wheel, for spin inertia | 0.06 | Estimate |
 
+| Traction parameter (`wheel.traction.*`) | Default | Source |
+|---|---|---|
+| `mu`: tread on tiles, any direction | 1.1 | Estimate |
+| `slip_velocity_m_s`: smoothing | 0.03 | Estimate |
+| `rolling_resistance` | 0.12 | Estimate (more tread deforms than on an omni) |
+| `rolling_velocity_m_s` | 0.02 | Estimate |
+| `mass_kg` | 0.07 | Estimate |
+
+| Mecanum parameter (`wheel.mecanum.*`) | Default | Source |
+|---|---|---|
+| `grip_mu`: roller rubber on tiles, along the roller axes | 0.8 | Estimate |
+| `slip_velocity_m_s` | 0.03 | Estimate |
+| `roller_mu`: resistance of the free-turning rollers | 0.15 | Estimate; **controls strafe speed and drift** |
+| `roller_velocity_m_s` | 0.02 | Estimate |
+| `rolling_resistance` | 0.12 | Estimate |
+| `rolling_velocity_m_s` | 0.02 | Estimate |
+| `mass_kg`: per wheel, rollers included | 0.15 | Estimate |
+
 ![True path vs. drive-encoder odometry in a fast arc](img/drift_arc.png)
 
 `vexsim drift examples/robots/full_omni_6m.yaml --out drift.png` regenerates this chart.
 
 **Why omni robots drift.** In a turn the robot needs a sideways force of mass × speed × yaw rate. Only roller friction can supply it, up to `lateral_mu * g` of acceleration (about 2 m/s² by default). Past that the robot slides outward. Each instant the wheels push the robot along its new, rotated heading, and the sideways momentum it already had is only weakly resisted. So a sustained fast arc grows into a wide spiral, and the motors keep feeding it energy. Energy accounting is checked in `tests/test_drive.py`. Drive-encoder odometry sees only wheel rotation, so it believes the robot traced the tight kinematic circle.
+
+**Traction wheels in the middle** (`examples/robots/traction_6m.yaml`) supply that sideways force by grip instead. In the same fast arc the robot's turning radius is about a quarter of the all-omni robot's, close to the kinematic circle. The wheels sit on the turning center line, so turning in place doesn't scrub them. Traction wheels at the corners do scrub. Turning in place then has to slide them sideways, which is slower and draws more current.
+
+**H-drives** strafe with one wheel against the roller friction of all the others. A strafe wheel level with the rest carries a fifth of the weight, and its grip barely beats that friction. That is why real H-drives lower or spring-load the strafe wheel. `examples/robots/hdrive_5m.yaml` lowers it 0.04 in (`drop_in`), at the cost of launch traction on the corner wheels.
 
 ## Chassis and normal loads: `vexsim/physics/chassis.py`
 - Each wheel sits on a vertical spring under a rigid chassis plane: `chassis.wheel_stiffness_n_per_m`, default 2e4 N/m (an estimate covering the tire and foam).
@@ -145,11 +183,13 @@ On an **omni** wheel the main wheel and the rollers are mechanically separate, s
 
 **Contact forces**
 - Every contact velocity is a fixed linear function of the velocity vector, `c = C @ qdot`.
-- The generalized contact forces are `-C.T @ F(c)`, with Jacobian `-C.T @ diag(F') @ C`. That Jacobian is symmetric and dissipative.
+- The generalized contact forces are `-C.T @ F(c)`, with Jacobian `-C.T @ D @ C`. `D` is diagonal, except for one 2x2 friction-circle block per traction wheel. That Jacobian is symmetric and dissipative.
 
 **Integration**
 - Each 1 ms step solves the linearly implicit Euler update `(M - dt*J) dq = dt*Q`. Tire friction has time constants near 0.15 ms, so a plain explicit step would blow up; this one stays stable with no substeps.
 - Motor torques, rotating-frame terms and external forces are explicit.
+
+**Walls:** after each step, the field walls push the footprint back inside ([below](#field-walls-vexsimphysicsfieldpy)).
 
 **Motor direction:** a negative port means the motor's raw positive direction drives its group backward. Group commands apply that sign, as a PROS 4 `MotorGroup` does.
 
@@ -161,8 +201,40 @@ On an **omni** wheel the main wheel and the rollers are mechanically separate, s
 - turning in place matches kinematics within 1%, with the center fixed
 - slow arcs follow kinematics, fast arcs drift outward, and drift grows monotonically as roller friction drops
 - sideways pushes break away at the roller friction limit
+- per drivetrain (`tests/test_drivetrains.py`):
+  - an X-drive drives √2 times faster than its wheels' surface speed, and strafes and turns cleanly
+  - a mecanum drive strafes the right way, slower than it drives forward
+  - an H-drive strafes, and needs its strafe wheel loaded
+  - traction wheels drift less, resist sideways pushes, scrub at the corners, and their friction circle's Jacobian matches finite differences
 - no energy is created under random commands
 - runs are deterministic
+
+## Field walls: `vexsim/physics/field.py`
+The robot's footprint (`body.footprint_in`) collides with the field perimeter (`size_in` in the field config). Each step, after the robot moves:
+1. Every footprint corner past a wall is a contact.
+2. **Impulses** on the body settle the contacts, the way rigid-body engines handle hard impacts. A few sweeps (sequential impulses) resolve two or three contacts at once, such as both front corners or a field corner.
+   - **Normal:** stop the corner's approach, then bounce it back at `wall_restitution` times the impact speed. Impacts below 5 cm/s don't bounce, so a robot pushed against a wall stays there.
+   - **Friction:** oppose the corner's sliding along the wall, up to `wall_friction` times the normal impulse.
+3. The robot moves straight back inside the walls, so it never ends a step in a wall. It overlaps a wall by at most one step of travel (about 2 mm at full speed) before the correction.
+
+The impulses act on the body. The wheels follow through tire friction over the next steps, so:
+- a robot driving into a wall stalls with its wheels spinning;
+- an angled approach rotates the robot flat against the wall, which is what a wall reset relies on.
+
+| Field parameter (`field.*`) | Default | Source |
+|---|---|---|
+| `wall_restitution`: rebound speed / impact speed | 0.2 | Estimate (aluminum frame on polycarbonate walls) |
+| `wall_friction`: robot sliding along a wall | 0.3 | Estimate |
+
+`Simulation` adds the walls of its field config; pass `walls=False` for an endless floor. `vexsim drift` and `vexsim odometry` run without walls.
+
+**What the tests check** (`tests/test_walls.py`):
+- a head-on hit stops flush with the wall, overlapping it by under 2 mm, with the wheels spinning
+- approaches at 5° to 30° square up to within 0.5°
+- a field corner contains the robot
+- bounces follow `wall_restitution`, and slow touches don't bounce
+- wall friction slows sliding along a wall
+- away from the walls, the physics is exactly unchanged
 
 ## Sensors: `vexsim/devices/`
 **Timing and units**
@@ -209,6 +281,8 @@ Heading comes from the IMU, or from two parallel vertical wheels. It's exact for
 | tracking wheels + IMU | ≥1 vertical tracking wheel + IMU |
 | tracking wheels (no IMU) | ≥2 vertical tracking wheels |
 
+X-drive, mecanum and H-drive robots slide sideways on purpose, so drive encoders can't follow them. Give them a vertical and a horizontal tracking wheel (as in the examples) for the tracking-wheel baseline.
+
 ![Odometry baselines on the aggressive drive](img/odometry_aggressive.png)
 
 `vexsim odometry examples/robots/full_omni_6m.yaml --out odom.png` regenerates this chart. It calibrates, drives a scripted path (`--script gentle|aggressive`) and compares every baseline the robot supports. Use `--noise ideal|default|harsh` to apply one preset to every sensor.
@@ -232,6 +306,9 @@ Each of these quick experiments replaces one of the biggest estimates.
 7. **Launch traction (`wheel.omni.longitudinal_mu`).** Log `get_actual_velocity()` during a full-power launch. If the wheels spin, the acceleration is about `longitudinal_mu * g`.
 8. **IMU scale error (`sensor.imu.scale_error`).** Spin the robot 10 full turns in place and compare `get_rotation()` with 3600°. Most teams then correct it in code; to simulate your sensor as-is, set the override to the measured fraction.
 9. **Tracking wheel diameter.** Push the robot exactly 10 ft in a straight line and compare the distance the tracking wheel reports. That gives the effective diameter to put in the robot config.
+10. **Traction grip (`wheel.traction.mu`).** Pull a traction-wheel robot sideways with a luggage scale, as in item 5. With traction wheels only in the middle, the reading combines their grip with the omni wheels' roller friction, weighted by the loads each set carries.
+11. **Mecanum rollers (`wheel.mecanum.roller_mu`).** Log the drive speed on `move_voltage(12000)` straight ahead and strafing. Raise `roller_mu` until the sim's strafe/forward ratio matches.
+12. **Wall bounce (`field.wall_restitution`).** Film the robot coasting into a wall at a known speed, then measure the rebound speed from the video.
 
 [fit]: https://www.vexforum.com/t/v5-smart-motor-estimating-performance-parameters/135200
 [kb]: https://kb.vex.com/hc/en-us/articles/360044325872-Understanding-V5-Smart-Motor-Performance

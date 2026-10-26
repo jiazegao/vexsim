@@ -201,12 +201,19 @@ def run_trial(
     localizer = make_localizer(localizer_ref, config, loaded.base_dir)
     geometry = ChassisGeometry.from_config(config)
     ctrl = make_controller(controller, s.task, geometry, loaded.base_dir)
-    state: dict[str, Any] = {"done_at": None, "timed_out": False, "energy": 0.0, "peak": 0.0}
+    state: dict[str, Any] = {
+        "done_at": None,
+        "timed_out": False,
+        "energy": 0.0,
+        "peak": 0.0,
+        "walls": 0,
+    }
     samples: list[tuple] = []
 
     def autonomous(bot):
         world = bot._sim.world
         t0 = world.time
+        state["walls"] = -sim.robot.wall_hits  # count from here on
         _schedule_disturbances(sim, s.disturbances)
 
         def sample(w):
@@ -262,6 +269,7 @@ def run_trial(
         timed_out=state["timed_out"],
         energy_j=state["energy"],
         peak_motor_temp_c=state["peak"],
+        wall_contacts=state["walls"] + sim.robot.wall_hits,
     )
     return TrialResult(
         seed=seed,
@@ -305,7 +313,7 @@ def _run_pros_trial(
         record=record,
         echo=None,
     )
-    state: dict[str, Any] = {"t0": None, "energy": 0.0, "peak": 0.0}
+    state: dict[str, Any] = {"t0": None, "energy": 0.0, "peak": 0.0, "walls": 0}
     samples: list[tuple] = []
 
     def sample(w):
@@ -313,6 +321,7 @@ def _run_pros_trial(
             if sim.phase != "autonomous":
                 return
             state["t0"] = w.time
+            state["walls"] = -sim.robot.wall_hits
             _schedule_disturbances(sim, s.disturbances)
         truth = Pose.from_si(sim.robot.pose)
         est = sim.estimated_pose
@@ -343,6 +352,7 @@ def _run_pros_trial(
         timed_out=timed_out,
         energy_j=state["energy"],
         peak_motor_temp_c=state["peak"],
+        wall_contacts=state["walls"] + sim.robot.wall_hits,
     )
     true_start = setup.true_start
     return TrialResult(

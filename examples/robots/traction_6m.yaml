@@ -1,0 +1,43 @@
+# Example robot: 6-motor tank drive with traction wheels in the middle and omni
+# wheels at the corners. The middle wheels grip sideways, so the robot drifts
+# less in fast turns and is hard to push sideways, while the corner omni wheels
+# still let it turn freely about its center.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, origin at
+# the center of the footprint, angles counter-clockwise from +x.
+# See docs/conventions.md for the full reference.
+
+version: 1
+name: Example 6-motor traction-center drive
+
+body:
+  mass_kg: 6.5
+  inertia_kgm2: auto
+  footprint_in: [15, 15]
+  cg_in: [0, 0, 3.5]
+
+drivetrain:
+  type: differential
+  wheels:
+    - {name: lf, pos_in: [ 5.5,  6.0], type: omni,     diameter_in: 3.25}
+    - {name: lm, pos_in: [ 0.0,  6.0], type: traction, diameter_in: 3.25}
+    - {name: lb, pos_in: [-5.5,  6.0], type: omni,     diameter_in: 3.25}
+    - {name: rf, pos_in: [ 5.5, -6.0], type: omni,     diameter_in: 3.25}
+    - {name: rm, pos_in: [ 0.0, -6.0], type: traction, diameter_in: 3.25}
+    - {name: rb, pos_in: [-5.5, -6.0], type: omni,     diameter_in: 3.25}
+  gearing:
+    left:  {motors: [1, 2, 3],    cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb]}
+    right: {motors: [-4, -5, -6], cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb]}
+
+sensors:
+  - {type: imu, port: 10, pos_in: [0, 0]}
+  - type: rotation
+    port: 11
+    tracking_wheel: {pos_in: [0, -1.5], heading_deg: 0, diameter_in: 2.0}
+  - type: rotation
+    port: 12
+    tracking_wheel: {pos_in: [-3, 0], heading_deg: 90, diameter_in: 2.0}
+
+# Optional model tuning (docs/models.md):
+# overrides:
+#   wheel.traction.mu: 1.0    # tread grip on tiles, every direction

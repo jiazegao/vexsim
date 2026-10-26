@@ -36,6 +36,7 @@ class TrialMetrics:
     distance_in: float
     energy_j: float
     peak_motor_temp_c: float
+    wall_contacts: int  # times the robot ran into a field wall
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -74,6 +75,7 @@ def score(
     timed_out: bool,
     energy_j: float,
     peak_motor_temp_c: float,
+    wall_contacts: int = 0,
 ) -> TrialMetrics:
     """``truth``/``estimate``: (n, 3) arrays of x in, y in, heading deg, sampled at ``time``."""
     start = tuple(truth[0])
@@ -129,4 +131,5 @@ def score(
         distance_in=distance,
         energy_j=energy_j,
         peak_motor_temp_c=peak_motor_temp_c,
+        wall_contacts=wall_contacts,
     )

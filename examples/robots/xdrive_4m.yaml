@@ -1,0 +1,41 @@
+# Example robot: 4-motor X-drive. Omni wheels at the corners, turned 45 degrees,
+# each on its own motor, so the robot drives in any direction while turning.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, origin at
+# the center of the footprint, angles counter-clockwise from +x.
+# See docs/conventions.md for the full reference.
+
+version: 1
+name: Example 4-motor X-drive
+
+body:
+  mass_kg: 5.5
+  inertia_kgm2: auto
+  footprint_in: [15, 15]
+  cg_in: [0, 0, 3.5]
+
+drivetrain:
+  type: xdrive
+  wheels:
+    # heading_deg is each wheel's rolling direction. Every wheel rolls forward-ish,
+    # so driving straight ahead turns all four groups forward (positive).
+    - {name: fl, pos_in: [ 5.5,  5.5], heading_deg: -45, type: omni, diameter_in: 3.25}
+    - {name: fr, pos_in: [ 5.5, -5.5], heading_deg:  45, type: omni, diameter_in: 3.25}
+    - {name: bl, pos_in: [-5.5,  5.5], heading_deg:  45, type: omni, diameter_in: 3.25}
+    - {name: br, pos_in: [-5.5, -5.5], heading_deg: -45, type: omni, diameter_in: 3.25}
+  gearing:
+    # The right-side motors face the other way, so they are reversed (negative ports).
+    front_left:  {motors: [1],  cartridge: blue, ratio: "36:60", wheels: [fl]}
+    front_right: {motors: [-2], cartridge: blue, ratio: "36:60", wheels: [fr]}
+    back_left:   {motors: [3],  cartridge: blue, ratio: "36:60", wheels: [bl]}
+    back_right:  {motors: [-4], cartridge: blue, ratio: "36:60", wheels: [br]}
+
+sensors:
+  - {type: imu, port: 10, pos_in: [0, 0]}
+  # Holonomic drives slide sideways, so odometry needs tracking wheels both ways.
+  - type: rotation
+    port: 11
+    tracking_wheel: {pos_in: [0, -1.5], heading_deg: 0, diameter_in: 2.0}
+  - type: rotation
+    port: 12
+    tracking_wheel: {pos_in: [-3, 0], heading_deg: 90, diameter_in: 2.0}

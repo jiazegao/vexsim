@@ -162,3 +162,6 @@ void autonomous() {
 | `loc_error_final_in`, `loc_error_max_in` | the localizer's estimate against the truth |
 | `loc_error_per_100in` | final localization error per 100 in driven |
 | `energy_j`, `peak_motor_temp_c` | battery energy used; the hottest motor |
+| `wall_contacts` | how many times the robot ran into a field wall during the trial; the HTML report shows its mean when any trial touched a wall |
+
+**Drivetrains:** the built-in Python controllers drive the `left` and `right` sides, so they work on differential drives and H-drives. To benchmark an X-drive or mecanum robot, use a PROS project controller (`kind: pros`), which drives whatever motors its code drives, or your own Python controller (`file.py:factory`).

@@ -31,6 +31,7 @@ SUMMARY_METRICS = [
     ("loc_error_per_100in", "localization error per 100 in"),
     ("energy_j", "energy (J)"),
     ("peak_motor_temp_c", "peak motor temperature (C)"),
+    ("wall_contacts", "wall contacts"),
 ]
 
 

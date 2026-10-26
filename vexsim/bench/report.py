@@ -260,6 +260,12 @@ def _fmt(value, digits: int = 2) -> str:
     return f"{value:.{digits}f}"
 
 
+def _wall_contacts(entry: dict) -> str:
+    if not _stat(entry, "wall_contacts", "max"):
+        return "&ndash;"  # the column only shows when some trial hit a wall
+    return _fmt(_stat(entry, "wall_contacts", "mean"), 1)
+
+
 def _html(result: BenchResult, charts: list[tuple[str, bytes | None]], worst_html: str) -> str:
     s = result.loaded.scenario
     summary = result.summary()
@@ -271,6 +277,7 @@ def _html(result: BenchResult, charts: list[tuple[str, bytes | None]], worst_htm
         ("path RMS mean (in)", lambda e: _fmt(_stat(e, "path_rms_in", "mean"))),
         ("localization error mean / p95 (in)", lambda e: _pair(e, "loc_error_final_in")),
         ("energy mean (J)", lambda e: _fmt(_stat(e, "energy_j", "mean"), 0)),
+        ("wall contacts mean", _wall_contacts),
         ("timeouts", lambda e: str(e["timeouts"])),
     ]
     columns = [(c, fn) for c, fn in columns if any(fn(e) != "&ndash;" for e in summary)]

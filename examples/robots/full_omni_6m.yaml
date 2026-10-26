@@ -15,7 +15,7 @@ body:
   battery: v5_default
 
 drivetrain:
-  type: differential            # differential (simulated); xdrive | mecanum | hdrive in Phase 9
+  type: differential            # differential | xdrive | mecanum | hdrive (see the other examples)
   wheels:                       # every wheel is listed explicitly, so any mix of types works
     - {name: lf, pos_in: [ 5.5,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
     - {name: lm, pos_in: [ 0.0,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25}

@@ -26,6 +26,11 @@ class Pose:
     def distance_to(self, other: Pose) -> float:
         return math.hypot(self.x - other.x, self.y - other.y)
 
+    @property
+    def heading_360(self) -> float:
+        """Heading in [0, 360) at 0.1 degree resolution, for display (never "360.0")."""
+        return round(self.heading, 1) % 360.0
+
     def __str__(self) -> str:
         return f"Pose(x={self.x:.2f}, y={self.y:.2f}, heading={self.heading:.1f})"
 
