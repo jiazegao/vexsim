@@ -1,7 +1,7 @@
 # Porting a team's code: 1239E's RCL, MCL and autonomous routines
 
 This guide ports team 1239E's 2026-27 robot code ([jiazegao/1239e_2026-27](https://github.com/jiazegao/1239e_2026-27), commit `fb5a42a`) into vexsim, step by step. The same steps work for any PROS 4 project. The result:
-- the team's code, in `examples/pros_projects/1239e_2026-27`, with three marked edits;
+- the team's code, in `examples/pros_projects/1239e_2026-27`, with four marked edits;
 - the robot, in `examples/robots/1239e_2026-27.yaml`;
 - the field as the team's localization models it, in `examples/fields/1239e_2026-27.yaml`;
 - `examples/scripts/evaluate_1239e.py`, which runs every routine and measures the localization against the simulated truth.
@@ -56,8 +56,8 @@ vexsim build examples/pros_projects/1239e_2026-27
 
 The first builds stopped at `liblvgl/lvgl.h`, at `std::sqrtf`, and at `PID::kP` being protected (before vexsim used the team's `pid.hpp`). All three are handled in vexsim now, so the build succeeds.
 
-## 3. Make three small edits, marked `// vexsim:`
-Each edit is harmless on the robot.
+## 3. Make four small edits, marked `// vexsim:`
+Each edit is harmless on the robot: three are under `#ifdef VEXSIM`, and the fourth uses a clock the robot has too.
 
 **Time from the brain's clock.** `Tracking_Util.hpp`'s `Timer` read `std::chrono::high_resolution_clock`, your computer's clock. In the simulator, the robot's time runs at whatever speed the simulation does, so RCL's and MCL's loop timing and sensor timeouts would be wrong. It now reads `pros::micros()`, which on the robot is the same clock:
 ```cpp
@@ -74,6 +74,11 @@ float elapsedMs() const { return (pros::micros() - startTime) * 0.001f; };
 `vexsim run --env "VEXSIM_AUTON=Right 40"` sets it. A name that doesn't match prints `VEXSIM_AUTON: no routine named "..."`.
 
 **Repeatable randomness.** MCL seeded its particles from `std::random_device`, so no two runs matched. Under `#ifdef VEXSIM` it seeds from `VEXSIM_SEED`, which vexsim always sets to the simulation's `--seed`.
+
+**Choose the localization, and say where to start.** Under `#ifdef VEXSIM`, `startMcl()` reads `VEXSIM_TRACKING` (see [Switching RCL and MCL](#switching-rcl-and-mcl)) and prints the `--start` that matches the pose it sets:
+```
+startMcl: pose (60, 0, 90); start the simulated robot with --start=60,0,0
+```
 
 ## 4. Describe the robot
 `examples/robots/1239e_2026-27.yaml` comes from the code wherever the code says, and is marked "assumed" where it doesn't.
@@ -113,38 +118,65 @@ The routines start with `chassis.setPose(60, 0, 90)` (left side) or `(-60, 0, -9
 vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 \
     --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40"
 ```
-For a right-side routine, use `--start=-60,0,180`. `--headless` prints how far LemLib's pose was from the truth:
+For a right-side routine, use `--start=-60,0,180`; the console's `startMcl:` line says which. `--headless` prints how far LemLib's pose was from the truth:
 ```
-autonomous finished at t = 17.37 s
-  true pose      x   42.50  y   19.66  heading  207.6
-  estimated pose x   42.37  y   21.51  heading  207.7
-  the robot code's pose vs. the true one during autonomous: mean 1.66 in, max 7.00 in (at 7.3 s), final 1.78 in; heading mean 0.53, max 4.3 deg
+[   2.01] startMcl: pose (60, 0, 90); start the simulated robot with --start=60,0,0
+autonomous finished at t = 17.41 s
+  true pose      x   39.50  y   18.87  heading  204.1
+  estimated pose x   39.36  y   19.07  heading  204.1
+  the robot code's pose vs. the true one during autonomous: mean 1.24 in, max 5.82 in (at 7.3 s), final 0.26 in; heading mean 0.51, max 4.6 deg
 ```
 `--record run.csv` logs the true pose, LemLib's (`est_*`), every motor, and each mechanism's angle (`lift_deg`, `effector_wrist_deg`, ...). For example, in Left 40 the wrist steps through the code's 90°, 165° and 60° angles, and `setLift(8)` raises the lift to about 960 motor degrees.
+
+**If LemLib's pose looks stuck at (0, 0, 0).** `chassis.setPose()` works, and LemLib's pose shows up as the estimate (blue in the viewer). Two things make it look stuck:
+- **The simulated robot didn't start where the code thinks it is.** Without `--start`, the robot starts at the field center. The routine's `setPose(60, 0, 90)` takes effect, but in the same instant RCL's front sensor measures the wall 65 in away instead of 5, and moves x back to where the robot really is, near 0. The estimate is then right about the robot, but the robot is in the wrong place. Pass the `--start` the `startMcl:` line gives.
+- **Driver mode.** `--mode driver` runs `initialize()` and `opcontrol()`, not a routine. `initialize()` sets LemLib's pose to (0, 0, 0), which faces +y. Nothing else sets it, and neither RCL nor MCL runs, so the pose only changes as you drive. Start the robot where that pose says, `--start=0,0,90`, or LemLib's axes are turned 90° from the field's. (In `--mode match` the routine runs first, and its MCL task keeps running through driver control, as on the robot.)
+
+### Switching RCL and MCL
+The team's code layers three kinds of localization, with no switch between them:
+
+| Layer | When it runs | How the team's code turns it off |
+|---|---|---|
+| LemLib odometry (drive motors and IMU) | always, from `chassis.calibrate()` in `initialize()` | it can't be; the others correct it |
+| RCL | only as one-shot resets: `startMcl(x, y, θ, resetFront, resetLeft, resetBack, resetRight)` resets from each sensor whose flag is true (every routine passes `resetFront` only). Its background loop (`RclMain.startTracking()`) is never started. | pass `false` for every flag |
+| MCL | from `startMcl()`, which calls `MclMain.startTracking()`: a task that updates every 30 ms and, because the constructor's last argument (`autoSync`) is `true`, pulls LemLib's x and y 5% of the way to its estimate each update | don't call `startTracking()`, or `MclMain.stopTracking()`; or construct it with `autoSync = false` (it runs but doesn't touch LemLib); or `MclMain.setDistSyncProp(0)`. `disableSens(i)` and `disableSensFor(i, ms)` mute single sensors, and `setObstacles()` sets the masks. |
+
+In the simulator, the port's `VEXSIM_TRACKING` switch does this without editing the code:
+
+| `--env VEXSIM_TRACKING=` | RCL reset | MCL |
+|---|---|---|
+| `rcl+mcl` (default) | yes | yes |
+| `mcl` | no | yes |
+| `rcl` | yes | no |
+| `odom` | no | no: LemLib's odometry alone |
+
+```
+vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 \
+    --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40" --env VEXSIM_TRACKING=odom
+```
+Without a code edit, you can also unplug the distance sensors by deleting them from a copy of the robot config: RCL and MCL then get no readings. That is close to `odom` but not identical, since MCL still runs on dead reckoning and still pulls LemLib toward it (within half an inch on these routines).
 
 ## 7. Evaluate the localization
 ```
 python examples/scripts/evaluate_1239e.py --seeds 6 --plot errors.png
 ```
-The script runs every routine twice per seed, from the same slightly-off start (hand placement: σ 0.5 in in x and y, 1° in heading) and with the same sensor noise:
-- **RCL + MCL**: the robot as configured.
-- **Odometry only**: the same robot with its distance sensors unplugged. RCL and MCL get no readings and change nothing, so LemLib's drive-motor odometry runs alone. Unplugging needs no code change: an unplugged sensor reads `PROS_ERR`, which both reject.
+The script runs every routine once per seed and localization mode (`VEXSIM_TRACKING`; `--tracking` picks the modes, by default `rcl+mcl,odom`). Every mode starts from the same slightly-off start (hand placement: σ 0.5 in in x and y, 1° in heading) with the same sensor noise.
 
-Results with 6 seeds (position error between LemLib's pose and the truth, inches; mean over the seeds):
+Results with 6 seeds and all four modes (`--seeds 6 --tracking rcl+mcl,mcl,rcl,odom`; position error between LemLib's pose and the truth, inches; mean over the seeds):
 
-| Routine | Time (s) | RCL + MCL: mean / max / final | Odometry only: mean / max / final |
-|---|---:|---:|---:|
-| Left 40 | 15.4 | **1.6** / 7.5 / **1.5** | 4.6 / 7.3 / 5.9 |
-| Left 30 | 13.7 | **2.6** / 7.8 / **0.8** | 4.1 / 5.7 / 4.2 |
-| Left 30_10 | 16.9 | **1.2** / 5.7 / **0.3** | 3.7 / 6.4 / 5.8 |
-| skills | 17.3 | **1.3** / 6.9 / **0.6** | 3.8 / 5.4 / 5.3 |
-| Right 40 | 15.7 | 3.8 / 9.9 / 5.6 | 5.1 / 8.1 / 6.3 |
-| Right 30 | 13.3 | 6.2 / 16.2 / 8.9 | 4.4 / 6.2 / 5.9 |
-| Right 30_10 | 15.5 | 10.4 / 25.4 / 16.1 | 2.0 / 4.5 / 3.6 |
-| Right 20_10 | 13.7 | 6.8 / 16.8 / 2.5 | 3.7 / 6.2 / 5.9 |
-| alliance1pin | 8.1 | 1.6 / 3.9 / 0.8 | 1.3 / 2.0 / 1.3 |
+| Routine | Time (s) | RCL + MCL: mean / max / final | MCL only | RCL reset only | Odometry only |
+|---|---:|---:|---:|---:|---:|
+| Left 40 | 15.4 | 1.6 / 7.5 / 1.5 | 1.6 / 7.7 / 3.1 | 4.7 / 7.7 / 6.1 | 4.7 / 7.5 / 5.9 |
+| Left 30 | 13.7 | 2.6 / 7.8 / 0.8 | 1.2 / 5.3 / 0.7 | 3.5 / 5.1 / 3.4 | 3.8 / 5.4 / 3.7 |
+| Left 30_10 | 16.9 | 1.2 / 5.7 / 0.3 | 2.3 / 7.9 / 4.2 | 3.4 / 6.4 / 5.7 | 3.7 / 6.6 / 5.9 |
+| skills | 17.3 | 1.3 / 6.9 / 0.6 | 4.0 / 11.4 / 0.7 | 3.3 / 4.7 / 4.5 | 3.5 / 4.9 / 4.7 |
+| Right 40 | 15.8 | 3.8 / 9.9 / 5.6 | 3.4 / 9.0 / 6.0 | 4.9 / 7.9 / 5.9 | 5.0 / 8.1 / 6.0 |
+| Right 30 | 13.3 | 6.2 / 16.2 / 8.9 | 4.4 / 13.0 / 10.2 | 4.5 / 6.6 / 6.4 | 4.5 / 6.7 / 6.4 |
+| Right 30_10 | 15.5 | 10.4 / 25.4 / 16.1 | 3.3 / 10.9 / 0.7 | 1.8 / 4.1 / 3.1 | 1.8 / 4.2 / 3.2 |
+| Right 20_10 | 13.7 | 6.8 / 16.8 / 2.5 | 5.1 / 15.0 / 3.6 | 3.5 / 6.0 / 5.9 | 3.7 / 6.2 / 5.9 |
+| alliance1pin | 8.1 | 1.6 / 3.9 / 0.8 | 2.8 / 6.5 / 4.0 | 1.2 / 2.1 / 1.9 | 1.2 / 2.1 / 1.6 |
 
-The plot at the top shows seed 0. The 108 runs take about 2 minutes on 4 cores.
+The plot at the top shows seed 0 in every mode. The 216 runs take about 3 minutes on 4 cores.
 
 ## 8. Read the results with their limits in mind
 - **Assumed robot and field.** The mass, wheel spacing and element heights are guesses (steps 4 and 5). How far an omni-wheel robot slides in a hard turn depends on them, so the odometry errors are this simulated robot's, not the real one's.
@@ -155,7 +187,9 @@ The plot at the top shows seed 0. The 108 runs take about 2 minutes on 4 cores.
 ## 9. What the simulation found
 **On the left side, RCL and MCL do their job.** LemLib's drive-motor odometry ends 4–6 in off, mostly from fast turns, when the omni wheels skid sideways and the motor encoders can't tell. MCL pulls it back to within 1.5 in by the end. Mid-routine peaks of 6–8 in, right after the hardest turns, last about a second.
 
-**On the right side, MCL often makes it worse than odometry alone.** `Right 30_10` averages 10.4 in with MCL and 2.0 in without. The likely cause is `rightAutonObstacles`, the masks for the right-side routines. They are `leftAutonObstacles` rotated **90°**: every point (x, y) becomes (−y, x). But the right-side start, (−60, 0) facing −x, is the left-side start rotated **180°**. So the masks fit a robot starting at the top of the field. At the right-side start they leave MCL two of its five sensors, where the left side gets four, and as the robot moves they hide some useful beams while letting through some that cross the far half.
+**The RCL start reset is accurate but small.** On its own it removes the placement error along x, and its mean error is the same as odometry alone's or a little below. Its effect on MCL is mixed: MCL without it does better on some routines (Right 30_10 ends 0.7 in off instead of 16) and worse on others (Left 30_10, skills, alliance1pin). The reset moves MCL's starting estimate by under an inch, so this is MCL's sensitivity to where it starts (below), not a problem with RCL.
+
+**On the right side, MCL often makes it worse than odometry alone.** `Right 30_10` averages 10.4 in with RCL and MCL, and 1.8 in with odometry alone. The likely cause is `rightAutonObstacles`, the masks for the right-side routines. They are `leftAutonObstacles` rotated **90°**: every point (x, y) becomes (−y, x). But the right-side start, (−60, 0) facing −x, is the left-side start rotated **180°**. So the masks fit a robot starting at the top of the field. At the right-side start they leave MCL two of its five sensors, where the left side gets four, and as the robot moves they hide some useful beams while letting through some that cross the far half.
 
 Rotating the left masks 180° instead, `(x, y) -> (-x, -y)`, gives:
 ```cpp
@@ -186,7 +220,7 @@ The port keeps the team's masks, since this is their call. The fix is worth tryi
 Ideas to try, in the simulator first: skip MCL updates (or LemLib syncing) while turning fast; inject a few random particles, or call `uniform_reset()`, when every particle's weight collapses. Also, nothing in RCL or MCL corrects the heading (`THETA_SYNC_PROP` and `IMU_VARIANCE` are 0), so a robot placed 1° off stays 1° off all routine; the front pair, both facing the wall at the start, could measure it.
 
 ## 10. Keep the port up to date
-The port is a copy of commit `fb5a42a`. To bring in newer code, copy the team's `src/` and `include/custom/` again, then reapply the three `// vexsim:` edits. Or apply them in the team's own repository: each is inert on the robot (`#ifdef VEXSIM`, or `pros::micros()`), so the team's code would then run in vexsim unchanged.
+The port is a copy of commit `fb5a42a`. To bring in newer code, copy the team's `src/` and `include/custom/` again, then reapply the four `// vexsim:` edits. Or apply them in the team's own repository: each is inert on the robot (`#ifdef VEXSIM`, or `pros::micros()`), so the team's code would then run in vexsim unchanged.
 
 ## Porting your own team's code
 The same steps apply:

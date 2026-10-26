@@ -46,9 +46,11 @@ def test_configs_are_clean():
 def test_left_40_runs_and_localizes(port_exe, in_cache):
     evaluate = load_script()
     with in_cache():
-        result = evaluate.run_one(("Left 40", "RCL + MCL", 0, port_exe))
+        result = evaluate.run_one(("Left 40", "rcl+mcl", 0, port_exe))
+        odometry = evaluate.run_one(("Left 40", "odom", 0, port_exe))
     assert result.finished and 12 < result.seconds < 18
     assert result.mean_in < 4.0 and result.final_in < 4.0
+    assert odometry.final_in > 2 * result.final_in  # MCL corrects what odometry alone misses
 
 
 def test_routines_are_picked_by_name(port_exe):
@@ -59,6 +61,8 @@ def test_routines_are_picked_by_name(port_exe):
     sim.run_for(2.5)  # initialize() calibrates the IMU first
     sim.close()
     assert any('VEXSIM_AUTON: no routine named "Left 99"' in line for line in sim.console)
+    # the routine that ran instead (the first, Left 40) says where the robot should start
+    assert any("start the simulated robot with --start=60,0,0" in line for line in sim.console)
 
 
 def test_run_passes_environment_variables(capsys, monkeypatch):

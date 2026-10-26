@@ -1,18 +1,19 @@
 """Run team 1239E's autonomous routines in vexsim and measure their localization.
 
-Each routine runs twice per seed, from the same slightly-off hand placement and with
-the same sensor noise:
+Each routine runs once per seed and localization mode, from the same slightly-off hand
+placement and with the same sensor noise. The port's VEXSIM_TRACKING switch picks the mode:
 
-- **RCL + MCL**: the robot as configured. LemLib's odometry (drive encoders and IMU)
-  is corrected by the team's distance-sensor localization, as on the robot.
-- **odometry only**: the same robot with its distance sensors unplugged. RCL and MCL
-  get no readings and change nothing, so LemLib's odometry runs alone.
+- ``rcl+mcl`` (RCL + MCL): as on the robot. LemLib's odometry (drive encoders and IMU)
+  is reset by RCL at the start and corrected by MCL throughout.
+- ``odom`` (odometry only): LemLib's odometry alone; no RCL reset, MCL never starts.
+- ``rcl`` (RCL reset only) and ``mcl`` (MCL only): one layer each.
 
 The error is the distance between where LemLib thought the robot was
 (chassis.getPose(), read every 10 ms) and where it really was.
 
     python examples/scripts/evaluate_1239e.py                 # all routines, 3 seeds
     python examples/scripts/evaluate_1239e.py --autons "Left 40,skills" --seeds 1
+    python examples/scripts/evaluate_1239e.py --tracking rcl+mcl,mcl,rcl,odom
     python examples/scripts/evaluate_1239e.py --plot errors.png
 
 See docs/porting_1239e.md.
@@ -50,7 +51,12 @@ AUTONS = {
     "alliance1pin": RIGHT,
     "skills": LEFT,
 }
-CONDITIONS = ("RCL + MCL", "odometry only")
+TRACKING = {  # VEXSIM_TRACKING value -> label
+    "rcl+mcl": "RCL + MCL",
+    "mcl": "MCL only",
+    "rcl": "RCL reset only",
+    "odom": "odometry only",
+}
 PLACEMENT_SD = (0.5, 0.5, 1.0)  # hand placement error: x in, y in, heading deg (std. dev.)
 MAX_SECONDS = 75.0
 
@@ -58,7 +64,7 @@ MAX_SECONDS = 75.0
 @dataclass
 class Result:
     auton: str
-    condition: str
+    tracking: str  # a TRACKING key
     seed: int
     finished: bool
     seconds: float  # autonomous duration
@@ -82,15 +88,10 @@ def run_one(job: tuple[str, str, int, str]) -> Result:
     from vexsim.config import load_field, load_robot
     from vexsim.runtime.simulation import Simulation
 
-    auton, condition, seed, executable = job
-    config = load_robot(ROBOT)
-    if condition == "odometry only":
-        config = config.model_copy(
-            update={"sensors": tuple(s for s in config.sensors if s.type != "distance")}
-        )
-    program = CppProgram(executable, env={"VEXSIM_AUTON": auton})
+    auton, tracking, seed, executable = job
+    program = CppProgram(executable, env={"VEXSIM_AUTON": auton, "VEXSIM_TRACKING": tracking})
     sim = Simulation(
-        config,
+        load_robot(ROBOT),
         program=program,
         field=load_field(FIELD),
         seed=seed,
@@ -108,7 +109,7 @@ def run_one(job: tuple[str, str, int, str]) -> Result:
     error = sim.recorder.pose_error("autonomous")
     return Result(
         auton,
-        condition,
+        tracking,
         seed,
         finished,
         rows[-1][0] - begin,
@@ -120,17 +121,18 @@ def run_one(job: tuple[str, str, int, str]) -> Result:
     )
 
 
-def table(results: list[Result], autons: list[str]) -> str:
-    """Markdown: per routine, each condition's errors averaged over the seeds."""
+def table(results: list[Result], autons: list[str], modes: list[str]) -> str:
+    """Markdown: per routine, each mode's errors averaged over the seeds."""
     lines = [
-        "| routine | time (s) | RCL + MCL: mean / max / final (in) "
-        "| odometry only: mean / max / final (in) |",
-        "|---|---:|---:|---:|",
+        "| routine | time (s) | "
+        + " | ".join(f"{TRACKING[m]}: mean / max / final (in)" for m in modes)
+        + " |",
+        "|---|---:|" + "---:|" * len(modes),
     ]
     for auton in autons:
         cells = []
-        for condition in CONDITIONS:
-            rs = [r for r in results if r.auton == auton and r.condition == condition]
+        for mode in modes:
+            rs = [r for r in results if r.auton == auton and r.tracking == mode]
             mean, peak, final = (
                 np.mean([getattr(r, k) for r in rs]) for k in ("mean_in", "max_in", "final_in")
             )
@@ -138,11 +140,11 @@ def table(results: list[Result], autons: list[str]) -> str:
             note = f" ({unfinished} unfinished)" if unfinished else ""
             cells.append(f"{mean:.1f} / {peak:.1f} / {final:.1f}{note}")
         seconds = np.mean([r.seconds for r in results if r.auton == auton])
-        lines.append(f"| {auton} | {seconds:.1f} | {cells[0]} | {cells[1]} |")
+        lines.append(f"| {auton} | {seconds:.1f} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
-def plot(results: list[Result], autons: list[str], path: Path, seed: int) -> None:
+def plot(results: list[Result], autons: list[str], modes: list[str], path: Path, seed: int) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -167,11 +169,11 @@ def plot(results: list[Result], autons: list[str], path: Path, seed: int) -> Non
         for side in ("left", "bottom"):
             ax.spines[side].set_color(GRID)
         ax.tick_params(colors=TEXT_SECONDARY, labelsize=8)
-        for condition, color in zip(CONDITIONS, SERIES, strict=False):
+        for mode, color in zip(modes, SERIES, strict=False):
             for r in results:
-                if r.auton == auton and r.condition == condition and r.seed == seed:
+                if r.auton == auton and r.tracking == mode and r.seed == seed:
                     t, e = zip(*r.trace, strict=True)
-                    ax.plot(t, e, color=color, linewidth=1.6, label=condition)
+                    ax.plot(t, e, color=color, linewidth=1.6, label=TRACKING[mode])
         ax.set_title(auton, color=TEXT_PRIMARY, fontsize=9, loc="left")
     for ax in axes[:, 0]:
         ax.set_ylabel("position error (in)", color=TEXT_SECONDARY, fontsize=8)
@@ -184,8 +186,8 @@ def plot(results: list[Result], autons: list[str], path: Path, seed: int) -> Non
     )
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(
-        handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.95), ncol=2, frameon=False,
-        fontsize=9, labelcolor=TEXT_PRIMARY,
+        handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.95), ncol=len(modes),
+        frameon=False, fontsize=9, labelcolor=TEXT_PRIMARY,
     )  # fmt: skip
     fig.tight_layout(rect=(0, 0, 1, 0.91))
     fig.savefig(path, dpi=110, facecolor=SURFACE)
@@ -197,8 +199,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--autons", help="comma-separated routine names (default: all)")
     p.add_argument("--seeds", type=int, default=3)
     p.add_argument("--workers", type=int, default=os.cpu_count() or 2)
+    p.add_argument(
+        "--tracking",
+        default="rcl+mcl,odom",
+        help=f"comma-separated localization modes to compare ({', '.join(TRACKING)}); "
+        "default rcl+mcl,odom",
+    )
     p.add_argument("--plot", help="save error-over-time plots (first seed) to this PNG")
     args = p.parse_args(argv)
+    modes = [m.strip() for m in args.tracking.split(",")]
+    if any(m not in TRACKING for m in modes):
+        print(f"--tracking takes {', '.join(TRACKING)}")
+        return 2
     autons = [a.strip() for a in args.autons.split(",")] if args.autons else list(AUTONS)
     unknown = [a for a in autons if a not in AUTONS]
     if unknown:
@@ -209,23 +221,23 @@ def main(argv: list[str] | None = None) -> int:
 
     build = build_project(PROJECT, log=print)
     jobs = [
-        (auton, condition, seed, str(build.executable))
+        (auton, mode, seed, str(build.executable))
         for auton in autons
-        for condition in CONDITIONS
+        for mode in modes
         for seed in range(args.seeds)
     ]
     print(f"running {len(jobs)} simulations on {args.workers} workers...")
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(run_one, jobs))
     print()
-    print(table(results, autons))
+    print(table(results, autons, modes))
     print(
         f"\nAveraged over {args.seeds} seed(s); each seed has its own placement error "
         f"(std. dev. {PLACEMENT_SD[0]} in, {PLACEMENT_SD[1]} in, {PLACEMENT_SD[2]} deg) "
-        "and sensor noise, the same for both conditions."
+        "and sensor noise, the same in every mode."
     )
     if args.plot:
-        plot(results, autons, Path(args.plot), seed=0)
+        plot(results, autons, modes, Path(args.plot), seed=0)
         print(f"wrote {args.plot}")
     return 0 if all(r.finished for r in results) else 1
 

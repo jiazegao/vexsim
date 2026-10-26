@@ -574,7 +574,7 @@ if (const char* name = std::getenv("AUTON")) selected = find_routine(name);
 - **Built from source.** The LemLib template installs LemLib precompiled for the V5's ARM CPU, which can't run on a PC. vexsim reads LemLib's version from `project.pros`, fetches that release's source from GitHub (with git, or as a zip), and compiles it once per version and compiler. Offline, set `VEXSIM_LEMLIB_SOURCE` to a checkout. LemLib 0.5.x (for PROS 4) is tested.
 - **`ASSET()` works:** every file in `static/` is embedded under the name `ASSET()` expects (`static/example.txt` is `ASSET(example_txt)`).
 - **LemLib's pose shows up on its own** once `chassis.calibrate()` starts its odometry.
-- **Start pose:** `chassis.setPose(x, y, theta)` is `--start x,y,(90 - theta)`.
+- **Start pose:** `chassis.setPose(x, y, theta)` is `--start x,y,(90 - theta)`. Start the simulated robot there: code that resets its pose from sensors (wall resets, a particle filter) corrects LemLib to wherever the simulated robot really is, so a wrong `--start` looks like `setPose` being ignored.
 - **Edited LemLib headers work as on the robot.** If the project has a complete copy of `include/lemlib/` (or `include/fmt/`) that differs from the release's, its code compiles against its own copy while LemLib itself is built from source, and the build notes which headers differ. Edits must keep class layouts the same (access and `const` changes are fine; new data members are not).
 
 ![LemLib's example program in the simulator](docs/img/lemlib_template.png)
@@ -805,19 +805,19 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
 ---
 
 ## 12. Porting a team's code
-[docs/porting_1239e.md](docs/porting_1239e.md) ports team 1239E's 2026-27 code step by step: LemLib with distance-sensor wall resets (RCL), a 2048-particle Monte Carlo localizer (MCL), a lift and end effector, an LVGL auton selector, and nine autonomous routines. It runs with three small marked edits:
+[docs/porting_1239e.md](docs/porting_1239e.md) ports team 1239E's 2026-27 code step by step: LemLib with distance-sensor wall resets (RCL), a 2048-particle Monte Carlo localizer (MCL), a lift and end effector, an LVGL auton selector, and nine autonomous routines. It runs with four small marked edits:
 ```
 vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40"
-python examples/scripts/evaluate_1239e.py --seeds 6 --plot errors.png
+python examples/scripts/evaluate_1239e.py --seeds 6 --tracking rcl+mcl,mcl,rcl,odom --plot errors.png
 ```
-The evaluation script runs every routine with and without the distance sensors, and measures LemLib's pose against the truth.
+`--env VEXSIM_TRACKING=odom|rcl|mcl|rcl+mcl` switches the team's localization layers (LemLib's odometry alone, RCL's start reset, MCL, or both; both by default), and the routine prints the `--start` that matches the pose it sets. The evaluation script runs every routine in each mode and measures LemLib's pose against the truth.
 
 ![1239E routines: LemLib's pose vs. the true pose](docs/img/1239e_localization.png)
 
 **The steps for any team's code:**
 1. **Take stock** of every device, library and system call, against [what's simulated](#whats-simulated).
 2. **Copy** `src/`, your own headers and `project.pros`, leaving out what PROS installs. Run `vexsim build`, and fix what doesn't compile.
-3. **Make small, inert edits:** replace wall-clock timing with `pros::millis()` or `micros()`; read the routine's name from an environment variable under `#ifdef VEXSIM`; seed random numbers from `VEXSIM_SEED`.
+3. **Make small, inert edits:** replace wall-clock timing with `pros::millis()` or `micros()`; read the routine's name from an environment variable under `#ifdef VEXSIM`; seed random numbers from `VEXSIM_SEED`; optionally, add switches for experiments (like `VEXSIM_TRACKING`).
 4. **Write the robot config** from your code's ports, gearing and sensor offsets (convert `chassis.setPose` and offsets as in [Frames](#frames-and-angles)). Measure the rest, then [calibrate](#11-calibrating-to-your-robot).
 5. **Write the field config**, with element heights if your sensors care about them.
 6. **Run each routine** headless, and compare the pose your code believes with the truth.

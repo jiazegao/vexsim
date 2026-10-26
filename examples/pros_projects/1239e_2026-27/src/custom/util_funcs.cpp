@@ -5,7 +5,10 @@
 #include "custom/configs.hpp"
 #include "custom/auton_selector.hpp"
 #include <cmath>
+#include <cstdio>  // vexsim
+#include <cstdlib>  // vexsim
 #include <numbers>
+#include <string>  // vexsim
 
 #include "custom/MclTracking.hpp"
 #include "pros/misc.h"
@@ -192,6 +195,20 @@ void startMcl(float x, float y, float vexTheta, bool resetFront, bool resetLeft,
     chassis.setPose(x, y, vexTheta);
 	RclMain.setRclPose(p);
     
+#ifdef VEXSIM
+    // vexsim: say where the simulated robot should start for this pose (LemLib's theta is
+    // clockwise from +y), and let VEXSIM_TRACKING pick the localization: "odom" (LemLib's
+    // odometry alone), "rcl" (the start reset only), "mcl" (MCL only), or the default "rcl+mcl".
+    std::printf("startMcl: pose (%g, %g, %g); start the simulated robot with --start=%g,%g,%g\n",
+                x, y, vexTheta, x, y, std::fmod(450.0f - vexTheta, 360.0f));
+    const char* tracking = std::getenv("VEXSIM_TRACKING");
+    const std::string use = tracking ? tracking : "rcl+mcl";
+    if (use.find("rcl") == std::string::npos) resetFront = resetLeft = resetBack = resetRight = false;
+    const bool useMcl = use.find("mcl") != std::string::npos;
+#else
+    const bool useMcl = true;
+#endif
+
     // Perform RCL Resets
     if (resetFront) RclMain.updateBotPose(&frontL_rcl);
     if (resetLeft) RclMain.updateBotPose(&left_rcl);
@@ -202,7 +219,7 @@ void startMcl(float x, float y, float vexTheta, bool resetFront, bool resetLeft,
 	MclMain.set_pose(chassis.getPose().x, chassis.getPose().y, chassis.getPose().theta);
 
     // Start MCL Tracking
-    MclMain.startTracking();
+    if (useMcl) MclMain.startTracking();  // vexsim: if (useMcl)
 }
 
 void initLog() {
