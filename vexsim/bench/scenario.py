@@ -133,15 +133,23 @@ class Randomize(_Model):
 
 
 class ControllerSpec(_Model):
-    """A controller to compare: a built-in kind with options, or ``file.py:factory``.
+    """A controller to compare: a built-in kind with options, ``file.py:factory``, or
+    ``pros`` with a PROS project.
 
     A factory is called as ``factory(task, geometry, **options)`` and returns a
-    controller with ``step(pose, frame, dt)`` and ``done()``.
+    controller with ``step(pose, frame, dt)`` and ``done()``. A PROS project's
+    autonomous() reads the task with ``vexsim::benchmark_task()`` and does its own
+    localization; ``options`` reach it as ``task.option(name, fallback)``.
     """
 
     name: str
     kind: str | None = None  # default: the task's first built-in kind
+    project: str | None = None  # kind: pros; relative to the scenario file
     options: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def native(self) -> bool:
+        return self.kind == "pros"
 
 
 class Scenario(_Model):
@@ -206,13 +214,25 @@ def _check_scenario(s: Scenario) -> list:
             )
         names.add(c.name)
         kind = c.kind or kinds[0]
+        if kind == "pros":
+            if not c.project:
+                issues.append(
+                    ConfigIssue(
+                        "error", f"controllers[{i}].project", "kind: pros needs a PROS project"
+                    )
+                )
+            continue
+        if c.project:
+            issues.append(
+                ConfigIssue("error", f"controllers[{i}].project", "only kind: pros takes a project")
+            )
         if ":" not in kind and kind not in kinds:
             issues.append(
                 ConfigIssue(
                     "error",
                     f"controllers[{i}].kind",
                     f"{kind!r} can't do a {s.task.type} task (built-ins: {', '.join(kinds)}; "
-                    "or give file.py:factory)",
+                    "or give file.py:factory, or pros with a project)",
                 )
             )
     if s.randomize.battery_soc and s.randomize.battery_soc[0] > s.randomize.battery_soc[1]:

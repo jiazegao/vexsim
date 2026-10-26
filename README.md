@@ -5,9 +5,9 @@ A VEX V5 robot mechanics simulator. It models:
 - the V5 motor, including current limiting, heat and battery sag
 - sensors and odometry, with realistic noise
 
-It's built to test localization and motion-control algorithms, and to run unmodified PROS 4 robot code (LemLib support is next).
+It's built to test localization and motion-control algorithms, and to run unmodified PROS 4 and LemLib robot code.
 
-**Status: Phases 1-7 of 10 are done**:
+**Status: Phases 1-8 of 10 are done**:
 - configs and world loop
 - V5 motor, thermal, battery and power models
 - full-omni drivetrain and chassis, with drift, weight transfer and traction limits
@@ -15,8 +15,9 @@ It's built to test localization and motion-control algorithms, and to run unmodi
 - a PROS-style Python API, LemLib-style motions (PID, boomerang, pure pursuit, RAMSETE, motion profiles) and a live viewer you can drive with keyboard or gamepad
 - Monte-Carlo benchmarks of localizers and controllers, with HTML reports
 - unmodified PROS 4 C++ projects, compiled for your PC and run in lockstep with the physics
+- LemLib projects, with LemLib built from source, `ASSET()` path files, and LemLib motions as benchmark controllers
 
-LemLib (built from source) comes next in Phase 8. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
+Field wall collisions and more drivetrains come next in Phase 9. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
 
 ## Install
 
@@ -77,6 +78,12 @@ vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/mi
 - **Determinism:** simulated time only moves when every task is blocked, so runs repeat exactly.
 - **Isolation:** a crash or an infinite loop ends the run with the task's name instead of taking the simulator down.
 
+**LemLib projects** run unchanged too. vexsim fetches the LemLib version your `project.pros` lists and builds it from source; `ASSET()` path files work, and LemLib's pose shows in the viewer:
+```
+vexsim run examples/robots/lemlib_example.yaml --program examples/pros_projects/lemlib_template --start 0,0,90
+```
+![LemLib's example program in the simulator](docs/img/lemlib_template.png)
+
 See [docs/cpp.md](docs/cpp.md) for setup, what's simulated, and the PROS 4 behaviors it reproduces.
 
 **Benchmark algorithms**: run a scenario across many seeds for every localizer x controller, in parallel:
@@ -91,7 +98,7 @@ S-curve under a mid-path shove: 400 trials in 97 s
   drive encoders + IMU / pure pursuit       18%     3.58 /  6.52 in      4.56 /  7.76 in
   drive encoders + IMU / RAMSETE            18%     3.07 /  5.12 in      2.08 /  4.54 in
 ```
-It writes `report.html` (self-contained), CSVs, charts and replayable worst cases. Plug in your own localizers and controllers by file. See [docs/benchmarking.md](docs/benchmarking.md).
+It writes `report.html` (self-contained), CSVs, charts and replayable worst cases. Plug in your own localizers and controllers by file, or a PROS project, such as LemLib's motions against the Python ones (`examples/scenarios/lemlib_vs_python.yaml`). See [docs/benchmarking.md](docs/benchmarking.md).
 
 **Check a robot config** and see what the simulator will build from it:
 ```
@@ -226,7 +233,7 @@ vexsim/
   bridge/    PROS 4 shim headers and robot host runtime (C++), `vexsim build`, the host process
   viz/       live viewer (pygame); plots (motor curves, drift, odometry, telemetry)
   cli.py     `vexsim` command
-examples/    robot and field configs, example Python program and PROS 4 project, benchmark scenarios
+examples/    robot and field configs, example Python program, PROS 4 and LemLib projects, scenarios
 docs/        conventions, physics models and parameter sources, guides for Python programs, C++
              (PROS) code and benchmarking, and an example 100-seed benchmark report
 tests/       including a C++ test project for the bridge (tests/cpp/)

@@ -224,7 +224,14 @@ def write_report(result: BenchResult, out_dir: str | Path, *, worst_cases: bool 
         controllers = {c.name: c for c in result.loaded.controllers}
         for loc, ctrl in result.combos():
             row = result.worst(loc, ctrl)
-            trial = run_trial(result.loaded, row["seed"], loc, controllers[ctrl], record=True)
+            trial = run_trial(
+                result.loaded,
+                row["seed"],
+                loc,
+                controllers[ctrl],
+                record=True,
+                executable=result.executables.get(ctrl),
+            )
             trials[(loc, ctrl)] = trial
             name = f"worst_{slug(loc)}__{slug(ctrl)}.csv"
             trial.telemetry.recorder.write_csv(out / name)

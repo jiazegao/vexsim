@@ -8,6 +8,7 @@
 
 #include "pros/device.hpp"
 #include "pros/imu.h"
+#include "pros/error.h"
 
 namespace pros {
 

@@ -1,7 +1,6 @@
 """The C++ bridge: building PROS projects, the lockstep scheduler, and PROS device semantics.
 
-These tests compile C++ with g++. Without a compiler they are skipped, unless
-VEXSIM_REQUIRE_CXX is set (as in CI), which turns the skip into a failure.
+They need g++ (see conftest.py for how they skip without one).
 """
 
 from __future__ import annotations
@@ -10,13 +9,12 @@ import os
 import re
 import shutil
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from vexsim.algorithms.localization.base import Pose
-from vexsim.bridge.build import BuildError, build_project, find_toolchain
+from vexsim.bridge.build import BuildError, build_project
 from vexsim.bridge.host import HostError, RobotHost
 from vexsim.bridge.program import CppProgram
 from vexsim.config import load_robot
@@ -31,45 +29,13 @@ TEST_PROJECT = Path(__file__).parent / "cpp" / "bridge_test"
 
 
 @pytest.fixture(scope="session")
-def cache_dir(tmp_path_factory):
-    try:
-        toolchain = find_toolchain()
-        problems = toolchain.problems()
-        if problems:
-            raise BuildError("; ".join(problems))
-    except BuildError as exc:
-        if os.environ.get("VEXSIM_REQUIRE_CXX"):
-            raise
-        pytest.skip(f"no usable C++ compiler: {exc}")
-    return tmp_path_factory.mktemp("vexsim-build-cache")
-
-
-@contextmanager
-def using_cache(path: Path):
-    old = os.environ.get("VEXSIM_CACHE_DIR")
-    os.environ["VEXSIM_CACHE_DIR"] = str(path)
-    try:
-        yield
-    finally:
-        if old is None:
-            del os.environ["VEXSIM_CACHE_DIR"]
-        else:
-            os.environ["VEXSIM_CACHE_DIR"] = old
-
-
-def build(project: Path, cache: Path, **kwargs):
-    with using_cache(cache):
-        return build_project(project, **kwargs)
+def test_exe(build):
+    return build(TEST_PROJECT).executable
 
 
 @pytest.fixture(scope="session")
-def test_exe(cache_dir):
-    return build(TEST_PROJECT, cache_dir).executable
-
-
-@pytest.fixture(scope="session")
-def example_exe(cache_dir):
-    return build(EXAMPLE, cache_dir).executable
+def example_exe(build):
+    return build(EXAMPLE).executable
 
 
 def run_host(exe, scenario, *, until_ms=500, modes=((0, "initialize", 0),), busy_timeout_s=5.0):
@@ -110,35 +76,35 @@ def test_example_builds_unchanged_ignoring_its_sdk_headers(example_exe):
     assert example_exe.is_file()
 
 
-def test_build_is_incremental(cache_dir, tmp_path):
+def test_build_is_incremental(build, tmp_path):
     project = tmp_path / "proj"
     shutil.copytree(EXAMPLE, project)
-    first = build(project, cache_dir)
+    first = build(project)
     assert (first.compiled, first.total, first.kernel) == (2, 2, "4.2.1")
-    assert build(project, cache_dir).compiled == 0
+    assert build(project).compiled == 0
     later = time.time() + 10
     os.utime(project / "src" / "main.cpp", (later, later))
-    assert build(project, cache_dir).compiled == 1
+    assert build(project).compiled == 1
     os.utime(project / "include" / "drive.hpp", (later + 10, later + 10))
-    assert build(project, cache_dir).compiled == 2  # both sources include it
+    assert build(project).compiled == 2  # both sources include it
 
 
-def test_compile_errors_point_at_the_project(cache_dir, tmp_path):
+def test_compile_errors_point_at_the_project(build, tmp_path):
     project = tmp_path / "broken"
     (project / "src").mkdir(parents=True)
     (project / "src" / "main.cpp").write_text('#include "api.h"\nvoid f() { undefined_thing(); }\n')
     with pytest.raises(BuildError) as err:
-        build(project, cache_dir)
+        build(project)
     assert str(project / "src" / "main.cpp") in str(err.value)
     assert "undefined_thing" in str(err.value)
     assert "stage" not in str(err.value)
 
 
-def test_cpp_linkage_competition_function_is_reported(cache_dir, tmp_path):
+def test_cpp_linkage_competition_function_is_reported(build, tmp_path):
     project = tmp_path / "linkage"
     (project / "src").mkdir(parents=True)
     (project / "src" / "main.cpp").write_text('#include "api.h"\nvoid autonomous() {}\n')
-    result = build(project, cache_dir)
+    result = build(project)
     assert any("autonomous() with C++ linkage" in note for note in result.notes)
 
 

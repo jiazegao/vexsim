@@ -1,0 +1,71 @@
+{
+    "py/object": "pros.conductor.project.Project",
+    "py/state": {
+        "project_name": "lemlib_template",
+        "target": "v5",
+        "upload_options": {},
+        "templates": {
+            "kernel": {
+                "name": "kernel",
+                "py/object": "pros.conductor.templates.local_template.LocalTemplate",
+                "target": "v5",
+                "version": "4.2.1",
+                "system_files": [
+                    "include/api.h",
+                    "include/pros/motors.hpp",
+                    "include/pros/motors.h",
+                    "include/pros/rtos.hpp",
+                    "include/pros/rtos.h",
+                    "firmware/libpros.a",
+                    "firmware/libc.a",
+                    "firmware/libm.a",
+                    "firmware/v5.ld",
+                    "firmware/v5-common.ld",
+                    "firmware/v5-hot.ld",
+                    "common.mk"
+                ],
+                "user_files": [
+                    "include/main.h",
+                    "src/main.cpp",
+                    "Makefile",
+                    ".gitignore"
+                ]
+            },
+            "LemLib": {
+                "name": "LemLib",
+                "py/object": "pros.conductor.templates.local_template.LocalTemplate",
+                "target": "v5",
+                "version": "0.5.6",
+                "system_files": [
+                    "include/lemlib/api.hpp",
+                    "include/lemlib/asset.hpp",
+                    "include/lemlib/chassis/chassis.hpp",
+                    "include/lemlib/chassis/odom.hpp",
+                    "include/lemlib/chassis/trackingWheel.hpp",
+                    "include/lemlib/driveCurve.hpp",
+                    "include/lemlib/exitcondition.hpp",
+                    "include/lemlib/logger/baseSink.hpp",
+                    "include/lemlib/logger/buffer.hpp",
+                    "include/lemlib/logger/infoSink.hpp",
+                    "include/lemlib/logger/logger.hpp",
+                    "include/lemlib/logger/message.hpp",
+                    "include/lemlib/logger/stdout.hpp",
+                    "include/lemlib/logger/telemetrySink.hpp",
+                    "include/lemlib/pid.hpp",
+                    "include/lemlib/pose.hpp",
+                    "include/lemlib/timer.hpp",
+                    "include/lemlib/util.hpp",
+                    "include/fmt/args.h",
+                    "include/fmt/core.h",
+                    "include/fmt/format-inl.h",
+                    "include/fmt/format.h",
+                    "include/fmt/LICENSE",
+                    "firmware/hot-cold-asset.mk",
+                    "firmware/LemLib.a",
+                    "static/example.txt"
+                ],
+                "user_files": []
+            }
+        }
+    }
+}

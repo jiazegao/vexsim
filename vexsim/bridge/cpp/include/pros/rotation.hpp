@@ -8,6 +8,7 @@
 
 #include "pros/device.hpp"
 #include "pros/rotation.h"
+#include "pros/error.h"
 
 namespace pros {
 inline namespace v5 {

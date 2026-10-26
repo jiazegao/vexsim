@@ -357,6 +357,7 @@ int main() {
 				pending_phase = nullptr;
 			}
 			std::uint64_t next = sched_run();
+			devices_poll_pose();
 			devices_flush_commands();
 			std::string reply = take_reply();
 			reply += next == NEVER ? std::string("W -1\n") : "W " + std::to_string(next) + "\n";

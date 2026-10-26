@@ -158,7 +158,8 @@ class Simulation:
         self.robot = self.world.add_system(Robot(config, pose=si_start, battery_soc=battery_soc))
         self.sensors = SensorSuite(self.robot, self.world.rng, field=self.field, noise=noise)
         self.sensors.attach(self.world)
-        baselines = baseline_localizers(config)
+        native = bool(getattr(program, "native", False))
+        baselines = [] if native else baseline_localizers(config)  # robot code localizes itself
         self.localizer = localizer or (baselines[-1] if baselines else None)
         self.localizer_ready = False
         self.start_pose = start  # where the robot really is
@@ -188,7 +189,8 @@ class Simulation:
 
     # --- program control -----------------------------------------------------------------
 
-    def start(self, mode: str) -> None:
+    def start(self, mode: str, *, autonomous_limit_s: float | None = None) -> None:
+        """Begin a competition mode; ``autonomous_limit_s`` caps the autonomous period."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {sorted(MODES)}")
         if (
@@ -198,7 +200,10 @@ class Simulation:
         ):
             raise ValueError("the program has no autonomous() function")
         self.mode = mode
-        self._phases = list(MODES[mode])
+        self._phases = [
+            (name, autonomous_limit_s if name == "autonomous" and autonomous_limit_s else limit)
+            for name, limit in MODES[mode]
+        ]
         self._current = None
 
     @property

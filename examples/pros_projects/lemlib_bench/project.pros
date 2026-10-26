@@ -1,0 +1,20 @@
+{
+    "py/object": "pros.conductor.project.Project",
+    "py/state": {
+        "project_name": "lemlib_bench",
+        "target": "v5",
+        "upload_options": {},
+        "templates": {
+            "kernel": {
+                "name": "kernel",
+                "target": "v5",
+                "version": "4.2.1"
+            },
+            "LemLib": {
+                "name": "LemLib",
+                "target": "v5",
+                "version": "0.5.6"
+            }
+        }
+    }
+}

@@ -19,7 +19,7 @@ from vexsim.algorithms.control.motions import (
     ProfiledDrive,
     TurnToHeading,
 )
-from vexsim.algorithms.control.paths import PurePursuit, Ramsete, generate_trajectory
+from vexsim.algorithms.control.paths import PurePursuit, Ramsete, generate_trajectory, spline
 from vexsim.algorithms.localization.base import Localizer, Pose
 from vexsim.algorithms.localization.baselines import baseline_localizers
 from vexsim.bench.metrics import TrialMetrics, score
@@ -30,6 +30,8 @@ from vexsim.core.rng import RngStreams
 from vexsim.devices.devices import ImuDevice, RotationDevice
 from vexsim.physics.world import PRIORITY_RECORD
 from vexsim.runtime.simulation import Simulation
+
+ROBOT_CODE = "robot code"  # the localizer of a PROS-project controller: its own
 
 
 def _load_factory(ref: str, base_dir: Path):
@@ -122,14 +124,19 @@ class TrialResult:
         }
 
 
-def run_trial(
-    loaded: LoadedScenario,
-    seed: int,
-    localizer_ref: str,
-    controller: ControllerSpec,
-    *,
-    record: bool = False,
-) -> TrialResult:
+@dataclass
+class _Setup:
+    """What a seed randomizes, identical for every localizer and controller."""
+
+    config: RobotConfig
+    field: Any
+    soc: float
+    nominal: Pose  # where the robot believes it starts
+    true_start: Pose
+    params: dict[str, float]
+
+
+def _setup(loaded: LoadedScenario, seed: int) -> _Setup:
     s = loaded.scenario
     rng = RngStreams(seed).stream("bench.randomize")
     base_config = load_robot(loaded.path(s.robot))
@@ -141,6 +148,55 @@ def run_trial(
     dx, dy = rng.normal(0.0, s.randomize.start_xy_in, size=2) if s.randomize.start_xy_in else (0, 0)
     dh = rng.normal(0.0, s.randomize.start_heading_deg) if s.randomize.start_heading_deg else 0.0
     true_start = Pose(nominal.x + dx, nominal.y + dy, nominal.heading + dh)
+    return _Setup(config, field_cfg, soc, nominal, true_start, params)
+
+
+def _lemlib(pose_x: float, pose_y: float, heading: float) -> str:
+    """A pose in the LemLib convention (theta clockwise from +y), as VEXSIM_TASK writes it."""
+    return f"{pose_x:.6g},{pose_y:.6g},{90.0 - heading:.6g}"
+
+
+def encode_task(task, start: Pose, time_limit_s: float, options: dict[str, Any]) -> str:
+    """The task for a PROS project, read in C++ with vexsim::benchmark_task() (vexsim/sim.hpp)."""
+    fields = [
+        f"type={task.type}",
+        f"start={_lemlib(start.x, start.y, start.heading)}",
+        f"timeout_ms={round(time_limit_s * 1000)}",
+    ]
+    if task.type == "move_to_point":
+        fields += [f"target={_lemlib(task.x, task.y, 90.0)}", f"forwards={int(task.forwards)}"]
+    elif task.type == "move_to_pose":
+        fields.append(f"target={_lemlib(task.x, task.y, task.heading)}")
+    elif task.type == "turn_to_heading":
+        fields.append(f"target={_lemlib(0.0, 0.0, task.heading)}")
+    elif task.type == "drive":
+        fields.append(f"distance={task.distance_in:.6g}")
+    elif task.type == "follow":
+        speed = float(options.get("path_speed", 100))
+        points = spline(task.waypoints, 1.0)
+        fields.append("path=" + " ".join(f"{x:.4f},{y:.4f},{speed:g}" for x, y in points))
+    fields += [f"opt.{k}={v}" for k, v in options.items()]
+    return ";".join(fields)
+
+
+def run_trial(
+    loaded: LoadedScenario,
+    seed: int,
+    localizer_ref: str,
+    controller: ControllerSpec,
+    *,
+    record: bool = False,
+    executable: str | Path | None = None,
+) -> TrialResult:
+    """One trial. A PROS-project controller (kind: pros) needs its built ``executable``."""
+    if controller.native:
+        if executable is None:
+            raise ValueError(f"controller {controller.name!r}: build its project first")
+        return _run_pros_trial(loaded, seed, controller, Path(executable), record=record)
+    s = loaded.scenario
+    setup = _setup(loaded, seed)
+    config, field_cfg, soc = setup.config, setup.field, setup.soc
+    nominal, true_start, params = setup.nominal, setup.true_start, setup.params
 
     localizer = make_localizer(localizer_ref, config, loaded.base_dir)
     geometry = ChassisGeometry.from_config(config)
@@ -215,6 +271,88 @@ def run_trial(
         true_start=(true_start.x, true_start.y, true_start.heading),
         battery_soc=soc,
         params=params,
+        time=data[:, 0],
+        truth=data[:, 1:4],
+        estimate=data[:, 4:7],
+        telemetry=sim if record else None,
+    )
+
+
+def _run_pros_trial(
+    loaded: LoadedScenario,
+    seed: int,
+    controller: ControllerSpec,
+    executable: Path,
+    *,
+    record: bool,
+) -> TrialResult:
+    """The robot code runs initialize() (calibration) and then autonomous(), which reads
+    the task; it localizes itself and the pose it reports is the estimate."""
+    from vexsim.bridge.program import CppProgram
+
+    s = loaded.scenario
+    setup = _setup(loaded, seed)
+    env = {"VEXSIM_TASK": encode_task(s.task, setup.nominal, s.time_limit_s, controller.options)}
+    sim = Simulation(
+        setup.config,
+        program=CppProgram(executable, env=env),
+        field=setup.field,
+        seed=seed,
+        noise=s.noise,
+        start=setup.true_start,
+        believed_start=setup.nominal,
+        battery_soc=setup.soc,
+        record=record,
+        echo=None,
+    )
+    state: dict[str, Any] = {"t0": None, "energy": 0.0, "peak": 0.0}
+    samples: list[tuple] = []
+
+    def sample(w):
+        if state["t0"] is None:
+            if sim.phase != "autonomous":
+                return
+            state["t0"] = w.time
+            _schedule_disturbances(sim, s.disturbances)
+        truth = Pose.from_si(sim.robot.pose)
+        est = sim.estimated_pose
+        power = sim.robot.power
+        state["energy"] += power.bus_voltage * power.battery_current_a * 0.01
+        state["peak"] = max(state["peak"], max(m.temperature_c for m in sim.robot.motors.values()))
+        t = w.time - state["t0"]
+        samples.append((t, truth.x, truth.y, truth.heading, est.x, est.y, est.heading))
+
+    sim.world.every(10, sample, priority=PRIORITY_RECORD)
+    sim.start("autonomous", autonomous_limit_s=s.time_limit_s)
+    try:
+        if not sim.run_until_finished(s.time_limit_s + 30.0):
+            raise RuntimeError(f"seed {seed}: trial did not finish")
+        done_at = sim.world.time - state["t0"]
+        sim.run_for(s.settle_window_s)
+    finally:
+        sim.close()
+
+    data = np.array(samples)
+    timed_out = done_at >= s.time_limit_s - 1e-6
+    metrics = score(
+        s.task,
+        data[:, 0],
+        data[:, 1:4],
+        data[:, 4:7],
+        completion_time_s=done_at,
+        timed_out=timed_out,
+        energy_j=state["energy"],
+        peak_motor_temp_c=state["peak"],
+    )
+    true_start = setup.true_start
+    return TrialResult(
+        seed=seed,
+        localizer=ROBOT_CODE,
+        controller=controller.name,
+        metrics=metrics,
+        true_start=(true_start.x, true_start.y, true_start.heading),
+        battery_soc=setup.soc,
+        params=setup.params,
         time=data[:, 0],
         truth=data[:, 1:4],
         estimate=data[:, 4:7],

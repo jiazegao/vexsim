@@ -6,6 +6,7 @@
 #include <string>
 
 #include "pros/misc.h"
+#include "pros/error.h"
 
 namespace pros {
 inline namespace v5 {

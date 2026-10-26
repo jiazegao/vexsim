@@ -6,6 +6,7 @@
 #include <string>
 
 #include "pros/llemu.h"
+#include "pros/error.h"
 
 namespace pros {
 namespace lcd {

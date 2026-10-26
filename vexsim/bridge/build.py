@@ -162,26 +162,36 @@ class BuildResult:
     linked: bool = True  # False when the executable was already up to date
     kernel: str | None = None  # PROS kernel version from project.pros
     notes: list[str] = field(default_factory=list)
+    lemlib: str | None = None  # LemLib version built from source, if the project uses it
 
 
-def project_info(project: Path) -> tuple[str | None, list[str]]:
-    """The PROS kernel version and template names listed in project.pros, if present."""
+@dataclass(frozen=True)
+class Template:
+    """A PROS template applied to the project (kernel, LemLib, ...), from project.pros."""
+
+    version: str | None
+    system_files: tuple[str, ...] = ()  # files the template owns; vexsim replaces them
+
+
+def project_templates(project: Path) -> dict[str, Template]:
+    """The templates listed in project.pros (empty if there is none or it can't be read)."""
     path = project / "project.pros"
     if not path.is_file():
-        return None, []
+        return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None, []
+        return {}
     state = data.get("py/state", data)
-    templates = state.get("templates", {}) if isinstance(state, dict) else {}
-    kernel = None
-    names = []
-    for name, info in templates.items():
-        names.append(name)
-        if name == "kernel" and isinstance(info, dict):
-            kernel = info.get("version") or info.get("py/state", {}).get("version")
-    return kernel, names
+    entries = state.get("templates", {}) if isinstance(state, dict) else {}
+    templates = {}
+    for name, info in entries.items():
+        if not isinstance(info, dict):
+            continue
+        info = info.get("py/state", info)
+        files = tuple(str(f).replace("\\", "/") for f in info.get("system_files") or ())
+        templates[name] = Template(info.get("version"), files)
+    return templates
 
 
 def is_pros_project(path: Path) -> bool:
@@ -189,8 +199,9 @@ def is_pros_project(path: Path) -> bool:
     return path.is_dir() and ((path / "project.pros").is_file() or (path / "src").is_dir())
 
 
-def _stage(project: Path, stage: Path) -> list[Path]:
-    """Mirror src/ and include/ (minus the SDK) into ``stage``; returns staged sources."""
+def _stage(project: Path, stage: Path, exclude: set[str]) -> list[Path]:
+    """Mirror src/ and include/ into ``stage``, without the SDK and template files
+    (``exclude``: project-relative paths or folders, with /); returns staged sources."""
     wanted: dict[Path, Path] = {}
     for top in ("src", "include"):
         root = project / top
@@ -199,6 +210,9 @@ def _stage(project: Path, stage: Path) -> list[Path]:
         for path in root.rglob("*"):
             rel = path.relative_to(project)
             if top == "include" and rel.parts[1] in SDK_INCLUDES:
+                continue
+            posix = rel.as_posix()
+            if posix in exclude or any(posix.startswith(e + "/") for e in exclude):
                 continue
             if path.is_file():
                 wanted[rel] = path
@@ -259,8 +273,15 @@ def _stale(obj: Path, dep_file: Path, stamp: Path, flags_key: str) -> bool:
 
 
 def _compile_cmd(
-    tc: Toolchain, source: Path, obj: Path, includes: list[Path], opt: list[str]
+    tc: Toolchain,
+    source: Path,
+    obj: Path,
+    includes: list[Path],
+    opt: list[str],
+    quote: list[Path] = (),
 ) -> list[str]:
+    """``quote``: folders searched for #include "..." only. PROS's makefile adds
+    include/<dir> for every src/<dir>/ source, so "pid.hpp" works in src/lemlib/."""
     lang = ["-x", "c", "-std=gnu11"] if source.suffix == ".c" else ["-std=gnu++20"]
     return [
         tc.cxx,
@@ -268,6 +289,9 @@ def _compile_cmd(
         *opt,
         "-pthread",
         *DEFINES,
+        "-include",
+        str(SHIM_INCLUDE / "vexsim" / "newlib_compat.h"),
+        *[f"-iquote{p}" for p in quote],
         *[f"-I{p}" for p in includes],
         "-MMD",
         "-MF",
@@ -369,20 +393,79 @@ def build_runtime(tc: Toolchain, *, workers: int | None = None) -> tuple[list[Pa
         obj = out / ("defaults" if src in defaults else "") / f"{src.stem}.o"
         jobs.append((src, obj, _compile_cmd(tc, src, obj, [SHIM_INCLUDE, RUNTIME_DIR], opt)))
     _compile_all(tc, jobs, workers or os.cpu_count() or 2, lambda s: s)
+    _archive(tc, lib, [out / "defaults" / f"{p.stem}.o" for p in defaults])
+    return objs, lib
+
+
+def _archive(tc: Toolchain, lib: Path, objs: list[Path]) -> None:
+    """Create the static library ``lib`` from ``objs`` (replaced atomically)."""
     tmp = lib.with_suffix(".tmp")
     tmp.unlink(missing_ok=True)
-    result = _run(
-        [
-            _tool(tc, "ar"),
-            "rcs",
-            str(tmp),
-            *[str(out / "defaults" / f"{p.stem}.o") for p in defaults],
-        ]
-    )
+    result = _run([_tool(tc, "ar"), "rcs", str(tmp), *map(str, objs)])
     if result.returncode != 0:
-        raise BuildError(f"archiving the runtime failed: {result.stderr.strip()}")
+        raise BuildError(f"creating {lib.name} failed: {result.stderr.strip()}")
     os.replace(tmp, lib)
-    return objs, lib
+
+
+def _write_if_changed(path: Path, text: str) -> None:
+    """Keep the file's time stamp when nothing changed, so it isn't recompiled."""
+    if path.exists() and path.read_text(encoding="utf-8") == text:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def asset_symbol(rel: str) -> str:
+    """The name objcopy gives a static/ file's data: static/example.txt -> static_example_txt."""
+    return re.sub(r"[^A-Za-z0-9]", "_", rel)
+
+
+def _generate_assets(project: Path, path: Path) -> int:
+    """Embed every file in static/ and static.lib/ for LemLib's ASSET(name); returns the count."""
+    files = sorted(
+        f for top in ("static", "static.lib") if (project / top).is_dir()
+        for f in (project / top).rglob("*") if f.is_file()
+    )  # fmt: skip
+    lines = [
+        "// Generated by vexsim build: the project's static/ files, for ASSET(name).",
+        "#include <cstddef>",
+        "#include <cstdint>",
+        'extern "C" {',
+    ]
+    for f in files:
+        name = asset_symbol(f.relative_to(project).as_posix())
+        data = f.read_bytes()
+        padded = data + b"\0"  # NUL-terminated for text parsers; the size excludes it
+        lines.append(f"alignas(16) std::uint8_t _binary_{name}_start[] = {{")
+        for i in range(0, len(padded), 16):
+            lines.append("    " + "".join(f"0x{b:02x}," for b in padded[i : i + 16]))
+        lines.append("};")
+        lines.append(f"extern const std::size_t _vexsim_asset_size_{name} = {len(data)};")
+    lines.append("}")
+    _write_if_changed(path, "\n".join(lines) + "\n")
+    return len(files)
+
+
+LEMLIB_POSE_SOURCE = """\
+// Generated by vexsim build: shows LemLib's odometry pose in the simulator.
+#include "lemlib/api.hpp"
+#include "lemlib/chassis/odom.hpp"
+
+extern pros::Task* trackingTask;  // LemLib's odometry task (lemlib/chassis/odom.cpp)
+extern "C" void vexsim_set_pose_source(int (*source)(double*, double*, double*));
+
+namespace {
+int lemlib_pose(double* x, double* y, double* theta) {
+	if (trackingTask == nullptr) return 0;  // odometry hasn't started (chassis.calibrate())
+	lemlib::Pose pose = lemlib::getPose();
+	*x = pose.x, *y = pose.y, *theta = pose.theta;
+	return 1;
+}
+struct Register {
+	Register() { vexsim_set_pose_source(lemlib_pose); }
+} register_lemlib_pose;
+}  // namespace
+"""
 
 
 def build_project(
@@ -402,19 +485,42 @@ def build_project(
     problems = tc.problems()
     if problems:
         raise BuildError("\n".join(problems) + "\n" + install_help())
-    kernel, templates = project_info(project)
+    from vexsim.bridge import lemlib
+
+    templates = project_templates(project)
+    kernel = templates["kernel"].version if "kernel" in templates else None
     notes = []
     if kernel and not kernel.startswith("4."):
         notes.append(f"project.pros lists PROS kernel {kernel}; vexsim follows the PROS 4 API")
+    lemlib_version = lemlib.find_version(project, templates)
+    exclude = {f for t in templates.values() for f in t.system_files if f.startswith("include/")}
+    if lemlib_version:
+        exclude |= {"include/lemlib", "include/fmt"}  # replaced by the matching LemLib source
+        if not lemlib.tested(lemlib_version):
+            notes.append(f"LemLib {lemlib_version} is untested in vexsim (tested: 0.5.x)")
 
     out = cache_root() / f"{project.name}-{_digest(str(project))}"
     stage = out / "stage"
-    sources = _stage(project, stage)
+    sources = _stage(project, stage, exclude)
     if not sources:
         raise BuildError(f"{project / 'src'} has no C or C++ sources")
     opt = ["-O0", "-g"] if debug else ["-O2"]
     includes = [stage / "include", SHIM_INCLUDE]
+    libraries = []
+    if lemlib_version:
+        lemlib_include, lemlib_lib = lemlib.build_library(
+            tc, lemlib_version, workers=workers, log=log
+        )
+        includes.append(lemlib_include)
+        libraries.append(lemlib_lib)
     flags_key = _digest(tc.cxx, tc.version_text, *opt, *map(str, includes), *DEFINES)
+
+    generated = out / "generated"
+    _generate_assets(project, generated / "vexsim_assets.cpp")
+    sources.append(generated / "vexsim_assets.cpp")
+    if lemlib_version:
+        _write_if_changed(generated / "vexsim_lemlib_pose.cpp", LEMLIB_POSE_SOURCE)
+        sources.append(generated / "vexsim_lemlib_pose.cpp")
 
     def rewrite(text: str) -> str:
         """Point compiler messages at the project's files, not the staged copies."""
@@ -426,21 +532,24 @@ def build_project(
 
     jobs, objs = [], []
     for src in sources:
-        rel = src.relative_to(stage)
+        rel = src.relative_to(stage if src.is_relative_to(stage) else out)
         obj = out / "obj" / rel.with_suffix(rel.suffix + ".o")
         objs.append(obj)
         stamp = obj.with_suffix(".flags")
+        quote = [stage / "include" / Path(*rel.parts[1:-1])] if rel.parts[0] == "src" else []
         if _stale(obj, obj.with_suffix(".d"), stamp, flags_key):
-            jobs.append((src, obj, _compile_cmd(tc, src, obj, includes, opt)))
-    if log and jobs:
-        log(f"compiling {len(jobs)} of {len(sources)} source file(s) with g++ {tc.version_text}")
+            jobs.append((src, obj, _compile_cmd(tc, src, obj, includes, opt, quote)))
+    user_sources = [s for s in sources if s.is_relative_to(stage)]
+    if log and any(src.is_relative_to(stage) for src, _, _ in jobs):
+        count = sum(src.is_relative_to(stage) for src, _, _ in jobs)
+        log(f"compiling {count} of {len(user_sources)} source file(s) with g++ {tc.version_text}")
     compiled = _compile_all(tc, jobs, workers or os.cpu_count() or 2, rewrite)
     for _, obj, _ in jobs:
         obj.with_suffix(".flags").write_text(flags_key)
 
     runtime_objs, runtime_lib = build_runtime(tc, workers=workers)
     exe = out / EXE_NAME
-    inputs = objs + runtime_objs + [runtime_lib]
+    inputs = objs + runtime_objs + [runtime_lib] + libraries
     if (
         exe.exists()
         and all(p.stat().st_mtime <= exe.stat().st_mtime for p in inputs)
@@ -449,14 +558,14 @@ def build_project(
         return BuildResult(
             exe,
             0,
-            len(sources),
+            len(user_sources),
             time.perf_counter() - start,
             linked=False,
             kernel=kernel,
             notes=notes,
         )
 
-    notes += _cpp_linkage_notes(tc, objs, stage, project)
+    notes += _cpp_linkage_notes(tc, [o for o in objs if "generated" not in o.parts], stage, project)
     for note in notes if log else ():
         log(f"note: {note}")
     tmp = exe.with_name("robot_host.tmp" + (".exe" if sys.platform == "win32" else ""))
@@ -465,6 +574,7 @@ def build_project(
         "-o",
         str(tmp),
         *map(str, objs),
+        *map(str, libraries),
         *map(str, runtime_objs),
         str(runtime_lib),
         "-pthread",
@@ -474,13 +584,10 @@ def build_project(
     result = _run(link)
     if result.returncode != 0:
         message = rewrite((result.stdout + result.stderr).strip())
-        if (project / "include" / "lemlib").is_dir() or any(
-            "lemlib" in t.lower() for t in templates
-        ):
+        if "_binary_static_" in message:
             message += (
-                "\n\nThis project uses LemLib. PROS ships LemLib precompiled for the V5's ARM "
-                "CPU, so it can't link on a PC; building LemLib from source is planned for "
-                "vexsim Phase 8."
+                "\n\nASSET(name) needs a file static/<name with . for _> in the project, "
+                "for example ASSET(example_txt) needs static/example.txt."
             )
         raise BuildError("link failed:\n" + message)
     try:
@@ -488,6 +595,8 @@ def build_project(
     except PermissionError:  # Windows: the old executable is still running (open viewer)
         exe = exe.with_name(f"robot_host-{int(time.time())}.exe")
         os.replace(tmp, exe)
+    compiled_user = sum(src.is_relative_to(stage) for src, _, _ in jobs)
     return BuildResult(
-        exe, compiled, len(sources), time.perf_counter() - start, kernel=kernel, notes=notes
-    )
+        exe, compiled_user, len(user_sources), time.perf_counter() - start, kernel=kernel,
+        notes=notes, lemlib=lemlib_version,
+    )  # fmt: skip

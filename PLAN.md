@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.1 (2026-10-26). Phases 1-7 complete. Next: Phase 8.
+**Status:** Final v1.1 (2026-10-26). Phases 1-8 complete. Next: Phase 9.
 
 **v1.1:** Phase 7 runs robot code in a separate host process over pipes instead of a DLL loaded with `ctypes`, and compiles with g++ directly instead of CMake and Ninja. Sections 0, 2, 3 and 7 are updated.
 
@@ -56,7 +56,8 @@ vexsim/
     cpp/include/   PROS 4 shim headers (api.h, pros/*.h/.hpp) + vexsim/sim.hpp hooks
     cpp/runtime/   PROS C API over a device table, lockstep task scheduler, competition task,
                    robot host protocol loop, crash and hang reports
-    build.py       project staging, incremental g++ build (LemLib from source and ASSET in Phase 8)
+    build.py       project staging, incremental g++ build, ASSET embedding
+    lemlib.py      LemLib fetched and built from source
     host.py        robot host process and protocol
     program.py     CppProgram: a built project as a Simulation program
     doctor.py      toolchain check
@@ -169,7 +170,7 @@ The robot code is compiled, not interpreted.
         ▼  vexsim build <project>
  staging dir: src/ + include/ minus the SDK (include/api.h, include/pros/, include/liblvgl/)
    + vexsim shim headers (api.h, pros/*.h, pros/*.hpp)
-   + (Phase 8) LemLib built from source, static/ → ASSET symbols
+   + LemLib built from source, static/ → ASSET data
         │  g++ -std=gnu++20, incremental → robot_host[.exe] (static on Windows)
         ▼
  robot host process: PROS C API + lockstep scheduler + protocol loop
@@ -187,8 +188,8 @@ The robot code is compiled, not interpreted.
 
    Each call reads or writes a port-indexed device table. Unsupported pieces (LVGL, SD card, VEXlink, serial) become stubs. Calling one logs a one-time warning.
 2. **Project staging.** On Windows (and elsewhere), a quoted `#include "api.h"` finds the project's own copy first, because the including file's directory is searched before `-I` paths. So `vexsim build` copies the project into a staging directory without `include/pros/`, `include/api.h` or `firmware/`, then compiles there. Your source tree is never modified.
-3. **LemLib from source.** PROS templates ship LemLib as a precompiled **ARM** `.a`, which can't run on a PC. `vexsim build` reads the LemLib version from `project.pros`, fetches the matching LemLib source tag (cached), and compiles it with the shim. The first target is the LemLib 0.5.x line for PROS 4. Newer releases are validated as they come out.
-4. **`ASSET()` paths.** LemLib path files in `static/` are embedded through linker symbols (`_binary_static_<name>_start/_end`). The build generates a C++ file that defines those symbols from the files' bytes, so `ASSET(path_txt)` and `chassis.follow(...)` work without changes.
+3. **LemLib from source.** PROS templates ship LemLib as a precompiled **ARM** `.a`, which can't run on a PC. `vexsim build` reads the LemLib version from `project.pros`, fetches the matching LemLib source tag (git, else a zip; cached; `VEXSIM_LEMLIB_SOURCE` for offline use), and compiles it with the shim once per version. The template's own files (each template's `system_files` in `project.pros`) are left out of staging. The first target is the LemLib 0.5.x line for PROS 4. Newer releases are validated as they come out.
+4. **`ASSET()` paths.** On the V5, objcopy embeds `static/` files as linker symbols, including a `_size` symbol whose *address* is the size, which a PC's relocatable executables can't express. vexsim ships its own `lemlib/asset.hpp` and generates a C++ file with each file's bytes and size, so `ASSET(path_txt)` and `chassis.follow(...)` work without changes.
 5. **Lockstep scheduler** (deterministic simulated time):
    - Each PROS task is a host `std::thread` (MinGW UCRT64 uses the posix thread model), but only one runs at a time under baton passing. This matches FreeRTOS on the V5 user core.
    - `delay` and `delay_until` park the task until its wake time. Mutex waits park it until the mutex is free.
@@ -198,7 +199,7 @@ The robot code is compiled, not interpreted.
 6. **Competition harness.** The sim calls `initialize()`, `autonomous()`, `opcontrol()` and `disabled()` as a field controller would, in the PROS competition task: a mode change deletes that task and starts the next, while user tasks keep running. Competition status bits match the mode (switch, field control, or none), and a disabled robot ignores motor commands. It supports a skills or match timeline and autonomous-only runs.
 7. **Console and screen.** `printf` / `std::cout` and `pros::lcd` lines appear in a panel in the viewer and in the run log.
 8. **Pose telemetry.** Ground truth always comes from the sim.
-   - The robot's own estimate is read automatically from LemLib's odometry pose accessor, which works because LemLib is compiled from source.
+   - The robot's own estimate is read automatically from LemLib's odometry pose accessor (`lemlib::getPose()`, once its odometry task runs), through a hook the build generates.
    - Custom odometry can call `vexsim::report_pose(x, y, θ)` from `vexsim/sim.hpp`. On the real robot, `__has_include` guards make that call compile to nothing.
 9. **Windows specifics:**
    - `robot_host.exe` is linked statically, so it needs no MinGW DLLs. Windows locks a running executable; a rebuild while the viewer is open links to a new name.
@@ -301,7 +302,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 5 | **[done]** Python control API and baseline controllers; live viewer and plots | Drive a scenario from the keyboard/gamepad and run a Python autonomous route visually |
 | 6 | **[done]** Benchmark harness | 100-seed comparison of two localizers and two controllers produces an HTML report |
 | 7 | **[done]** C++ bridge: PROS 4 shim, lockstep scheduler, robot host process over pipes, `vexsim build` and `vexsim doctor` | `minimal_pros4` runs unchanged on Windows and Linux; scheduler tests pass |
-| 8 | LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
+| 8 | **[done]** LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
 | 9 | Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
 | 10 | Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |
 

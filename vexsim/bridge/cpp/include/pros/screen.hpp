@@ -7,6 +7,7 @@
 
 #include "pros/colors.hpp"
 #include "pros/screen.h"
+#include "pros/error.h"
 
 namespace pros {
 namespace screen {

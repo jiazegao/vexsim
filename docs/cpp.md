@@ -9,7 +9,7 @@ vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/mi
 
 The example project's `autonomous()` drives a 24 in square using its own tracking-wheel odometry. Green is the true path. Blue is the pose the code reports.
 
-LemLib projects need LemLib built from source, which comes in Phase 8. Until then, a LemLib project fails to link with a message that says so.
+LemLib projects work too: vexsim builds LemLib from source (see [LemLib](#lemlib)).
 
 ## Setup (once)
 **Windows:** install MSYS2's MinGW-w64 g++ (the UCRT64 toolchain).
@@ -40,7 +40,8 @@ vexsim run ROBOT.yaml --program path/to/project --headless --record run.csv --sc
 ```
 - **Builds are incremental.** Only sources whose code or included headers changed are recompiled. The first build also compiles vexsim's runtime once, which takes a few seconds.
 - **Your project is never modified.** Build output goes to `%LOCALAPPDATA%\vexsim\build` on Windows, or `~/.cache/vexsim/build` elsewhere (set `VEXSIM_CACHE_DIR` to change it). `vexsim build --debug` compiles without optimization, for a debugger.
-- **The PROS SDK in your project is skipped.** `include/api.h`, `include/pros/`, `include/liblvgl/`, `include/display/` and `firmware/` are replaced by vexsim's PROS 4 shim. Your own headers and sources are used as they are.
+- **The PROS SDK in your project is skipped.** `include/api.h`, `include/pros/`, `include/liblvgl/`, `include/display/` and `firmware/` are replaced by vexsim's PROS 4 shim, and so is every header a template lists as its own in `project.pros`. Your own headers and sources are used as they are.
+- **Includes work as in PROS.** A source in `src/<folder>/` can include a header in `include/<folder>/` by its bare name, as PROS's makefile allows.
 - **The robot config must match your ports.** If the code uses a device on a port where the robot YAML has something else, the call fails with `errno = ENODEV`, as on a robot with a missing device, and the console says what's wrong:
   ```
   vexsim: port 7: the code uses a motor here, but the robot config has nothing on this port (calls fail with errno ENODEV)
@@ -69,6 +70,19 @@ sim.close()  # ends the robot code's process
 print(sim.console, sim.estimated_pose, Pose.from_si(sim.robot.pose))
 ```
 `CppProgram(..., env={"AUTON": "left"})` passes environment variables your code can read with `getenv()`, for example to pick an autonomous routine.
+
+## LemLib
+```
+vexsim run examples/robots/lemlib_example.yaml --program examples/pros_projects/lemlib_template --start 0,0,90
+```
+![LemLib's example program in the simulator](img/lemlib_template.png)
+
+`examples/pros_projects/lemlib_template` is LemLib's own example program, unchanged except for one `moveToPoint` back to the start. Its autonomous runs `moveToPose`, `turnToPoint`, `turnToHeading` and `follow` along `static/example.txt`. `examples/robots/lemlib_example.yaml` describes the robot that program configures.
+
+- **LemLib is built from source.** The LemLib template installs LemLib precompiled for the V5's ARM CPU, which can't run on a PC. `vexsim build` reads LemLib's version from `project.pros` and fetches that release's source from GitHub (with git, or as a zip). It then compiles it once per version and compiler, with LemLib's own headers replacing the template's copies. Offline, point `VEXSIM_LEMLIB_SOURCE` at a LemLib checkout. LemLib 0.5.x (for PROS 4) is tested.
+- **`ASSET()` paths work.** Every file in `static/` is embedded under the name LemLib's `ASSET()` expects: `static/example.txt` is `ASSET(example_txt)`.
+- **LemLib's pose shows up on its own.** Once `chassis.calibrate()` starts LemLib's odometry, the viewer's blue estimate and telemetry's `est_*` columns show LemLib's pose, with no `report_pose` call needed.
+- **Start pose:** LemLib's (0, 0, 0) faces +y, so start the simulated robot with `--start 0,0,90`. Otherwise LemLib thinks it faces 90° away from where it really does.
 
 ## How simulated time works
 The robot code runs in its own process, in **lockstep** with the physics:
@@ -126,21 +140,23 @@ Robot code sees field coordinates as it defines them. The x and y axes are vexsi
 - **Compute time is free.** A long calculation takes no simulated time. On the robot it delays everything at its priority and below.
 - **Integer sizes.** `int` is 4 bytes everywhere. On the V5 `long` and pointers are 4 bytes. On 64-bit Windows `long` is 4 bytes and pointers 8; on 64-bit Linux and macOS both are 8. Code that assumes `sizeof(long) == 4` or stores pointers in `int` needs fixing.
 - **Not modeled:** time slicing among equal-priority busy tasks (busy tasks are charged per call instead), mutex priority inheritance, and the slight delay before the IMU's calibrating flag appears (vexsim waits 5 ms, as PROS's `reset` does).
-- **Libraries that ship precompiled for the V5's ARM CPU won't link,** because they are machine code for another processor. This includes LemLib's `.a` (built from source in Phase 8) and OkapiLib.
+- **Libraries that ship precompiled for the V5's ARM CPU won't link,** because they are machine code for another processor. LemLib is built from source instead; others, such as OkapiLib, aren't supported.
+- **newlib extras.** The V5's C library (newlib) has a few functions PC C libraries lack. vexsim provides the ones robot code uses (`infinity()`, `infinityf()`).
 
 ## Troubleshooting
 | Message | What to do |
 |---|---|
 | `no C++ compiler (g++) found` | Install it (see Setup) and run `vexsim doctor`. |
-| `link failed: ... undefined reference to lemlib::...` | LemLib support arrives in Phase 8. |
+| `couldn't get LemLib 0.5.6's source` | vexsim needs the internet once per LemLib version. Offline, set `VEXSIM_LEMLIB_SOURCE` to a LemLib checkout of that version. |
+| `ASSET(name) needs a file static/...` | Put the path file in the project's `static/` folder, named so its `.` becomes `_` (`static/skills.txt` is `ASSET(skills_txt)`). |
 | `... defines autonomous() with C++ linkage, so it is never called` | Include `main.h` in that file. It declares the competition functions `extern "C"`. The V5 would silently skip yours too. |
 | `robot code hung: task '...' ran for 5.0 s of real time without calling pros::delay()` | A loop has no `pros::delay`. On the robot it would starve every other task. |
 | `port N: the code uses ... but the robot config has ...` | Make the robot YAML's ports match your code. |
 | `pros::Optical is not simulated yet` | Expected for now. The call returned `PROS_ERR`. |
 
 ## How it works
-1. **Staging.** `vexsim build` copies `src/` and `include/` without the SDK headers into a build folder. A quoted `#include "api.h"` searches the including file's own folder first, so a staged copy is the only way to make the project's headers find the shim instead of the SDK.
-2. **Compiling.** g++ compiles each source with `-std=gnu++20` (C files: `gnu11`), `-DVEXSIM=1`, and the shim's include folder (`vexsim/bridge/cpp/include`), keeping `-MMD` dependency files for incremental builds.
-3. **Linking.** The objects are linked with vexsim's runtime (`vexsim/bridge/cpp/runtime`) into a small program, `robot_host`. On Windows it is linked statically, so it needs no MinGW DLLs.
+1. **Staging.** `vexsim build` copies `src/` and `include/` without the SDK headers and template files into a build folder. A quoted `#include "api.h"` searches the including file's own folder first, so a staged copy is the only way to make the project's headers find the shim instead of the SDK.
+2. **Compiling.** g++ compiles each source with `-std=gnu++20` (C files: `gnu11`), `-DVEXSIM=1`, and the shim's include folder (`vexsim/bridge/cpp/include`), keeping `-MMD` dependency files for incremental builds. Two generated sources join them: the `static/` files' bytes for `ASSET()`, and for LemLib projects a hook that reads LemLib's pose.
+3. **Linking.** The objects are linked with LemLib (if used) and vexsim's runtime (`vexsim/bridge/cpp/runtime`) into a small program, `robot_host`. On Windows it is linked statically, so it needs no MinGW DLLs.
 4. **The runtime** implements the PROS C API against a device table, plus a lockstep scheduler where every task is a thread but only the one holding the baton runs. Empty default competition functions are linked only when the code doesn't define its own, like PROS's weak defaults.
 5. **The simulator** starts `robot_host` as a child process and talks to it over pipes. Before each run it sends the sensor readings that changed and `RUN <time>`. The host runs every task that's due until all are blocked, then replies with motor commands, console output and the next time it needs to run. Between those times the simulator doesn't call it at all. `robot_host` moves `printf` output off the protocol pipe before any of your code runs, even global constructors.

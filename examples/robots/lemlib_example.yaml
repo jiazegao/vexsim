@@ -1,0 +1,40 @@
+# The robot configured in LemLib's example program (examples/pros_projects/lemlib_template):
+# 6 blue motors geared 36:60 to 4 in omni wheels (360 rpm), 10 in track width,
+# an IMU, and two 2.75 in tracking wheels on rotation sensors.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left. See docs/conventions.md.
+
+version: 1
+name: LemLib example robot
+
+body:
+  mass_kg: 6.8
+  inertia_kgm2: auto
+  footprint_in: [15, 14]
+  cg_in: [0, 0, 3.5]
+  battery: v5_default
+
+drivetrain:
+  type: differential
+  wheels:
+    - {name: lf, pos_in: [ 5.5,  5.0], heading_deg: 0, type: omni, diameter_in: 4.0}
+    - {name: lm, pos_in: [ 0.0,  5.0], heading_deg: 0, type: omni, diameter_in: 4.0}
+    - {name: lb, pos_in: [-5.5,  5.0], heading_deg: 0, type: omni, diameter_in: 4.0}
+    - {name: rf, pos_in: [ 5.5, -5.0], heading_deg: 0, type: omni, diameter_in: 4.0}
+    - {name: rm, pos_in: [ 0.0, -5.0], heading_deg: 0, type: omni, diameter_in: 4.0}
+    - {name: rb, pos_in: [-5.5, -5.0], heading_deg: 0, type: omni, diameter_in: 4.0}
+  gearing:
+    # Ports as in LemLib's example: motors 3, 5 and 9 are mounted reversed.
+    left:  {motors: [-5, 4, -3], cartridge: blue, ratio: "36:60", wheels: [lf, lm, lb]}
+    right: {motors: [6, -9, 7],  cartridge: blue, ratio: "36:60", wheels: [rf, rm, rb]}
+
+sensors:
+  - {type: imu, port: 10, pos_in: [0, 0], mount_yaw_deg: 0}
+  - type: rotation              # horizontal wheel, 5.75 in behind center
+    port: 20
+    reversed: false
+    tracking_wheel: {pos_in: [-5.75, 0], heading_deg: 90, diameter_in: 2.75}
+  - type: rotation              # vertical wheel, 2.5 in left of center; reads backwards (code uses -11)
+    port: 11
+    reversed: true
+    tracking_wheel: {pos_in: [0, 2.5], heading_deg: 0, diameter_in: 2.75}

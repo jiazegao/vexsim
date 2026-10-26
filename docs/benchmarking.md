@@ -1,6 +1,6 @@
 # Benchmarking algorithms
 
-`vexsim bench` runs a scenario many times (seeds) for every combination of the localizers and controllers it lists. Trials run in parallel processes, and the results come out as CSVs plus a self-contained HTML report.
+`vexsim bench` runs a scenario many times (seeds) for every combination of the localizers and controllers it lists. Controllers can be Python or your PROS C++ project. Trials run in parallel processes, and the results come out as CSVs plus a self-contained HTML report.
 
 ```
 vexsim bench examples/scenarios/s_curve.yaml --seeds 100
@@ -113,6 +113,41 @@ def make_follower(task, geometry, lookahead_in=12.0):  # -> Controller
 - A localizer receives the same `SensorFrame` PROS code would read (PROS units; see [conventions.md](conventions.md#sensor-readings)).
 - A controller receives the localizer's pose estimate and returns a `DriveCommand` (volts, or wheel speed in in/s).
 - Neither ever sees the true pose. That's what makes the comparison honest.
+
+## C++ controllers: your PROS project
+A controller can be a PROS project: its `autonomous()` gets the task, does its own localization, and is compared on the same seeds as the Python controllers.
+
+```yaml
+controllers:
+  - {name: Python boomerang, kind: boomerang}
+  - {name: LemLib moveToPose, kind: pros, project: ../pros_projects/lemlib_bench}
+```
+- **It runs like a match autonomous.** `vexsim bench` builds the project once, then runs `initialize()` and `autonomous()` in every trial.
+- **The task comes from vexsim.** `vexsim::benchmark_task()` from `vexsim/sim.hpp` returns the type, the start pose its odometry should assume, the target, and for `follow` the reference path as a LemLib path file. Poses use the LemLib convention. Controller `options` arrive through `task.option(name, fallback)`.
+- **Timing.** Completion is when `autonomous()` returns. Disturbances count from the start of `autonomous()`.
+- **Localization is the code's own.** It shows as the localizer `robot code`, and its estimate is the pose the code reports (LemLib's is read automatically).
+
+`examples/pros_projects/lemlib_bench` maps every task type to a LemLib motion, so it's a starting point for benchmarking your own LemLib settings:
+```cpp
+void autonomous() {
+    vexsim::Task& task = vexsim::benchmark_task();
+    chassis.setPose(task.start_x, task.start_y, task.start_theta);
+    if (task.type == "move_to_pose")
+        chassis.moveToPose(task.x, task.y, task.theta, task.timeout_ms);
+    ...
+    chassis.waitUntilDone();
+}
+```
+
+**Example: LemLib's moveToPose against the Python boomerang** ([`examples/scenarios/lemlib_vs_python.yaml`](../examples/scenarios/lemlib_vs_python.yaml), 20 seeds). The task is the approach to (30, 30) facing 90°, on the example robot, with start placement error and varied roller friction:
+
+| localizer / controller | success (≤ 2 in, 3°) | final error mean / p95 | completion time mean / p95 | localization error mean |
+|---|---|---|---|---|
+| tracking wheels + IMU / Python boomerang | 65% (4 timeouts) | 1.37 / 2.41 in | 2.87 / 6.01 s | 0.91 in |
+| robot code / LemLib moveToPose | **95%** | **1.28 / 2.01 in** | 4.25 / 4.76 s | 0.92 in |
+
+- **LemLib is slower but more reliable.** With its example gains it takes about 1.4 s longer, but it never timed out.
+- **Its odometry is as good as vexsim's.** LemLib's tracking-wheel odometry matches the Python baseline's error almost exactly. The difference between the two rows is control, not localization.
 
 ## Metrics
 | Column | Meaning |

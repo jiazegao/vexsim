@@ -73,5 +73,6 @@ void devices_ready();
 bool devices_reading(const char* line);  // false if not a reading line
 void devices_set_competition(std::uint8_t status);
 void devices_flush_commands();  // emit pending motor commands into the reply
+void devices_poll_pose();       // report a library's odometry pose (LemLib), if it has one
 
 }  // namespace vexsim

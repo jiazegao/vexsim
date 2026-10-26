@@ -253,6 +253,21 @@ bool adi_ok(std::uint8_t smart_port, std::int32_t& adi_port) {
 
 }  // namespace
 
+// A library's pose accessor, registered by code vexsim build generates (LemLib).
+int (*g_pose_source)(double*, double*, double*) = nullptr;
+bool g_pose_reported = false;
+
+void devices_poll_pose() {
+	static double last[3];
+	static bool have_last = false;
+	double pose[3];
+	if (!g_pose_source || g_pose_reported || !g_pose_source(&pose[0], &pose[1], &pose[2])) return;
+	if (have_last && pose[0] == last[0] && pose[1] == last[1] && pose[2] == last[2]) return;
+	have_last = true;
+	last[0] = pose[0], last[1] = pose[1], last[2] = pose[2];
+	host_emit("P " + fmt(pose[0]) + " " + fmt(pose[1]) + " " + fmt(pose[2]));
+}
+
 void devices_register(int port, const std::string& kind, const std::string& detail) {
 	if (port < 1 || port > 21) return;
 	Kind k = kind == "motor" ? Kind::motor
@@ -380,8 +395,11 @@ int32_t vexsim_unsupported(const char* what) {
 
 void vexsim_report_pose(double x_in, double y_in, double theta_deg) {
 	api_call();
+	g_pose_reported = true;  // the code reports its own pose: don't poll LemLib's
 	host_emit("P " + fmt(x_in) + " " + fmt(y_in) + " " + fmt(theta_deg));
 }
+
+void vexsim_set_pose_source(int (*source)(double*, double*, double*)) { g_pose_source = source; }
 
 namespace pros {
 namespace c {

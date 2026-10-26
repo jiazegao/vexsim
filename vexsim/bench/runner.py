@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from vexsim.bench.scenario import LoadedScenario, load_scenario
-from vexsim.bench.trial import available_localizers, run_trial
+from vexsim.bench.trial import ROBOT_CODE, available_localizers, run_trial
 from vexsim.config.loader import load_robot
 
 # Metrics summarized per combination, with how to read them.
@@ -39,11 +39,12 @@ def _loaded(path: str) -> LoadedScenario:
     return load_scenario(path)
 
 
-def _job(args: tuple[str, int, str, int]) -> dict:
+def _job(args: tuple[str, int, str, int, str | None]) -> dict:
     """Run one trial in a worker. Top-level so it pickles for spawned processes (Windows)."""
-    path, seed, localizer, controller_index = args
+    path, seed, localizer, controller_index, executable = args
     loaded = _loaded(path)
-    return run_trial(loaded, seed, localizer, loaded.controllers[controller_index]).row()
+    controller = loaded.controllers[controller_index]
+    return run_trial(loaded, seed, localizer, controller, executable=executable).row()
 
 
 @dataclass
@@ -56,8 +57,12 @@ class BenchResult:
     rows: list[dict] = field(default_factory=list)
     wall_time_s: float = 0.0
     workers: int = 1
+    executables: dict[str, str] = field(default_factory=dict)  # PROS-project controllers, built
+    pairs: list[tuple[str, str]] | None = None  # (localizer, controller) combinations run
 
     def combos(self) -> list[tuple[str, str]]:
+        if self.pairs is not None:
+            return list(self.pairs)
         return list(product(self.localizers, self.controllers))
 
     def rows_for(self, localizer: str, controller: str) -> list[dict]:
@@ -121,7 +126,18 @@ def run_bench(
     if unknown:
         raise ValueError(f"unknown controllers {sorted(unknown)} (scenario has {names})")
 
-    jobs = [(path, s, loc, names.index(c)) for s, loc, c in product(seeds, locs, ctrls)]
+    # PROS-project controllers localize themselves: one combination each, built once here
+    # (the workers only run the executable).
+    executables = {}
+    for c in loaded.controllers:
+        if c.native and c.name in ctrls:
+            from vexsim.bridge.build import build_project
+
+            executables[c.name] = str(build_project(loaded.path(c.project)).executable)
+    pairs = []
+    for c in ctrls:
+        pairs += [(ROBOT_CODE, c)] if c in executables else [(loc, c) for loc in locs]
+    jobs = [(path, s, loc, names.index(c), executables.get(c)) for s in seeds for loc, c in pairs]
     workers = workers or max(1, (os.cpu_count() or 2) - 1)
     started = time.perf_counter()
     rows: list[dict] = []
@@ -151,4 +167,6 @@ def run_bench(
         rows=rows,
         wall_time_s=time.perf_counter() - started,
         workers=workers,
+        executables=executables,
+        pairs=pairs,
     )

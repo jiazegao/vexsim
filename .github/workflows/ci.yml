@@ -68,6 +68,8 @@ jobs:
           vexsim bench examples/scenarios/s_curve.yaml --seeds 4 --workers 2 --out bench
           vexsim build examples/pros_projects/minimal_pros4
           vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/minimal_pros4 --headless --start 0,0,90 --record cpp_square.csv --screenshot cpp_square.png
+          vexsim run examples/robots/lemlib_example.yaml --program examples/pros_projects/lemlib_template --headless --start 0,0,90 --record lemlib.csv --screenshot lemlib.png
+          vexsim bench examples/scenarios/lemlib_vs_python.yaml --seeds 4 --workers 2 --out bench_lemlib
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'windows-latest' && matrix.python == '3.13'
@@ -82,4 +84,7 @@ jobs:
             tour.csv
             cpp_square.png
             cpp_square.csv
+            lemlib.png
+            lemlib.csv
             bench/
+            bench_lemlib/

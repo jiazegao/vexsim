@@ -6,6 +6,9 @@
 #include <vector>
 
 #include "pros/device.h"
+#include "pros/error.h"
+#include "pros/misc.hpp"
+#include "pros/rtos.hpp"
 
 namespace pros {
 inline namespace v5 {

@@ -1,0 +1,23 @@
+# LemLib's moveToPose (compiled C++, running in the simulator) against vexsim's
+# Python boomerang, on the same robot and the same seeds.
+#   vexsim bench examples/scenarios/lemlib_vs_python.yaml --seeds 20
+# Needs g++ (vexsim doctor); the first run fetches and compiles LemLib.
+version: 1
+name: LemLib moveToPose vs. Python boomerang
+description: >
+  Approach (30, 30) facing 90 degrees from the origin, with start placement error
+  and varied roller friction. LemLib runs with its example gains and its own
+  tracking-wheel odometry; the Python boomerang uses tracking wheels + IMU.
+robot: ../robots/full_omni_6m.yaml
+noise: default
+time_limit_s: 6
+task: {type: move_to_pose, x: 30, y: 30, heading: 90}
+randomize:
+  start_xy_in: 0.5
+  start_heading_deg: 1.0
+  params:
+    wheel.omni.lateral_mu: [0.15, 0.25]
+localizers: [tracking wheels + IMU]
+controllers:
+  - {name: Python boomerang, kind: boomerang}
+  - {name: LemLib moveToPose, kind: pros, project: ../pros_projects/lemlib_bench}
