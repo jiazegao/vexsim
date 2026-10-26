@@ -141,7 +141,7 @@ Robot code sees field coordinates as it defines them. The x and y axes are vexsi
 - **Integer sizes.** `int` is 4 bytes everywhere. On the V5 `long` and pointers are 4 bytes. On 64-bit Windows `long` is 4 bytes and pointers 8; on 64-bit Linux and macOS both are 8. Code that assumes `sizeof(long) == 4` or stores pointers in `int` needs fixing.
 - **Not modeled:** time slicing among equal-priority busy tasks (busy tasks are charged per call instead), mutex priority inheritance, and the slight delay before the IMU's calibrating flag appears (vexsim waits 5 ms, as PROS's `reset` does).
 - **Libraries that ship precompiled for the V5's ARM CPU won't link,** because they are machine code for another processor. LemLib is built from source instead; others, such as OkapiLib, aren't supported.
-- **newlib extras.** The V5's C library (newlib) has a few functions PC C libraries lack. vexsim provides the ones robot code uses (`infinity()`, `infinityf()`).
+- **newlib extras.** The V5's C library (newlib) has a few functions PC C libraries lack. vexsim provides the ones robot code and LemLib use (`infinity()`, `infinityf()`, and on Windows `isnanf()`, `isinff()`, `finitef()`).
 
 ## Troubleshooting
 | Message | What to do |

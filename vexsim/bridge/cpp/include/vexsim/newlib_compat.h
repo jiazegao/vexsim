@@ -17,4 +17,17 @@ static inline double infinity(void) { return HUGE_VAL; }
 static inline float infinityf(void) { return HUGE_VALF; }
 #endif
 
+/* glibc declares these too; MinGW's headers don't (older g++ knew them as builtins). */
+#ifdef __MINGW32__
+#ifndef isnanf
+#define isnanf(x) __builtin_isnan((float)(x))
+#endif
+#ifndef isinff
+#define isinff(x) __builtin_isinf((float)(x))
+#endif
+#ifndef finitef
+#define finitef(x) __builtin_isfinite((float)(x))
+#endif
+#endif
+
 #endif
