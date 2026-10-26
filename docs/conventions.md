@@ -17,7 +17,7 @@ Conversions happen only at those boundaries, using `vexsim.units`.
 
 **Field frame**
 - Origin at the field center, axes parallel to the walls. Right-handed, with angles counter-clockwise from +x.
-- PROS and LemLib use a different convention (heading clockwise from +y). The C++ bridge converts between the two in Phase 8. Robot code never sees vexsim's frame.
+- PROS and LemLib use a different convention: heading clockwise from +y. Robot code never sees vexsim's frame. `vexsim::report_pose` takes the LemLib convention and converts it ([cpp.md](cpp.md#whats-simulated)).
 
 ## Robot config semantics
 **Wheels**

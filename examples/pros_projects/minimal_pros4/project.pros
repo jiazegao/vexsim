@@ -1,0 +1,16 @@
+{
+    "py/object": "pros.conductor.project.Project",
+    "py/state": {
+        "project_name": "minimal_pros4",
+        "target": "v5",
+        "templates": {
+            "kernel": {
+                "name": "kernel",
+                "py/object": "pros.conductor.templates.local_template.LocalTemplate",
+                "target": "v5",
+                "version": "4.2.1"
+            }
+        },
+        "upload_options": {}
+    }
+}

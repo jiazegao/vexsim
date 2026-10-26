@@ -1,6 +1,8 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.0 (2026-10-25). Phases 1-6 complete. Next: Phase 7.
+**Status:** Final v1.1 (2026-10-26). Phases 1-7 complete. Next: Phase 8.
+
+**v1.1:** Phase 7 runs robot code in a separate host process over pipes instead of a DLL loaded with `ctypes`, and compiles with g++ directly instead of CMake and Ninja. Sections 0, 2, 3 and 7 are updated.
 
 ## 0. Decisions
 | Topic | Decision |
@@ -12,7 +14,7 @@
 | Robot code target | **PROS 4 + LemLib**, run with minimal or no source changes |
 | User OS | **Windows** (primary), with Linux and macOS also supported |
 | C++ toolchain on Windows | **MinGW-w64 GCC (MSYS2 UCRT64)**, chosen to match PROS's GCC family and `gnu++20` dialect. Clang is a secondary option |
-| Python ⇄ C++ boundary | **Plain C ABI DLL loaded through `ctypes`** (not pybind11), so the robot DLL's compiler never has to match Python's MSVC build |
+| Python ⇄ C++ boundary | **A separate robot host process** (the compiled project plus vexsim's runtime) driven over pipes with a line protocol. Nothing has to match Python's compiler or ABI, and a crash in robot code can't take the simulator down |
 | Algorithm testing | First-class: pluggable localization and control in Python or C++, seeded Monte-Carlo benchmarks |
 
 ## 1. Goals
@@ -30,8 +32,7 @@
   - `pygame` for the live viewer and gamepad input
   - `matplotlib` for plots
   - `pytest` for tests
-  - `ctypes` (standard library) to load the bridge
-- **C++:** C++20 / `gnu++20`, built with CMake and Ninja, driven by the `vexsim build` CLI.
+- **C++:** C++20 / `gnu++20`, compiled directly with g++ by `vexsim build` (incremental, with `-MMD` dependency files; no CMake or Ninja needed).
 - **Packaging:** `pyproject.toml`, installed with `pip install -e .`, with a `vexsim` console entry point.
 - **CI:** GitHub Actions on `windows-latest` (MSYS2 UCRT64) and `ubuntu-latest`.
 
@@ -52,14 +53,17 @@ vexsim/
     localization/  Localizer interface + baselines
     control/       Controller interface + baselines
   bridge/
-    cpp/include/   PROS 4 shim headers (pros/*.hpp, api.h, main.h-compatible) + vexsim/sim.hpp hooks
-    cpp/runtime/   device table, lockstep task scheduler, competition harness, C ABI exports
-    build.py       project staging, LemLib-from-source, ASSET embedding, CMake/Ninja driver
-    robot.py       ctypes loader + step interface
+    cpp/include/   PROS 4 shim headers (api.h, pros/*.h/.hpp) + vexsim/sim.hpp hooks
+    cpp/runtime/   PROS C API over a device table, lockstep task scheduler, competition task,
+                   robot host protocol loop, crash and hang reports
+    build.py       project staging, incremental g++ build (LemLib from source and ASSET in Phase 8)
+    host.py        robot host process and protocol
+    program.py     CppProgram: a built project as a Simulation program
+    doctor.py      toolchain check
   bench/           scenarios, metrics, Monte-Carlo runner (multiprocessing), HTML/CSV reports
   viz/             live top-down view, telemetry plots, replay, log export
   calibration/     fit model params from real robot logs (later phase)
-  cli.py           vexsim run | build | bench | replay | validate-config
+  cli.py           vexsim run | build | doctor | bench | replay | validate-config
 examples/
   robots/          full_omni_6m.yaml, ...
   scenarios/       straight_48in.yaml, s_curve.yaml, fast_turn_drift.yaml, ...
@@ -157,19 +161,19 @@ Every sensor has an update period and a latency. Noise profiles are named preset
 ### 7.1 Approach
 The robot code is compiled, not interpreted.
 - The user's project is compiled with host GCC (MinGW-w64 on Windows) against **vexsim shim headers** that replace the PROS 4 SDK.
-- The result is linked into `robot.dll` (or `robot.so` / `robot.dylib`) with a small C ABI, and Python loads it with `ctypes`.
+- The result is linked with vexsim's runtime into a small executable, `robot_host`. The simulator runs it as a child process and steps it over pipes.
 
 ```
  PROS 4 project (src/, include/main.h, static/, project.pros) — unchanged
         │
         ▼  vexsim build <project>
- staging dir: project files minus SDK (include/pros/, include/api.h, firmware/*.a)
-   + vexsim shim headers (pros/*.hpp, api.h)  + LemLib built from source
-   + generated asset objects (static/ → ASSET symbols)
-        │  g++ -std=gnu++20 → robot.dll
+ staging dir: src/ + include/ minus the SDK (include/api.h, include/pros/, include/liblvgl/)
+   + vexsim shim headers (api.h, pros/*.h, pros/*.hpp)
+   + (Phase 8) LemLib built from source, static/ → ASSET symbols
+        │  g++ -std=gnu++20, incremental → robot_host[.exe] (static on Windows)
         ▼
- C ABI: vexsim_init / set_sensors / run_until_blocked / get_commands / get_pose / shutdown
-        │
+ robot host process: PROS C API + lockstep scheduler + protocol loop
+        │  pipes: readings + RUN <t>  →  ←  motor commands, console, W <next wake>
         ▼
  Python world (physics, sensors, viz, bench)
 ```
@@ -188,21 +192,21 @@ The robot code is compiled, not interpreted.
 5. **Lockstep scheduler** (deterministic simulated time):
    - Each PROS task is a host `std::thread` (MinGW UCRT64 uses the posix thread model), but only one runs at a time under baton passing. This matches FreeRTOS on the V5 user core.
    - `delay` and `delay_until` park the task until its wake time. Mutex waits park it until the mutex is free.
-   - `vexsim_run_until_blocked()` returns once all tasks are parked. Python then advances physics to the next wake time, pushes sensor values, and calls it again.
-   - Ready tasks resume in a fixed order (priority first, then creation order), so identical inputs give identical runs at any speed.
-   - Busy-wait detection: a task that runs for a configurable wall-clock budget without parking is reported, with its task name.
-6. **Competition harness.** The sim calls `initialize()`, `competition_initialize()`, `autonomous()` and `opcontrol()` as a field controller would. It supports a skills or match timeline and autonomous-only runs.
+   - `RUN <t>` returns once all tasks are parked. Python then advances physics to the next wake time, sends the sensor values that changed, and runs it again.
+   - Ready tasks resume in a fixed order (priority first, then the order they became ready), and a task that readies a higher-priority one is switched out at once, so identical inputs give identical runs at any speed.
+   - Busy waits: a task making PROS calls without parking is charged 1 ms per 1000 calls, so polling loops advance time. A task that runs for a configurable wall-clock budget without any PROS call is reported, with its task name.
+6. **Competition harness.** The sim calls `initialize()`, `autonomous()`, `opcontrol()` and `disabled()` as a field controller would, in the PROS competition task: a mode change deletes that task and starts the next, while user tasks keep running. Competition status bits match the mode (switch, field control, or none), and a disabled robot ignores motor commands. It supports a skills or match timeline and autonomous-only runs.
 7. **Console and screen.** `printf` / `std::cout` and `pros::lcd` lines appear in a panel in the viewer and in the run log.
 8. **Pose telemetry.** Ground truth always comes from the sim.
    - The robot's own estimate is read automatically from LemLib's odometry pose accessor, which works because LemLib is compiled from source.
    - Custom odometry can call `vexsim::report_pose(x, y, θ)` from `vexsim/sim.hpp`. On the real robot, `__has_include` guards make that call compile to nothing.
 9. **Windows specifics:**
-   - Windows locks a loaded DLL. Each build is loaded from a uniquely named copy, so you can rebuild while the viewer is open.
-   - `vexsim doctor` checks for MSYS2 UCRT64 g++, CMake and Ninja, and prints exact install steps if any are missing.
-   - Build outputs go to `%LOCALAPPDATA%\vexsim\build\<project-hash>`.
+   - `robot_host.exe` is linked statically, so it needs no MinGW DLLs. Windows locks a running executable; a rebuild while the viewer is open links to a new name.
+   - `vexsim doctor` checks for MSYS2 UCRT64 g++ (version, target, thread model), builds and runs a test program, and prints exact install steps if anything is missing.
+   - Build outputs go to `%LOCALAPPDATA%\vexsim\build\<project>-<hash>`.
 10. **Crash isolation.** A crash in user code (for example a null-pointer access) must not take the GUI down silently.
-    - The robot DLL runs in a separate **robot host process**, which talks to the physics through shared memory once per 1 ms step.
-    - A crash ends the run with a clear message and the last log lines.
+    - The robot code runs in a separate **robot host process**, which talks to the physics over pipes, only at the times a task needs to run.
+    - A crash or uncaught exception ends the run with the task's name, the cause and the last console lines.
     - Monte-Carlo trials already run in worker processes.
 
 ### 7.3 Expected adjustments
@@ -211,8 +215,8 @@ The robot code is compiled, not interpreted.
   - LVGL / brain-screen UIs (they run headless)
   - other precompiled ARM libraries (they must be rebuilt from source)
   - inline ARM assembly
-  - code that assumes `sizeof(long) == 4` (it's 8 on 64-bit Windows/Linux)
-  - logic that depends on how long its own computation takes (the sim doesn't charge for compute time; a fixed per-loop cost can be configured)
+  - code that assumes `sizeof(long) == 4` (it's 8 on 64-bit Linux) or that pointers fit in an `int` (they're 8 bytes on a PC)
+  - logic that depends on how long its own computation takes (the sim doesn't charge for compute time, only for PROS calls in busy loops)
 - **Not supported:** the PROS 3 API (v1 targets PROS 4 only).
 
 ## 8. Algorithm testing
@@ -296,7 +300,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 4 | **[done]** Device registry and sensors; Python odometry baselines | Odometry tests pass; noise presets in place |
 | 5 | **[done]** Python control API and baseline controllers; live viewer and plots | Drive a scenario from the keyboard/gamepad and run a Python autonomous route visually |
 | 6 | **[done]** Benchmark harness | 100-seed comparison of two localizers and two controllers produces an HTML report |
-| 7 | C++ bridge: PROS 4 shim, lockstep scheduler, robot host process, C ABI, `vexsim build` and `vexsim doctor` | `minimal_pros4` runs unchanged on Windows and Linux; scheduler tests pass |
+| 7 | **[done]** C++ bridge: PROS 4 shim, lockstep scheduler, robot host process over pipes, `vexsim build` and `vexsim doctor` | `minimal_pros4` runs unchanged on Windows and Linux; scheduler tests pass |
 | 8 | LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
 | 9 | Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
 | 10 | Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |

@@ -41,7 +41,6 @@ class Motor:
         self._device: MotorDevice = _device(sim, port, MotorDevice)
         self.port = abs(port)
         self._sign = -1.0 if port < 0 else 1.0
-        self._zero = 0.0  # degrees, in this motor's (possibly reversed) frame
 
     # movement
     def move(self, voltage: float) -> None:
@@ -55,7 +54,7 @@ class Motor:
         self._device.motor.set_velocity(self._sign * rpm_to_rad_s(rpm))
 
     def move_absolute(self, position_deg: float, velocity_rpm: float) -> None:
-        raw = self._sign * (position_deg + self._zero)
+        raw = self._sign * position_deg + self._device.zero_deg
         self._device.motor.set_position(math.radians(raw), rpm_to_rad_s(abs(velocity_rpm)))
 
     def move_relative(self, delta_deg: float, velocity_rpm: float) -> None:
@@ -73,11 +72,17 @@ class Motor:
         self._device.motor.current_limit_a = milliamps / 1000.0
 
     def tare_position(self) -> None:
-        self.set_zero_position(self.get_position() + self._zero)
+        self.set_zero_position(0.0)
 
     def set_zero_position(self, position_deg: float) -> None:
-        """Make the current reading of ``position_deg`` read as zero (PROS semantics)."""
-        self._zero = position_deg
+        """Make the current position read ``position_deg``, as PROS 4 does.
+
+        The zero belongs to the motor on that port, not to this object. Like the
+        PROS C API, it ignores reversal: a reversed motor then reads the negative.
+        """
+        r = self._reading()
+        raw = 0.0 if r is None else r.position_deg
+        self._device.zero_deg = raw - position_deg
 
     # telemetry
     def _reading(self):
@@ -85,7 +90,7 @@ class Motor:
 
     def get_position(self) -> float:
         r = self._reading()
-        return PROS_ERR_F if r is None else self._sign * r.position_deg - self._zero
+        return PROS_ERR_F if r is None else self._sign * (r.position_deg - self._device.zero_deg)
 
     def get_actual_velocity(self) -> float:
         r = self._reading()

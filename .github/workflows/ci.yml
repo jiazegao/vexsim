@@ -24,16 +24,37 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[dev,viz]"
 
+      # The C++ bridge compiles robot code with g++: MSYS2's MinGW-w64 (UCRT64) on Windows,
+      # the runner's own g++ on Linux.
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Point vexsim at MinGW g++
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content $env:GITHUB_ENV "VEXSIM_CXX=${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin\g++.exe"
+
+      - name: Check the C++ toolchain
+        run: vexsim doctor
+
       - name: Lint
         run: ruff check .
 
       - name: Test
         run: pytest
+        env:
+          VEXSIM_REQUIRE_CXX: "1"  # fail, don't skip, the C++ bridge tests
 
       - name: Validate example configs
         run: vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/v5rc_empty.yaml --strict
 
       - name: Plots
+        shell: bash  # stop at the first failing command (Windows pwsh only checks the last)
         run: |
           vexsim motor-curves --cartridge green --out motor_curves_green.png
           vexsim drift examples/robots/full_omni_6m.yaml --out drift_arc.png
@@ -41,6 +62,8 @@ jobs:
           vexsim run examples/robots/full_omni_6m.yaml --program examples/programs/tour.py --headless --record tour.csv --screenshot tour.png
           vexsim plot tour.csv --out telemetry.png
           vexsim bench examples/scenarios/s_curve.yaml --seeds 4 --workers 2 --out bench
+          vexsim build examples/pros_projects/minimal_pros4
+          vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/minimal_pros4 --headless --start 0,0,90 --record cpp_square.csv --screenshot cpp_square.png
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'windows-latest' && matrix.python == '3.13'
@@ -53,4 +76,6 @@ jobs:
             tour.png
             telemetry.png
             tour.csv
+            cpp_square.png
+            cpp_square.csv
             bench/

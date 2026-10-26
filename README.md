@@ -5,17 +5,18 @@ A VEX V5 robot mechanics simulator. It models:
 - the V5 motor, including current limiting, heat and battery sag
 - sensors and odometry, with realistic noise
 
-It's built to test localization and motion-control algorithms, and eventually to run unmodified PROS 4 / LemLib robot code.
+It's built to test localization and motion-control algorithms, and to run unmodified PROS 4 robot code (LemLib support is next).
 
-**Status: Phases 1-6 of 10 are done**:
+**Status: Phases 1-7 of 10 are done**:
 - configs and world loop
 - V5 motor, thermal, battery and power models
 - full-omni drivetrain and chassis, with drift, weight transfer and traction limits
 - V5 sensors with realistic noise, and odometry baselines
 - a PROS-style Python API, LemLib-style motions (PID, boomerang, pure pursuit, RAMSETE, motion profiles) and a live viewer you can drive with keyboard or gamepad
 - Monte-Carlo benchmarks of localizers and controllers, with HTML reports
+- unmodified PROS 4 C++ projects, compiled for your PC and run in lockstep with the physics
 
-Running real PROS 4 C++ code comes next in Phase 7. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
+LemLib (built from source) comes next in Phase 8. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
 
 ## Install
 
@@ -35,6 +36,8 @@ source .venv/bin/activate
 python -m pip install -e ".[dev,viz]"
 ```
 The `viz` extra (matplotlib, pygame) is only needed for plots and the viewer.
+
+Running C++ robot code also needs g++: MSYS2's MinGW-w64 (UCRT64) on Windows. `vexsim doctor` checks it and prints install steps; see [docs/cpp.md](docs/cpp.md#setup-once).
 
 ## Use
 
@@ -63,6 +66,18 @@ def opcontrol(bot):
         yield delay(10)
 ```
 See [docs/programming.md](docs/programming.md) for the API, every motion, viewer keys, and telemetry (`--record`, `vexsim plot`, `vexsim replay`).
+
+**Run your PROS 4 project** unchanged: vexsim compiles it with g++ against its own PROS 4 headers and runs it in step with the physics:
+```
+vexsim doctor                                   # once: check the C++ toolchain
+vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/minimal_pros4 --start 0,0,90
+```
+![The example PROS project driving a square](docs/img/cpp_square.png)
+- **What runs:** your `initialize`, `autonomous` and `opcontrol`, plus every task the code starts, on motors, IMU, rotation and distance sensors and the controller, with `printf` and `pros::lcd` in the viewer.
+- **Determinism:** simulated time only moves when every task is blocked, so runs repeat exactly.
+- **Isolation:** a crash or an infinite loop ends the run with the task's name instead of taking the simulator down.
+
+See [docs/cpp.md](docs/cpp.md) for setup, what's simulated, and the PROS 4 behaviors it reproduces.
 
 **Benchmark algorithms**: run a scenario across many seeds for every localizer x controller, in parallel:
 ```
@@ -190,11 +205,11 @@ print(rig.omega, motor.current, motor.temperature_c, power.bus_voltage)
 
 ## Develop
 ```
-pytest          # tests
+pytest          # tests (the C++ bridge tests are skipped if g++ is missing)
 ruff check .    # lint
 ruff format .   # format
 ```
-CI runs on Windows and Linux with Python 3.11 and 3.13 (`.github/workflows/ci.yml`).
+CI runs on Windows (with MSYS2 g++) and Linux with Python 3.11 and 3.13 (`.github/workflows/ci.yml`).
 
 ## Layout
 ```
@@ -208,10 +223,11 @@ vexsim/
   api/       PROS 4-style devices and a LemLib-style chassis for Python programs
   runtime/   simulation, competition phases, program coroutines, inputs, telemetry log
   bench/     scenarios, Monte-Carlo trials, metrics, parallel runner, HTML reports
+  bridge/    PROS 4 shim headers and robot host runtime (C++), `vexsim build`, the host process
   viz/       live viewer (pygame); plots (motor curves, drift, odometry, telemetry)
   cli.py     `vexsim` command
-examples/    robot and field configs, example program, benchmark scenarios
-docs/        conventions, physics models and parameter sources, programming and benchmarking guides,
-             and an example 100-seed benchmark report
-tests/
+examples/    robot and field configs, example Python program and PROS 4 project, benchmark scenarios
+docs/        conventions, physics models and parameter sources, guides for Python programs, C++
+             (PROS) code and benchmarking, and an example 100-seed benchmark report
+tests/       including a C++ test project for the bridge (tests/cpp/)
 ```

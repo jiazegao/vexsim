@@ -14,12 +14,6 @@ from vexsim.config.summary import field_summary, robot_summary
 EXIT_OK = 0
 EXIT_INVALID = 1
 
-ROADMAP = """\
-planned commands:
-  build     compile a PROS 4 project against the sim      (Phase 7)
-  doctor    check the C++ toolchain (MSYS2 on Windows)    (Phase 7)
-"""
-
 
 def _print_issues(issues: list[ConfigIssue]) -> None:
     ordered = [i for i in issues if i.severity == "error"] + [
@@ -162,8 +156,44 @@ def _load_config(path: str):
     return report.config
 
 
+def _is_pros_project(path: str) -> bool:
+    from pathlib import Path
+
+    p = Path(path)
+    return p.is_dir() or p.name == "project.pros"
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    from vexsim.bridge.build import BuildError, build_project, find_toolchain
+
+    try:
+        toolchain = find_toolchain(args.cxx)
+        result = build_project(
+            args.project, toolchain=toolchain, workers=args.jobs, debug=args.debug, log=print
+        )
+    except BuildError as exc:
+        print(f"error: {exc}")
+        return EXIT_INVALID
+    if not result.linked:
+        status = "up to date"
+    else:
+        status = f"built ({result.compiled} of {result.total} sources compiled)"
+    print(f"{status} in {result.seconds:.1f} s")
+    print(f"  {result.executable}")
+    return EXIT_OK
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from vexsim.bridge.doctor import run_doctor
+
+    return EXIT_OK if run_doctor(args.cxx) else EXIT_INVALID
+
+
 def cmd_run(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
     from vexsim.algorithms.localization.base import Pose
+    from vexsim.bridge.host import HostError
     from vexsim.runtime.program import load_program
     from vexsim.runtime.simulation import ScriptedInput, Simulation
 
@@ -177,14 +207,37 @@ def cmd_run(args: argparse.Namespace) -> int:
             _print_issues(report.issues)
             return EXIT_INVALID
         field = report.config
-    program = load_program(args.program) if args.program else None
-    mode = args.mode or ("autonomous" if hasattr(program, "autonomous") else "driver")
+    if args.program and _is_pros_project(args.program):
+        from vexsim.bridge.build import BuildError, build_project
+        from vexsim.bridge.program import CppProgram
+
+        project = Path(args.program)
+        project = project if project.is_dir() else project.parent
+        try:
+            build = build_project(project, log=print)
+        except BuildError as exc:
+            print(f"error: {exc}")
+            return EXIT_INVALID
+
+        def make_program():
+            return CppProgram(
+                build.executable, name=project.resolve().name, busy_timeout_s=args.busy_timeout
+            )
+
+        mode = args.mode or "autonomous"
+    else:
+        module = load_program(args.program) if args.program else None
+
+        def make_program():
+            return module
+
+        mode = args.mode or ("autonomous" if hasattr(module, "autonomous") else "driver")
     inputs = ScriptedInput.from_csv(args.input) if args.input else None
 
     def factory() -> Simulation:
         sim = Simulation(
             config,
-            program=program,
+            program=make_program(),
             field=field,
             seed=args.seed,
             noise=args.noise,
@@ -195,11 +248,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         return sim
 
     if args.headless:
-        sim = factory()
-        if args.seconds is not None:
-            sim.run_for(args.seconds)
-        elif not sim.run_until_finished(args.max_seconds):
-            print(f"stopped after {args.max_seconds:g} s (the program was still running)")
+        try:
+            sim = factory()
+            if args.seconds is not None:
+                sim.run_for(args.seconds)
+            elif not sim.run_until_finished(args.max_seconds):
+                print(f"stopped after {args.max_seconds:g} s (the program was still running)")
+        except HostError as exc:
+            print(f"error: {exc}")
+            return EXIT_INVALID
+        sim.close()
         true = Pose.from_si(sim.robot.pose)
         est = sim.estimated_pose
         print(f"{mode} finished at t = {sim.world.time:.2f} s")
@@ -225,7 +283,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         except ModuleNotFoundError:
             print('error: the viewer needs pygame; install it with: pip install -e ".[viz]"')
             return EXIT_INVALID
-        viewer.run()
+        except HostError as exc:
+            print(f"error: {exc}")
+            return EXIT_INVALID
+        try:
+            viewer.run()
+        except HostError as exc:
+            print(f"error: {exc}")
+            return EXIT_INVALID
+        finally:
+            viewer.source.sim.close()
         sim = viewer.source.sim
     if args.record and sim.recorder is not None:
         print(f"wrote {sim.recorder.write_csv(args.record)}")
@@ -346,8 +413,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vexsim",
         description="VEX V5 robot mechanics simulator.",
-        epilog=ROADMAP,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"vexsim {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>", required=True)
@@ -430,11 +495,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("robot", help="robot YAML file")
-    p.add_argument("--program", help="Python robot program file")
+    p.add_argument(
+        "--program",
+        help="Python robot program file, or a PROS 4 project folder (built with `vexsim build`)",
+    )
     p.add_argument(
         "--mode",
         choices=["autonomous", "driver", "match", "skills"],
-        help="competition mode (default: autonomous if the program has one, else driver)",
+        help="competition mode (default: autonomous for PROS projects and Python programs "
+        "with an autonomous function, else driver)",
     )
     p.add_argument("--field", help="field YAML file")
     p.add_argument("--start", type=_parse_start, default="0,0,0", help="x,y,heading (in, deg)")
@@ -447,7 +516,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seconds", type=float, help="headless: run exactly this long")
     p.add_argument("--max-seconds", type=float, default=180.0, help="headless: give up after")
     p.add_argument("--screenshot", help="headless: save the final frame as PNG")
+    p.add_argument(
+        "--busy-timeout",
+        type=float,
+        default=5.0,
+        help="PROS projects: stop if a task runs this many real seconds without blocking",
+    )
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser(
+        "build",
+        help="compile a PROS 4 project to run in the simulator",
+        description=(
+            "Compile a PROS 4 project against vexsim's PROS shim with g++ (MSYS2 MinGW-w64 on "
+            "Windows). The project is not modified; builds are incremental and cached."
+        ),
+    )
+    p.add_argument("project", help="PROS project folder (the one with project.pros and src/)")
+    p.add_argument("--debug", action="store_true", help="compile with -O0 -g for a debugger")
+    p.add_argument("--jobs", type=int, help="parallel compiles (default: CPU cores)")
+    p.add_argument("--cxx", help="g++ to use (default: $VEXSIM_CXX, then PATH)")
+    p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser(
+        "doctor",
+        help="check the C++ toolchain by building and running a test program",
+        description="Find g++, check its version and threads, and build and run a test program.",
+    )
+    p.add_argument("--cxx", help="g++ to check (default: $VEXSIM_CXX, then PATH)")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser(
         "bench",

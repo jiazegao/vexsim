@@ -62,6 +62,7 @@ class MotorDevice(Device):
         self.motor, self.spec, self.rng = motor, spec, rng
         counts = spec.counts_per_core_rev * motor.ratio
         self.degrees_per_count = 360.0 / counts if counts > 0 else 0.0
+        self.zero_deg = 0.0  # the motor's encoder zero (PROS set_zero_position), raw degrees
         self.rated_rpm = rad_s_to_rpm(motor.rated_speed)
 
     def measure(self, now_us: int) -> MotorReading:
@@ -180,6 +181,23 @@ class ImuDevice(Device):
         """Start calibration (PROS ``reset()``); heading is 0 when it finishes."""
         self._calibration = []
         self._calibration_end_us = now_us + round(self.spec.calibration_s * 1e6)
+
+    def finish_boot_calibration(self, now_us: int) -> None:
+        """Complete calibration at once, as if the robot stood still through it.
+
+        On the V5 the IMU calibrates when the brain powers on, long before a
+        program starts. The estimate gets the error an average of the still
+        samples would have.
+        """
+        samples = max(1, round(self.spec.calibration_s * 1000.0 / self.period_ms))
+        sigma = math.radians(self.spec.rate_noise_deg_s) / math.sqrt(samples)
+        self._bias_estimate = self.bias + (self.rng.normal(0.0, sigma) if sigma else 0.0)
+        self._calibration = None
+        self._heading = 0.0
+        self._last_true = self.robot.heading
+        self._pending.clear()
+        self.value = ImuReading(rotation_deg=0.0, gyro_z_deg_s=0.0)
+        self.published_at_us = now_us
 
     def measure(self, now_us: int) -> ImuReading | None:
         spec = self.spec

@@ -66,6 +66,22 @@ def test_move_absolute_relative_and_tare():
     assert left.get_position() == pytest.approx(-90, abs=2 * count)
 
 
+def test_set_zero_position_follows_pros4():
+    # PROS 4: the current position becomes the given value, for every object on that port;
+    # like the C API, the zero ignores reversal.
+    sim = sim_with()
+    motor = sim.bot.Motor(1)
+    motor.move_velocity(100)
+    sim.run_for(0.5)
+    motor.brake()
+    sim.run_for(0.3)
+    motor.set_zero_position(80)
+    assert motor.get_position() == pytest.approx(80)
+    assert sim.bot.Motor(-1).get_position() == pytest.approx(-80)
+    motor.tare_position()
+    assert motor.get_position() == pytest.approx(0)
+
+
 def test_brake_mode_and_current_limit():
     sim = sim_with()
     motor = sim.bot.Motor(2)

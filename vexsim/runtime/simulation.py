@@ -1,7 +1,11 @@
 """A ready-to-run simulation: world, robot, sensors, odometry, a program, and telemetry.
 
 Each tick: sensors sample -> controller input and odometry update (every 10 ms)
--> the program coroutine runs (checked every 1 ms) -> physics -> telemetry.
+-> the program runs (checked every 1 ms) -> physics -> telemetry.
+
+A program is a Python module of generator functions, or a native program such
+as ``vexsim.bridge.CppProgram`` (compiled PROS code) that provides
+``attach(sim)``, ``start_phase(name, limit_s, now_us)`` and ``close()``.
 """
 
 from __future__ import annotations
@@ -162,7 +166,12 @@ class Simulation:
         self.controller = Controller()
         self.input_source = input_source
         self.program = program
+        self.native = bool(getattr(program, "native", False))
+        self.mode: str | None = None
         self.console: list[str] = []
+        self.lcd: dict[int, str] = {}  # brain screen lines (pros::lcd) from native programs
+        self.controller_screen: dict[int, str] = {}
+        self.reported_pose: Pose | None = None  # the robot code's own estimate, if it reports one
         self._echo = echo
         self.bot = Bot(self)
         self.phase = "disabled"
@@ -174,14 +183,21 @@ class Simulation:
         self.world.every(1, self._tick_program, priority=PRIORITY_CONTROL, name="program")
         if self.recorder is not None:
             self.world.every(10, self.recorder.capture, priority=PRIORITY_RECORD, name="record")
+        if self.native:
+            program.attach(self)  # after the program tick, so a new phase runs in the same ms
 
     # --- program control -----------------------------------------------------------------
 
     def start(self, mode: str) -> None:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {sorted(MODES)}")
-        if mode in ("autonomous", "skills") and not hasattr(self.program, "autonomous"):
+        if (
+            mode in ("autonomous", "skills")
+            and not self.native
+            and not hasattr(self.program, "autonomous")
+        ):
             raise ValueError("the program has no autonomous() function")
+        self.mode = mode
         self._phases = list(MODES[mode])
         self._current = None
 
@@ -195,6 +211,12 @@ class Simulation:
     def run_until_finished(self, max_seconds: float) -> bool:
         return self.world.run_until(lambda w: self.finished, timeout_s=max_seconds)
 
+    def close(self) -> None:
+        """Stop a native program's host process (Python programs need nothing)."""
+        close = getattr(self.program, "close", None)
+        if self.native and close is not None:
+            close()
+
     def log(self, text: str) -> None:
         line = f"[{self.world.time:7.2f}] {text}"
         self.console.append(line)
@@ -205,6 +227,9 @@ class Simulation:
 
     @property
     def estimated_pose(self) -> Pose:
+        """The robot code's reported pose if it reports one, else the built-in localizer's."""
+        if self.reported_pose is not None:
+            return self.reported_pose
         if self.localizer is None or not self.localizer_ready:
             return self.believed_start
         return self.localizer.pose
@@ -239,10 +264,13 @@ class Simulation:
             if not self._phases:
                 return
             name, limit = self._phases.pop(0)
-            fn = getattr(self.program, name, None) if self.program else None
-            fn = fn or {"initialize": default_initialize, "opcontrol": default_opcontrol}[name]
             self.phase = name
-            self._current = Coroutine(name, as_generator(fn, self.bot), now, limit)
+            if self.native:
+                self._current = self.program.start_phase(name, limit, now)
+            else:
+                fn = getattr(self.program, name, None) if self.program else None
+                fn = fn or {"initialize": default_initialize, "opcontrol": default_opcontrol}[name]
+                self._current = Coroutine(name, as_generator(fn, self.bot), now, limit)
         self._current.tick(now)
         if self._current.finished:
             if self._current.timed_out:

@@ -30,6 +30,17 @@ vexsim = "vexsim.cli:main"
 [tool.setuptools.packages.find]
 include = ["vexsim*"]
 
+[tool.setuptools.package-data]
+# The PROS 4 shim and robot host runtime, compiled by `vexsim build`
+"vexsim.bridge" = [
+    "cpp/include/*.h",
+    "cpp/include/*/*.h",
+    "cpp/include/*/*.hpp",
+    "cpp/runtime/*.cpp",
+    "cpp/runtime/*.hpp",
+    "cpp/runtime/defaults/*.cpp",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

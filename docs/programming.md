@@ -1,5 +1,7 @@
 # Writing robot programs
 
+This page covers Python programs. To run your PROS 4 C++ project unchanged, see [cpp.md](cpp.md).
+
 A program is a Python file with any of three **generator functions**. Each one receives the `bot` object, as PROS hands you the robot:
 
 ```python
@@ -73,6 +75,7 @@ bot.print("text")  # console panel + terminal
 - Readings come from the simulated sensors, so they lag, quantize and carry noise.
 - Before a device's first sample, a reading returns `PROS_ERR_F` (infinity), as PROS does.
 - `Imu.reset()` starts a ~2 s calibration; poll `is_calibrating()` until it finishes.
+- `set_zero_position(p)` makes the motor's current position read `p` and `tare_position()` reads 0, as in PROS 4. The zero belongs to the motor on that port, so every object using the port sees it.
 - Every class and method is in `vexsim/api/devices.py`.
 
 ## Chassis motions (`bot.chassis`)
@@ -109,7 +112,7 @@ These were measured on the example 6-motor full-omni robot, with the tests in `t
 - path trails;
 - the active motion's target or path (orange);
 - wheels shaded from dark (gripping) to red (sliding), and sideways roller forces (orange ticks);
-- a side panel with poses, odometry error, speed, battery, per-motor current and temperature, controller sticks and the program console.
+- a side panel with poses, odometry error, speed, battery, per-motor current and temperature, controller sticks, the brain screen (C++ programs' `pros::lcd` lines) and the program console.
 
 | Key | Action |
 |---|---|

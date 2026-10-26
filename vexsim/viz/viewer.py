@@ -79,6 +79,7 @@ class Snapshot:
     motors: list[tuple[int, float, float, bool]]  # port, current A, temperature C, over temp
     wheels: list[WheelView] = field(default_factory=list)
     console: list[str] = field(default_factory=list)
+    lcd: list[str] = field(default_factory=list)  # brain screen lines from C++ programs
     overlay_path: np.ndarray | None = None  # (n, 2) inches
     overlay_target: tuple[float, float, float | None] | None = None
     sticks: dict[str, int] = field(default_factory=dict)
@@ -170,6 +171,7 @@ class LiveSource:
         self.sim = factory()
 
     def restart(self) -> None:
+        self.sim.close()
         self.sim = self.factory()
 
     @property
@@ -221,7 +223,9 @@ class LiveSource:
             robot_name=cfg.name or "robot",
             footprint=cfg.body.footprint_in,
             true_pose=Pose.from_si(robot.pose),
-            est_pose=sim.estimated_pose if sim.localizer_ready else None,
+            est_pose=(
+                sim.estimated_pose if sim.localizer_ready or sim.reported_pose is not None else None
+            ),
             speed_in_s=m_to_in(math.hypot(u, v)),
             battery_v=robot.power.bus_voltage,
             battery_soc=robot.power.battery.soc,
@@ -231,6 +235,7 @@ class LiveSource:
             ],
             wheels=wheels,
             console=sim.console[-8:],
+            lcd=[sim.lcd[k] for k in sorted(sim.lcd) if sim.lcd[k].strip()],
             overlay_path=overlay_path,
             overlay_target=overlay_target,
             sticks=dict(sim.controller.analog),
@@ -524,6 +529,10 @@ class Viewer:
                 self.small,
                 TEXT_2,
             )
+        if snap.lcd:
+            y = self._text("brain screen", (x, y + 8), self.small, TEXT_2)
+            for line in snap.lcd[:8]:
+                y = self._text(line[:58], (x, y), self.small)
         y = self._text("console", (x, y + 8), self.small, TEXT_2)
         for line in snap.console[-8:]:
             y = self._text(line[:58], (x, y), self.small)
