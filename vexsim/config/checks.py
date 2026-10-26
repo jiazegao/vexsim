@@ -11,7 +11,6 @@ import math
 from vexsim.config.issues import ConfigIssue, Severity
 from vexsim.config.robot import RobotConfig
 from vexsim.physics.kinematics import DriveKinematics
-from vexsim.physics.params import check_overrides
 from vexsim.v5 import MOTOR_11W_POWER_W, MOTOR_POWER_BUDGET_W, STARTING_SIZE_LIMIT_IN
 
 _EPS = 1e-9
@@ -246,6 +245,10 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
         )
 
     # Model parameter overrides
+    # Imported here: vexsim.physics.params imports vexsim.config, so a module-level import
+    # would make `from vexsim.physics import ...` fail when it comes first.
+    from vexsim.physics.params import check_overrides
+
     for severity, key, message in check_overrides(cfg.overrides):
         add(severity, f"overrides.{key}", message)
 

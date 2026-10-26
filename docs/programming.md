@@ -8,8 +8,10 @@ A program is a Python file with any of three **generator functions**. Each one r
 from vexsim.api import delay
 
 
-def initialize(bot):  # optional; the default waits for the IMU to calibrate
-    yield
+def initialize(bot):  # optional; this is what the default does
+    imu = bot.Imu(10)
+    while imu.is_calibrating():  # keep still until the IMU has calibrated
+        yield delay(10)
 
 
 def autonomous(bot):
@@ -31,6 +33,7 @@ def opcontrol(bot):  # optional; the default is arcade drive (plus strafing, if 
 - `yield delay(ms)` waits like `pros::delay(ms)`. A bare `yield` waits 10 ms.
 - Code between yields runs instantly in simulated time, which keeps runs deterministic.
 - A plain (non-generator) function runs once and returns.
+- The IMU calibrates for about 2 s when the simulation starts. The default `initialize` waits for it; if you write your own, wait too, or the robot drives with no heading.
 
 **Competition modes** (`vexsim run --mode ...`)
 | Mode | Sequence |
