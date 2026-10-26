@@ -265,6 +265,21 @@ def test_imu_scale_error_survives_calibration():
     assert abs(imu.scale - 1) > 0.001
 
 
+def test_a_measured_imu_scale_error_replaces_the_random_one():
+    data = copy.deepcopy(ROBOT_DATA)
+    data["sensors"][0]["scale_error"] = 0.002528  # reads 360.91 deg per real turn
+    for preset in ("ideal", "harsh"):  # the device's own error, whatever the noise preset
+        world, robot, sensors = setup(preset, seed=2, data=data)
+        assert sensors.device(IMU).scale == pytest.approx(1.002528)
+    world, robot, sensors = setup("ideal", seed=2, data=data)
+    truth = truth_at_samples(world, robot)
+    world.run_for(2.1)
+    drive(robot, -0.3, 0.3)
+    world.run_for(3.0)
+    turned = math.degrees(truth["pose"][2])
+    assert -sensors.device(IMU).value.rotation_deg == pytest.approx(turned * 1.002528, rel=1e-4)
+
+
 # --- distance sensor ------------------------------------------------------------------------------
 
 

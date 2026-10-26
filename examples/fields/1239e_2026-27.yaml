@@ -1,0 +1,31 @@
+# The 2026-27 field as team 1239E's localization models it (MclTracking.hpp and the RCL
+# obstacles in configs.hpp), for examples/pros_projects/1239e_2026-27.
+#
+# Element heights and the alliance bases' shape are assumed: the code only says which
+# elements its high (9.12 in) and low (4.19 in) distance sensors see. Bases are low, so
+# the robot drives over them (solid: false) and only the low sensors see them.
+#
+# Positions are inches from the field center (+x and +y as in docs/conventions.md).
+version: 1
+name: 2026-27 field (1239E's model)
+size_in: [140.4, 140.4]         # FIELD_HALF_LENGTH = 70.2: their field, measured
+elements:
+  # Match loaders against the side walls, 4 x 4 in (MCL's universal_match_loaders)
+  - {type: obstacle, name: match loader 1, shape: rect, pos_in: [ 68.35,  58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  - {type: obstacle, name: match loader 2, shape: rect, pos_in: [-68.35,  58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  - {type: obstacle, name: match loader 3, shape: rect, pos_in: [-68.35, -58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  - {type: obstacle, name: match loader 4, shape: rect, pos_in: [ 68.35, -58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  # Center: a pole every sensor sees (high_center_base), on a low square base (low_center_base)
+  - {type: obstacle, name: center base, shape: rect, pos_in: [0, 0], size_in: [5.611, 5.611], height_in: 6, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: center pole, shape: circle, pos_in: [0, 0], diameter_in: 3.187, color: "#6b6b6b"}
+  # Neutral bases, 5 x 5 in (low_neutral_bases)
+  - {type: obstacle, name: neutral base 1, shape: rect, pos_in: [-47, 23.5], size_in: [5, 5], height_in: 6, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: neutral base 2, shape: rect, pos_in: [-23.5, 47], size_in: [5, 5], height_in: 6, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: neutral base 3, shape: rect, pos_in: [47, -23.5], size_in: [5, 5], height_in: 6, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: neutral base 4, shape: rect, pos_in: [23.5, -47], size_in: [5, 5], height_in: 6, solid: false, color: "#9a9a9a"}
+  # Alliance bases (the RCL's alliance_base obstacles; MCL leaves them out). Assumed the
+  # same as the neutral ones.
+  - {type: obstacle, name: alliance base 1, shape: rect, pos_in: [23.5, 47], size_in: [5, 5], height_in: 6, solid: false, color: "#a98bc4"}
+  - {type: obstacle, name: alliance base 2, shape: rect, pos_in: [47, 23.5], size_in: [5, 5], height_in: 6, solid: false, color: "#a98bc4"}
+  - {type: obstacle, name: alliance base 3, shape: rect, pos_in: [-23.5, -47], size_in: [5, 5], height_in: 6, solid: false, color: "#a98bc4"}
+  - {type: obstacle, name: alliance base 4, shape: rect, pos_in: [-47, -23.5], size_in: [5, 5], height_in: 6, solid: false, color: "#a98bc4"}

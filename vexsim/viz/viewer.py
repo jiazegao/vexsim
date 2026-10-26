@@ -100,8 +100,9 @@ class Snapshot:
     sticks: dict[str, int] = field(default_factory=dict)
     field_in: tuple[float, float] = (144.0, 144.0)  # inside the walls
     wall_contacts: list[tuple[float, float]] = field(default_factory=list)  # inches
-    # Game elements, inches: obstacles as polygons or (x, y, r) circles, pieces as (x, y, r).
-    obstacles: list[tuple[str, tuple, str | None]] = field(default_factory=list)
+    # Game elements, inches: obstacles as polygons or (x, y, r) circles (color, solid),
+    # pieces as (x, y, r, color).
+    obstacles: list[tuple[str, tuple, str | None, bool]] = field(default_factory=list)
     pieces: list[tuple[float, float, float, str | None]] = field(default_factory=list)
 
 
@@ -273,10 +274,11 @@ def _elements(sim) -> dict:
     for shape in arena.obstacles:
         if shape.circle:
             x, y = (m_to_in(v) for v in shape.center)
-            obstacles.append(("circle", (x, y, m_to_in(shape.half[0])), shape.color))
+            geometry = (x, y, m_to_in(shape.half[0]))
+            obstacles.append(("circle", geometry, shape.color, shape.solid))
         else:
             corners = tuple((m_to_in(x), m_to_in(y)) for x, y in shape.corners())
-            obstacles.append(("polygon", corners, shape.color))
+            obstacles.append(("polygon", corners, shape.color, shape.solid))
     p = arena.pieces
     pieces = [
         (m_to_in(x), m_to_in(y), m_to_in(r), color)
@@ -470,13 +472,14 @@ class Viewer:
         left, top = self._to_px(-half_x, half_y)
         right, bottom = self._to_px(half_x, -half_y)
         pg.draw.rect(scr, WALL, (left, top, right - left, bottom - top), 3)
-        for kind, geometry, color in snap.obstacles:
+        for kind, geometry, color, solid in snap.obstacles:
             fill = _color(color, OBSTACLE)
+            width = 0 if solid else 2  # drive-over elements in outline
             if kind == "circle":
                 x, y, r = geometry
-                pg.draw.circle(scr, fill, self._to_px(x, y), max(2, round(r * scale)))
+                pg.draw.circle(scr, fill, self._to_px(x, y), max(2, round(r * scale)), width)
             else:
-                pg.draw.polygon(scr, fill, [self._to_px(x, y) for x, y in geometry])
+                pg.draw.polygon(scr, fill, [self._to_px(x, y) for x, y in geometry], width)
         for x, y, r, color in snap.pieces:
             center = self._to_px(x, y)
             pg.draw.circle(scr, _color(color, PIECE), center, max(2, round(r * scale)))

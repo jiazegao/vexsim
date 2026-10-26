@@ -209,6 +209,28 @@ F = mu * N * tanh(|c| / x_s) * c / |c|,   c = (grip slip, sideways slip)
 - no energy is created under random commands
 - runs are deterministic
 
+## Mechanisms: `vexsim/physics/mechanism.py`
+Lifts, intakes and arms: motors that drive something other than the wheels (`mechanisms:` in the robot config, [conventions.md](conventions.md#robot-config-semantics)). Each mechanism is one rotating output (a lift's spool, a roller, an arm's pivot), geared to its motors and integrated at the motor shaft like a gear group:
+
+    J dw/dt = sum of motor torques - G * (load + friction)
+
+- `J` is the motors' rotor inertia plus the load's (`inertia_kgm2`, at the output), and `G` the output speed over the motor speed (`ratio`).
+- `load_torque_nm` is a constant torque pulling the output toward negative angles, such as a lift's weight times its spool radius. It is constant, so an arm whose gravity torque changes with angle is approximated by its average.
+- `friction_nm` is Coulomb friction at the output, applied implicitly: a load lighter than the friction stays put, without creeping or chattering at the 1 ms step.
+- **Hard stops** (`range_deg`, output degrees from the starting position) end the travel inelastically. A motor pushing into a stop stalls there at its current limit, which is what code that homes a mechanism by driving into a stop relies on. The motors' encoders follow the output, stops included.
+
+The motors are full V5 motors: firmware control loops, brake modes, current limits, thermal derating, and a share of the battery. A mechanism doesn't push the chassis; its mass belongs in the body's. Every mechanism motor is a device on its port, so robot code drives it as on the robot, and telemetry records each output angle (`<name>_deg`).
+
+Not modeled: what a mechanism carries or touches. An intake spins, but picks nothing up.
+
+**What the tests check** (`tests/test_mechanisms.py`):
+- a lift raises, holds its height with the hold brake mode, and falls back onto its bottom stop when coasting
+- a heavier load raises more slowly
+- a mechanism driven into a stop stays there with its motors stalled at the current limit
+- the gear ratio sets the output speed
+- friction holds a load lighter than itself, and not a heavier one
+- mechanism motors are devices and draw from the battery; port conflicts and stops that don't contain the start are config errors
+
 ## Field walls: `vexsim/physics/field.py`
 The robot's footprint (`body.footprint_in`) collides with the field perimeter (`size_in` in the field config). Each step, after the robot moves:
 1. Every footprint corner past a wall is a contact.
@@ -256,7 +278,9 @@ So the robot stops flush against a barrier, squares up against its face, and piv
 
 Pieces don't spin. Robots can't drive over or pick them up: intakes and scoring are future work. While every piece is at rest and no robot is near one, a step skips them, so a field full of pieces costs nothing extra.
 
-**Sensors.** Distance sensors see obstacles and pieces. A GPS camera's view of the code strip is blocked by obstacles, not by pieces.
+**Low elements.** An obstacle with `solid: false` is low enough to drive over, like a goal base the robot straddles. Robots and pieces pass over it; only sensors see it.
+
+**Sensors.** Distance sensors see obstacles and pieces. An obstacle with a `height_in` is seen only by distance sensors whose beam (`height_in` in the robot config) is lower than its top; a sensor without a height, or an obstacle without one, sees or blocks everything. A GPS camera's view of the code strip is blocked by obstacles, not by pieces.
 
 **What the tests check** (`tests/test_elements.py`):
 - the robot stops flush at a barrier and squares up, at a round goal, and against a corner
@@ -264,6 +288,7 @@ Pieces don't spin. Robots can't drive over or pick them up: intakes and scoring 
 - a sliding piece stops after `v^2 / (2 mu g)`, bounces off a wall with its restitution, and two equal elastic pieces swap velocities
 - a field whose pieces are out of reach drives exactly like an empty one
 - distance sensors see obstacles and pieces, and obstacles block the GPS
+- a low element blocks only the beams below its top; robots and pieces pass over elements that aren't solid
 
 ## Sensors: `vexsim/devices/`
 **Timing and units**
@@ -292,6 +317,7 @@ Pieces don't spin. Robots can't drive over or pick them up: intakes and scoring 
 - A still robot is left with a few tenths of a degree per minute of drift. That's checked over 20 seeds, matching the VEX Forum's "normal".
 - A robot that *moves* during calibration gets a large phantom turn rate, as in VEX's warning.
 - Heading is clockwise-positive, as in VEX.
+- An IMU's own scale error, if measured, can be given in the robot config (`scale_error`); it then replaces the random per-device draw, under every preset.
 
 ### GPS
 The V5 GPS Sensor is a camera that reads the code strip around the field perimeter.

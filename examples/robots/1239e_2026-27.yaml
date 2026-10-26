@@ -1,0 +1,64 @@
+# Team 1239E's 2026-27 robot, for examples/pros_projects/1239e_2026-27.
+#
+# Ports, wheel size, gearing, track width, the IMU's scale error and every distance
+# sensor's mounting come from the team's code (include/custom/configs.hpp and
+# MclTracking.hpp). Marked "assumed" where the code doesn't say: measure those on the
+# robot and replace them (docs/porting_1239e.md, step 4).
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, angles
+# counter-clockwise from +x (docs/conventions.md). The team's RCL code gives sensor
+# offsets as (right, forward) and angles clockwise from forward: (h, v, a) here is
+# pos_in [v, -h], heading_deg -a.
+
+version: 1
+name: 1239E 2026-27
+
+body:
+  mass_kg: 7.0                  # assumed
+  footprint_in: [14, 12.5]      # assumed; must contain the sensors at y +/-5.86
+  cg_in: [0, 0, 4.5]            # assumed
+  battery: v5_default
+
+drivetrain:
+  type: differential
+  # 6 wheels, 3 a side (MclTracking::getDTWheelDegrees), all omni (LemLib horizontal drift
+  # 2); the 5 in wheel spacing is assumed.
+  wheels:
+    - {name: lf, pos_in: [ 5.0,  5.2], type: omni, diameter_in: 3.25}
+    - {name: lm, pos_in: [ 0.0,  5.2], type: omni, diameter_in: 3.25}
+    - {name: lb, pos_in: [-5.0,  5.2], type: omni, diameter_in: 3.25}
+    - {name: rf, pos_in: [ 5.0, -5.2], type: omni, diameter_in: 3.25}
+    - {name: rm, pos_in: [ 0.0, -5.2], type: omni, diameter_in: 3.25}
+    - {name: rb, pos_in: [-5.0, -5.2], type: omni, diameter_in: 3.25}
+  gearing:
+    # lemlib::Drivetrain(&leftMotors, &rightMotors, 10.4 in track, 3.25 in wheels, 450 rpm):
+    # blue (600 rpm) motors geared 36:48 for 450 rpm at the wheels.
+    left:  {motors: [10, 9],   cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb]}
+    right: {motors: [-19, -17], cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb]}
+
+mechanisms:
+  # liftMotors({-7, 21}): 120 motor degrees per inch of lift (LIFT_GEAR_RATIO), heights
+  # 0-50 in. It starts at the bottom; load and inertia are assumed (about 2.5 kg of
+  # carriage on a 1-in spool).
+  lift: {motors: [-7, 21], cartridge: blue, inertia_kgm2: 0.0004, load_torque_nm: 0.3,
+         friction_nm: 0.03, range_deg: [0, 6300]}
+  front_intake: {motors: [20], cartridge: blue, inertia_kgm2: 0.0002, friction_nm: 0.02}
+  effector_intake: {motors: [-5], cartridge: green, inertia_kgm2: 0.0001, friction_nm: 0.02}
+  # effectorRotateMotor: 4 motor degrees per effector degree (EFFECTOR_GEAR_RATIO), angles
+  # 0-165 deg; hardResetEffector() drives it down against the stop at 0. Upper stop assumed.
+  effector_wrist: {motors: [-4], cartridge: green, ratio: "12:48", inertia_kgm2: 0.003,
+                   friction_nm: 0.05, range_deg: [0, 190]}
+
+sensors:
+  # ScaledIMU imu(16, 360.0, 360.91): this IMU reads 360.91 deg per real turn.
+  - {type: imu, port: 16, pos_in: [0, 0], scale_error: 0.002528}
+  # Distance sensors, as RclSensor(h, v, a) and MCL's sensor_mounts. Beam heights from
+  # MclTracking.hpp: the "high" ones (9.12 in) see over the low bases, the low ones
+  # (4.19 in) don't.
+  - {type: distance, port: 1,  pos_in: [ 4.656207,  5.6937585], heading_deg: 0,   height_in: 9.12}  # frontL
+  - {type: distance, port: 8,  pos_in: [ 4.656207, -5.6937585], heading_deg: 0,   height_in: 9.12}  # frontR
+  - {type: distance, port: 18, pos_in: [-2.999773,  5.857102],  heading_deg: 90,  height_in: 4.19}  # left
+  - {type: distance, port: 2,  pos_in: [-0.920094,  5.6937585], heading_deg: 180, height_in: 9.12}  # back
+  - {type: distance, port: 3,  pos_in: [-2.999773, -5.857102],  heading_deg: -90, height_in: 4.19}  # right
+  # pros::Optical frontOptic(3) shares port 3 with the right distance sensor in the code;
+  # optical sensors aren't simulated, and its calls fail with ENODEV here.

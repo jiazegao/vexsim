@@ -20,6 +20,7 @@ from pydantic import (
     FiniteFloat,
     StrictBool,
     StrictInt,
+    model_validator,
 )
 
 from vexsim.units import in_to_m
@@ -162,6 +163,42 @@ class DrivetrainConfig(_Model):
         raise KeyError(name)
 
 
+class MechanismConfig(_Model):
+    """Motors that drive something other than the wheels: a lift, an intake, an arm.
+
+    The mechanism is one rotating output (a lift's spool, a roller, an arm's
+    pivot) geared to its motors. Load values are at that output; positions are
+    output degrees from where it starts, positive in its motors' positive
+    direction (a negative port is reversed, as in the drive's gearing groups).
+    """
+
+    motors: Annotated[tuple[MotorPort, ...], Field(min_length=1)]
+    cartridge: Cartridge
+    ratio: GearRatio = 1.0  # output speed / motor speed, e.g. "12:48" (a 4:1 reduction)
+    inertia_kgm2: Annotated[float, Field(ge=0, allow_inf_nan=False)] = 0.0  # load, at the output
+    # Constant torque pulling the output toward negative angles: a lift's weight
+    # times its spool radius. Negative pulls the other way.
+    load_torque_nm: FiniteFloat = 0.0
+    friction_nm: Annotated[float, Field(ge=0, allow_inf_nan=False)] = 0.0  # Coulomb, at the output
+    # Hard stops, in output degrees from the starting position (so low <= 0 <= high)
+    range_deg: tuple[FiniteFloat, FiniteFloat] | None = None
+
+    @property
+    def speed_ratio(self) -> float:
+        return ratio_value(self.ratio)
+
+    @model_validator(mode="after")
+    def _range_contains_start(self) -> MechanismConfig:
+        if self.range_deg is not None:
+            low, high = self.range_deg
+            if not low <= 0.0 <= high or low == high:
+                raise ValueError(
+                    "range_deg must be [low, high] with low <= 0 <= high: the mechanism starts "
+                    "at 0, between its hard stops"
+                )
+        return self
+
+
 class TrackingWheelConfig(_Model):
     pos_in: Vec2
     heading_deg: FiniteFloat = 0.0
@@ -174,6 +211,10 @@ class ImuConfig(_Model):
     pos_in: Vec2 = (0.0, 0.0)
     mount_yaw_deg: FiniteFloat = 0.0
     noise: NoisePreset = "default"
+    # This IMU's own scale error, if measured: (reading - true) / true for a full turn, e.g.
+    # 0.0025 for an IMU that reads 360.91 deg per real 360. Without it each simulated IMU
+    # draws a random one (sensor.imu.scale_error).
+    scale_error: Annotated[float, Field(gt=-0.5, lt=0.5, allow_inf_nan=False)] | None = None
 
 
 class RotationConfig(_Model):
@@ -189,6 +230,9 @@ class DistanceConfig(_Model):
     port: SensorPort
     pos_in: Vec2
     heading_deg: FiniteFloat = 0.0
+    # Height of the beam above the floor. Field elements with a height_in at or below it
+    # pass under the beam; without it the sensor sees every element.
+    height_in: PositiveFloat | None = None
     noise: NoisePreset = "default"
 
 
@@ -213,6 +257,7 @@ class RobotConfig(_Model):
     name: str | None = None
     body: BodyConfig
     drivetrain: DrivetrainConfig
+    mechanisms: dict[Name, MechanismConfig] = Field(default_factory=dict)
     sensors: tuple[SensorConfig, ...] = ()
     # Dotted model-parameter overrides, e.g. "wheel.omni.lateral_mu" (docs/models.md).
     overrides: dict[OverrideKey, bool | int | float | str] = Field(default_factory=dict)
@@ -224,6 +269,7 @@ ROBOT_MODELS: tuple[type[BaseModel], ...] = (
     DrivetrainConfig,
     WheelConfig,
     GearGroupConfig,
+    MechanismConfig,
     TrackingWheelConfig,
     ImuConfig,
     RotationConfig,

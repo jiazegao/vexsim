@@ -169,5 +169,34 @@ def build_library(
     return include, lib
 
 
+def edited_headers(
+    project: Path, version: str, log: Callable[[str], None] | None = None
+) -> list[str]:
+    """The project's copies of LemLib's headers that differ from LemLib ``version``'s own, or
+    that LemLib doesn't have; project-relative, with /.
+
+    include/lemlib and include/fmt count separately, and only as complete copies (as in a
+    project with the LemLib template applied): a folder with some of the headers, or none,
+    is LemLib's own."""
+    src = source_dir(version, log)
+    edited = []
+    for top in ("include/lemlib", "include/fmt"):
+        upstream = [p for p in (src / top).rglob("*") if p.is_file()]
+        if not upstream or not all((project / p.relative_to(src)).is_file() for p in upstream):
+            continue
+        for path in sorted((project / top).rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(project).as_posix()
+            theirs = src / rel
+            if not theirs.is_file() or _normalized(path) != _normalized(theirs):
+                edited.append(rel)
+    return edited
+
+
+def _normalized(path: Path) -> bytes:
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def tested(version: str) -> bool:
     return version.startswith(TESTED)

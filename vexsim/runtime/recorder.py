@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,19 +32,41 @@ BASE_COLUMNS = [
 ]
 
 
+@dataclass(frozen=True)
+class PoseError:
+    """Estimated vs. true pose over a run: position (in) and heading (deg) errors."""
+
+    mean_in: float
+    max_in: float
+    max_at_s: float
+    final_in: float
+    mean_deg: float
+    max_deg: float
+
+    def __str__(self) -> str:
+        return (
+            f"mean {self.mean_in:.2f} in, max {self.max_in:.2f} in (at {self.max_at_s:.1f} s), "
+            f"final {self.final_in:.2f} in; heading mean {self.mean_deg:.2f}, "
+            f"max {self.max_deg:.1f} deg"
+        )
+
+
 class Recorder:
     def __init__(self, sim: Simulation):
         self.sim = sim
         self.ports = sorted(sim.robot.motors)
-        self.columns = BASE_COLUMNS + [
-            f"motor{p}_{k}" for p in self.ports for k in ("current_a", "temp_c", "volts")
-        ]
+        self.mechanisms = list(sim.robot.mechanisms.values())
+        self.columns = (
+            BASE_COLUMNS
+            + [f"motor{p}_{k}" for p in self.ports for k in ("current_a", "temp_c", "volts")]
+            + [f"{m.name}_deg" for m in self.mechanisms]  # output angle from the start
+        )
         self.rows: list[list] = []
 
     def capture(self, _world=None) -> None:
         sim, robot = self.sim, self.sim.robot
         true = Pose.from_si(robot.pose)
-        est = sim.estimated_pose if sim.localizer_ready else None
+        est = sim.estimated_pose if sim.localizer_ready or sim.reported_pose else None
         u, v, w = robot.body_velocity
         row = [
             round(sim.world.time, 3),
@@ -62,7 +85,30 @@ class Recorder:
         for p in self.ports:
             m = robot.motors[p]
             row += [abs(m.current), m.temperature_c, m.voltage]
+        row += [m.position_deg for m in self.mechanisms]
         self.rows.append(row)
+
+    def pose_error(self, phase: str | None = None) -> PoseError | None:
+        """How far the estimated pose (the robot code's own, for C++ programs) was from the
+        true one, over the rows of ``phase`` (all rows if None); None without estimates."""
+        t, dist, turn = [], [], []
+        for row in self.rows:
+            if (phase is not None and row[1] != phase) or math.isnan(row[5]):
+                continue
+            t.append(row[0])
+            dist.append(math.hypot(row[2] - row[5], row[3] - row[6]))
+            turn.append(abs((row[4] - row[7] + 180.0) % 360.0 - 180.0))
+        if not t:
+            return None
+        worst = max(range(len(dist)), key=dist.__getitem__)
+        return PoseError(
+            mean_in=sum(dist) / len(dist),
+            max_in=dist[worst],
+            max_at_s=t[worst],
+            final_in=dist[-1],
+            mean_deg=sum(turn) / len(turn),
+            max_deg=max(turn),
+        )
 
     def write_csv(self, path: str | Path) -> Path:
         path = Path(path)

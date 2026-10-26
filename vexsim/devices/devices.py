@@ -171,7 +171,8 @@ class ImuDevice(Device):
     ):
         super().__init__(cfg.port, spec.period_ms, spec.latency_ms)
         self.spec, self.rng, self.robot = spec, rng, robot
-        self.scale = 1.0 + static_rng.normal(0.0, spec.scale_error)
+        drawn = static_rng.normal(0.0, spec.scale_error)
+        self.scale = 1.0 + (drawn if cfg.scale_error is None else cfg.scale_error)
         self.bias = math.radians(static_rng.normal(0.0, spec.raw_bias_deg_s))  # rad/s
         self._last_true = robot.heading
         self._heading = 0.0  # integrated, CCW, rad
@@ -259,6 +260,7 @@ class DistanceDevice(Device):
         self.spec, self.rng, self.robot, self.arena = spec, rng, robot, arena
         self.mount = (in_to_m(cfg.pos_in[0]), in_to_m(cfg.pos_in[1]))
         self.heading = math.radians(cfg.heading_deg)
+        self.height = None if cfg.height_in is None else in_to_m(cfg.height_in)
         self.half_size = (in_to_m(field.size_in[0]) / 2, in_to_m(field.size_in[1]) / 2)
 
     def true_distance_mm(self) -> float | None:
@@ -267,7 +269,7 @@ class DistanceDevice(Device):
         ox = x + c * self.mount[0] - s * self.mount[1]
         oy = y + s * self.mount[0] + c * self.mount[1]
         if self.arena is not None:
-            meters = self.arena.ray((ox, oy), heading + self.heading)
+            meters = self.arena.ray((ox, oy), heading + self.heading, height=self.height)
             return None if meters is None else meters * 1000.0
         return ray_to_walls(ox, oy, heading + self.heading, *self.half_size)
 

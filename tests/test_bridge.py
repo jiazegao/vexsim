@@ -5,6 +5,7 @@ They need g++ (see conftest.py for how they skip without one).
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -362,10 +363,31 @@ def test_api_surface_and_c_sources(test_exe):
     assert len(gps) == 1 and out.index(gps[0]) < unsupported  # simulated, but not on port 6
 
 
+def test_lvgl_stand_in_runs_screen_code(test_exe):
+    assert console(sim_run(test_exe, "lvgl", 0.01)) == [
+        'label "auton 3" on screen 2 size 110 x 200 clicks 0',  # nobody touches the screen
+        "logo 2x1 format 0x12",
+        "after delete 1",
+        "sqrtf 4.0 sinf 0.0",
+    ]
+
+
+def test_the_simulation_seed_reaches_the_program(test_exe):
+    program = CppProgram(test_exe, env={"VEXSIM_TEST": "seed"})
+    sim = Simulation(load_robot(ROBOT), program=program, seed=42, echo=None)
+    sim.start("driver")
+    sim.run_for(0.01)
+    sim.close()
+    assert console(sim) == ["seed 42"]
+
+
 def test_reported_pose_becomes_the_estimate(test_exe):
     sim = sim_run(test_exe, "report_pose", 0.05)
     # LemLib convention (theta clockwise from +y) -> vexsim's (counter-clockwise from +x)
     assert sim.estimated_pose == Pose(12, 24, 0)
+    assert sim.recorder.rows[-1][5:8] == [12, 24, 0]  # in the telemetry log too
+    error = sim.recorder.pose_error()
+    assert error.final_in == pytest.approx(math.hypot(12, 24)) and error.max_deg == 0
 
 
 def test_example_autonomous_is_deterministic(example_exe, capsys):

@@ -40,7 +40,7 @@ vexsim run ROBOT.yaml --program path/to/project --headless --record run.csv --sc
 ```
 - **Builds are incremental.** Only sources whose code or included headers changed are recompiled. The first build also compiles vexsim's runtime once, which takes a few seconds.
 - **Your project is never modified.** Build output goes to `%LOCALAPPDATA%\vexsim\build` on Windows, or `~/.cache/vexsim/build` elsewhere (set `VEXSIM_CACHE_DIR` to change it). `vexsim build --debug` compiles without optimization, for a debugger.
-- **The PROS SDK in your project is skipped.** `include/api.h`, `include/pros/`, `include/liblvgl/`, `include/display/` and `firmware/` are replaced by vexsim's PROS 4 shim, and so is every header a template lists as its own in `project.pros`. Your own headers and sources are used as they are.
+- **The PROS SDK in your project is skipped.** `include/api.h`, `include/pros/`, `include/liblvgl/`, `include/display/` and `firmware/` are replaced by vexsim's PROS 4 shim, and so is every header a template lists as its own in `project.pros` (except LemLib headers you edited: see [LemLib](#lemlib)). Your own headers and sources are used as they are.
 - **Includes work as in PROS.** A source in `src/<folder>/` can include a header in `include/<folder>/` by its bare name, as PROS's makefile allows.
 - **The robot config must match your ports.** If the code uses a device on a port where the robot YAML has something else, the call fails with `errno = ENODEV`, as on a robot with a missing device, and the console says what's wrong:
   ```
@@ -69,7 +69,17 @@ sim.run_until_finished(30)
 sim.close()  # ends the robot code's process
 print(sim.console, sim.estimated_pose, Pose.from_si(sim.robot.pose))
 ```
-`CppProgram(..., env={"AUTON": "left"})` passes environment variables your code can read with `getenv()`, for example to pick an autonomous routine.
+**Environment variables.** `vexsim run --env KEY=VALUE` (repeatable), or `CppProgram(..., env={"AUTON": "left"})`, passes environment variables your code can read with `getenv()`. Nobody taps the simulated brain screen, so this is how to pick an autonomous routine. `VEXSIM_SEED` is always set to the simulation's seed: seed your own random numbers with it and a run repeats exactly.
+```cpp
+#ifdef VEXSIM
+if (const char* name = std::getenv("AUTON")) selected = find_routine(name);
+#endif
+```
+
+**How well does your odometry do?** After a headless run, `vexsim run` compares the pose your code reports (LemLib's, or `report_pose`) with the true one:
+```
+  the robot code's pose vs. the true one during autonomous: mean 1.66 in, max 7.00 in (at 7.3 s), final 1.78 in; heading mean 0.53, max 4.3 deg
+```
 
 ## LemLib
 ```
@@ -82,7 +92,8 @@ vexsim run examples/robots/lemlib_example.yaml --program examples/pros_projects/
 - **LemLib is built from source.** The LemLib template installs LemLib precompiled for the V5's ARM CPU, which can't run on a PC. `vexsim build` reads LemLib's version from `project.pros` and fetches that release's source from GitHub (with git, or as a zip). It then compiles it once per version and compiler, with LemLib's own headers replacing the template's copies. Offline, point `VEXSIM_LEMLIB_SOURCE` at a LemLib checkout. LemLib 0.5.x (for PROS 4) is tested.
 - **`ASSET()` paths work.** Every file in `static/` is embedded under the name LemLib's `ASSET()` expects: `static/example.txt` is `ASSET(example_txt)`.
 - **LemLib's pose shows up on its own.** Once `chassis.calibrate()` starts LemLib's odometry, the viewer's blue estimate and telemetry's `est_*` columns show LemLib's pose, with no `report_pose` call needed.
-- **Start pose:** LemLib's (0, 0, 0) faces +y, so start the simulated robot with `--start 0,0,90`. Otherwise LemLib thinks it faces 90° away from where it really does.
+- **Start pose:** LemLib's (0, 0, 0) faces +y, so start the simulated robot with `--start 0,0,90`. Otherwise LemLib thinks it faces 90° away from where it really does. In general, `chassis.setPose(x, y, theta)` is `--start x,y,(90 - theta)`.
+- **Edited LemLib headers work as on the robot.** Some teams change their copy of a LemLib header, say to make `PID`'s gains public. On the robot their code compiles against the edited header and links the unchanged precompiled library. vexsim does the same: if the project has a complete copy of `include/lemlib/` (or `include/fmt/`) that differs from that LemLib release's, its code compiles against its own copy, the library is built from LemLib's source, and the build notes which headers differ. The edits must keep class layouts the same (access and `const` changes are fine; new or reordered data members are not), as on the robot.
 
 ## How simulated time works
 The robot code runs in its own process, in **lockstep** with the physics:
@@ -105,7 +116,7 @@ The robot code runs in its own process, in **lockstep** with the physics:
 ## What's simulated
 | PROS 4 API | In the simulator |
 |---|---|
-| `pros::Motor`, `pros::MotorGroup` | Everything: `move*`, getters (and `_all`), brake modes, current and voltage limits, encoder units, gearing, zero position. See the PROS 4 behaviors below. |
+| `pros::Motor`, `pros::MotorGroup` | Everything: `move*`, getters (and `_all`), brake modes, current and voltage limits, encoder units, gearing, zero position. See the PROS 4 behaviors below. Drive motors turn the wheels; motors under `mechanisms:` in the robot config turn lifts, intakes and arms ([conventions.md](conventions.md#robot-config-semantics)). |
 | `pros::Imu` | Rotation, heading, yaw, z gyro rate, tare/set offsets, `reset`, `is_calibrating`. Pitch and roll stay 0 (flat field); acceleration reads 0. Heading is clockwise-positive, as on the V5. |
 | `pros::Rotation` | Position, angle, velocity, reversal (negative port), `reset`, `set_position`. |
 | `pros::Distance` | Distance to the field walls and to game elements (obstacles and pieces, from the field config). Confidence reads 63 and object size 400 when something is in range; object velocity reads 0. |
@@ -117,7 +128,9 @@ The robot code runs in its own process, in **lockstep** with the physics:
 | `printf`, `std::cout`, `std::cerr` | Console panel and terminal, stamped with simulated time. |
 | `pros::adi::*` (pneumatics, encoders, ...) | Not simulated yet. Outputs remember what was written, so a `Pneumatics` reads back as extended. Inputs and encoders read 0. The first use logs a note. |
 | `pros::Optical`, `Vision`, `Link`, `Serial` | Not simulated yet. Calls fail with `errno = ENODEV`, and the first one logs a note. |
-| LVGL, SD card, AI Vision | Not available. Code using LVGL or AI Vision headers won't compile. |
+| LVGL 9 (`liblvgl`) | A stand-in: screens, objects, labels (`set_text`, `set_text_fmt`), buttons, images (including `lv_image_dsc_t` files from LVGL's image converter), event callbacks, timers and the common style setters compile and run. Nothing is drawn, and no event or timer ever fires, since nobody touches the screen. Other LVGL functions won't compile: add them to `include/liblvgl/lvgl.h` and `runtime/lvgl.cpp`. |
+| SD card | Not inserted: `pros::usd::is_installed()` reads 0, and files under `/usd/` don't open, as on a brain without a card. |
+| AI Vision | Not available. Code using its headers won't compile. |
 
 **PROS 4 behaviors that are reproduced, so they can bite in the simulator too**
 - **Plain `MotorGroup` setters act on the first motor only.** `group.set_brake_mode(...)` and `group.tare_position()` change only the first motor; the `_all` versions change every motor.
@@ -142,7 +155,8 @@ Robot code sees field coordinates as it defines them. The x and y axes are vexsi
 - **Integer sizes.** `int` is 4 bytes everywhere. On the V5 `long` and pointers are 4 bytes. On 64-bit Windows `long` is 4 bytes and pointers 8; on 64-bit Linux and macOS both are 8. Code that assumes `sizeof(long) == 4` or stores pointers in `int` needs fixing.
 - **Not modeled:** time slicing among equal-priority busy tasks (busy tasks are charged per call instead), mutex priority inheritance, and the slight delay before the IMU's calibrating flag appears (vexsim waits 5 ms, as PROS's `reset` does).
 - **Libraries that ship precompiled for the V5's ARM CPU won't link,** because they are machine code for another processor. LemLib is built from source instead; others, such as OkapiLib, aren't supported.
-- **newlib extras.** The V5's C library (newlib) has a few functions PC C libraries lack. vexsim provides the ones robot code and LemLib use (`infinity()`, `infinityf()`, and on Windows `isnanf()`, `isinff()`, `finitef()`).
+- **newlib extras.** The V5's C library (newlib) has a few functions PC C libraries lack. vexsim provides the ones robot code and LemLib use (`infinity()`, `infinityf()`, and on Windows `isnanf()`, `isinff()`, `finitef()`). The V5's `<cmath>` also has `std::sqrtf`, `std::sinf` and the other float and long double functions, which libstdc++ before g++ 14 lacks; vexsim adds them.
+- **Wall-clock time isn't the robot's time.** `std::chrono` clocks (and `time()`) read your PC's clock, which has nothing to do with simulated time. Time things with `pros::millis()` or `pros::micros()`, which work the same on the robot.
 
 ## Troubleshooting
 | Message | What to do |
@@ -154,6 +168,7 @@ Robot code sees field coordinates as it defines them. The x and y axes are vexsi
 | `robot code hung: task '...' ran for 5.0 s of real time without calling pros::delay()` | A loop has no `pros::delay`. On the robot it would starve every other task. |
 | `port N: the code uses ... but the robot config has ...` | Make the robot YAML's ports match your code. |
 | `pros::Optical is not simulated yet` | Expected for now. The call returned `PROS_ERR`. |
+| `'lv_...' was not declared in this scope` | The LVGL stand-in lacks that function. Add a do-nothing version to `vexsim/bridge/cpp/include/liblvgl/lvgl.h` and `runtime/lvgl.cpp`, or keep that screen code out of simulator builds with `#ifndef VEXSIM`. |
 
 ## How it works
 1. **Staging.** `vexsim build` copies `src/` and `include/` without the SDK headers and template files into a build folder. A quoted `#include "api.h"` searches the including file's own folder first, so a staged copy is the only way to make the project's headers find the shim instead of the SDK.

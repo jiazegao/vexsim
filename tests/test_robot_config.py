@@ -249,7 +249,8 @@ def test_size_mass_and_motor_budget_warnings(robot_data):
 
 
 @pytest.mark.parametrize(
-    "name", ["traction_6m", "xdrive_4m", "mecanum_4m", "hdrive_5m", "lemlib_example"]
+    "name",
+    ["traction_6m", "xdrive_4m", "mecanum_4m", "hdrive_5m", "lemlib_example", "1239e_2026-27"],
 )
 def test_every_example_robot_is_clean(name):
     report = validate_robot(EXAMPLES / "robots" / f"{name}.yaml")

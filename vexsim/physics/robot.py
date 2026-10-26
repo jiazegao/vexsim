@@ -1,4 +1,4 @@
-"""A robot built from its config: motors, gear groups, wheels, chassis and power.
+"""A robot built from its config: motors, gear groups, wheels, chassis, mechanisms and power.
 
 Degrees of freedom (all velocities):
   u, v, w   CG velocity in the body frame (+x forward, +y left) and yaw rate
@@ -37,6 +37,7 @@ from vexsim.config.robot import RobotConfig
 from vexsim.physics.battery import Battery
 from vexsim.physics.chassis import NormalLoads
 from vexsim.physics.field import WallContact, Walls
+from vexsim.physics.mechanism import Mechanism
 from vexsim.physics.motor import BrakeMode, V5Motor
 from vexsim.physics.params import PhysicsParams, resolve_params
 from vexsim.physics.power import PowerSystem
@@ -151,6 +152,15 @@ class Robot:
             )
             self.groups.append(group)
         self._group_by_name = {g.name: g for g in self.groups}
+        self.mechanisms: dict[str, Mechanism] = {}
+        for name, mech in config.mechanisms.items():
+            members = []
+            for port in mech.motors:
+                motor = V5Motor(mech.cartridge, spec=self.params.motor, thermal=self.params.thermal)
+                self.power.attach(motor)
+                self.motors[abs(port)] = motor
+                members.append((abs(port), 1 if port > 0 else -1, motor))
+            self.mechanisms[name] = Mechanism(name, mech, members)
 
         n = 3 + len(self.groups)
         self.mass_matrix = np.diag(
@@ -270,6 +280,8 @@ class Robot:
             speed = qdot[group.index]
             for _, sign, motor in group.motors:
                 forces[group.index] += sign * motor.update(sign * speed, dt)
+        for mechanism in self.mechanisms.values():
+            mechanism.advance(dt)
 
         C = self.contact_matrix
         contact_vel = C @ qdot

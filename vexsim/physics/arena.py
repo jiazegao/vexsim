@@ -57,6 +57,8 @@ class Shape:
     half: tuple[float, float]
     name: str = ""
     color: str | None = None
+    height: float | None = None  # m above the floor; None = taller than any sensor
+    solid: bool = True  # False: robots and pieces pass over it; only sensors see it
 
     @property
     def radius(self) -> float:
@@ -174,6 +176,7 @@ class Arena:
         self.walls = walls
         self.spec: FieldSpec = walls.spec
         self.obstacles = obstacles or []
+        self.solid = [o for o in self.obstacles if o.solid]  # what robots and pieces hit
         self.pieces = pieces or _no_pieces()
         self.robots: list[Robot] = []
         self.piece_contacts: list[tuple[np.ndarray, int]] = []  # (point, piece) this step
@@ -192,6 +195,8 @@ class Arena:
                 ),
                 name=o.name or f"obstacle {i}",
                 color=o.color,
+                height=None if o.height_in is None else in_to_m(o.height_in),
+                solid=o.solid,
             )
             for i, o in enumerate(field.obstacles)
         ]
@@ -217,14 +222,14 @@ class Arena:
 
     def resolve(self, robot: Robot) -> list[WallContact]:
         contacts = self.walls.resolve(robot)
-        if self.obstacles:
+        if self.solid:
             contacts += self._robot_obstacles(robot)
         return contacts
 
     def _robot_obstacles(self, robot: Robot) -> list[WallContact]:
         footprint = _footprint(robot)
         found = []  # (point, normal pushing the robot, depth)
-        for shape in self.obstacles:
+        for shape in self.solid:
             if math.dist(shape.center, footprint.center) > shape.radius + footprint.radius:
                 continue
             if shape.circle:
@@ -322,7 +327,7 @@ class Arena:
                     normal[axis] = -sign
                     point = position[i] - normal * radius[i]
                     out.append(_Contact(int(i), None, normal, float(depth[i]), point))
-        for shape in self.obstacles:
+        for shape in self.solid:
             gap = np.hypot(position[:, 0] - shape.center[0], position[:, 1] - shape.center[1])
             for i in np.flatnonzero(gap < shape.radius + radius):
                 distance, normal, point = shape.signed_distance(position[i])
@@ -426,8 +431,11 @@ class Arena:
 
     # --- sensing ----------------------------------------------------------------------------
 
-    def ray(self, origin, angle: float, *, pieces: bool = True) -> float | None:
-        """Distance (m) along a ray to the first wall, obstacle or (optionally) piece."""
+    def ray(
+        self, origin, angle: float, *, pieces: bool = True, height: float | None = None
+    ) -> float | None:
+        """Distance (m) along a ray to the first wall, obstacle or (optionally) piece.
+        A ray ``height`` m above the floor passes over obstacles no taller than that."""
         from vexsim.devices.devices import ray_to_walls
 
         hit = ray_to_walls(origin[0], origin[1], angle, *self.half_size)
@@ -437,6 +445,8 @@ class Arena:
         o = np.asarray(origin, dtype=float)
         d = np.array([math.cos(angle), math.sin(angle)])
         for shape in self.obstacles:
+            if height is not None and shape.height is not None and shape.height <= height:
+                continue
             t = shape.ray(o, d)
             if t is not None and t < best:
                 best = t

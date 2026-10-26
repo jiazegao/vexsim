@@ -201,6 +201,42 @@ def test_distance_sensor_sees_elements():
     assert sim.sensors.devices[13].value == round((30 - 7 - 3.5) * 25.4)
 
 
+def test_low_elements_block_only_the_beams_below_their_top():
+    data = load_yaml_file(EXAMPLE_ROBOT)
+    data["sensors"] = [
+        {"type": "distance", "port": 13, "pos_in": [7, 0], "height_in": 4},
+        {"type": "distance", "port": 14, "pos_in": [7, 1], "height_in": 9},
+        {"type": "distance", "port": 15, "pos_in": [7, -1]},  # height unknown: sees everything
+    ]
+    cfg = load_robot(data)
+    base = {"type": "obstacle", "shape": "rect", "pos_in": [40, 0], "size_in": [5, 5]}
+    near, wall = 40 - 2.5 - 27, 72 - 27  # from sensors 27 in out
+    for element, low, high, unknown in (
+        ({**base, "height_in": 6, "solid": False}, near, wall, near),
+        (base, near, near, near),  # no height: taller than any sensor
+    ):
+        sim = Simulation(cfg, field=field(element), start=Pose(20, 0, 0), noise="ideal", echo=None)
+        sim.run_for(0.1)
+        readings = [sim.sensors.devices[p].value / 25.4 for p in (13, 14, 15)]
+        assert readings == pytest.approx([low, high, unknown], abs=0.03)
+
+
+def test_robots_and_pieces_pass_over_elements_that_are_not_solid():
+    base = {"type": "obstacle", "shape": "rect", "pos_in": [0, 0], "size_in": [5, 5],
+            "height_in": 6, "solid": False}  # fmt: skip
+    other = {**base, "pos_in": [-40, 40]}
+    ball = {**BALL, "pos_in": [-40, 60], "friction": 0.0}
+    sim = sim_on(field(base, other, ball), Pose(-30, 0, 0))
+    sim.arena.pieces.velocity[0] = [0.0, -1.0]
+    drive(sim)
+    sim.run_for(1.5)
+    assert pose_in(sim)[0] > 10  # drove straight over the base
+    assert abs(pose_in(sim)[1]) < 0.01 and not sim.robot.wall_hits
+    assert piece_in(sim) == pytest.approx((-40, 60 - 1.5 / 0.0254))  # and the piece over the other
+    report = validate_field({"elements": [base, {**BALL, "pos_in": [0, 0]}]})
+    assert report.ok and report.issues == []  # a piece may sit on a low element
+
+
 def test_obstacles_hide_the_gps_code_strip():
     data = load_yaml_file(EXAMPLE_ROBOT)
     data["sensors"].append({"type": "gps", "port": 15, "pos_in": [0, 0], "mount_yaw_deg": 0})
@@ -222,6 +258,7 @@ def test_viewer_draws_elements(tmp_path):
     snap = LiveSource(lambda: sim).snapshot()
     assert len(snap.obstacles) == 3 and len(snap.pieces) == 6
     assert snap.obstacles[1][0] == "circle" and snap.obstacles[0][0] == "polygon"
+    assert all(solid for *_, solid in snap.obstacles)
     viewer = Viewer(LiveSource(lambda: sim), headless=True)
     viewer.draw(snap)
     viewer.save(str(tmp_path / "field.png"))

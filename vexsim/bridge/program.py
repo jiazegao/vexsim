@@ -133,12 +133,14 @@ class CppProgram:
                 devices.append((port, "distance", ""))
             elif isinstance(device, GpsDevice):
                 devices.append((port, "gps", ""))
+        # VEXSIM_SEED: the simulation's seed, for robot code that wants repeatable randomness
+        env = {"VEXSIM_SEED": str(sim.world.rng.seed), **(self.env or {})}
         self.host = RobotHost(
             self.executable,
             devices,
             spin_calls_per_ms=self.spin_calls_per_ms,
             busy_timeout_s=self.busy_timeout_s,
-            env=self.env,
+            env=env,
         )
         self._apply(self.host.startup, sim.world.clock.us)
         sim.world.every(1, self._tick, priority=PRIORITY_CONTROL, name="robot code")

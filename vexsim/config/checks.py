@@ -170,6 +170,9 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
     for gname, group in dt.gearing.items():
         for j, port in enumerate(group.motors):
             claim(port, f"drivetrain.gearing.{gname}.motors[{j}]")
+    for mname, mech in cfg.mechanisms.items():
+        for j, port in enumerate(mech.motors):
+            claim(port, f"mechanisms.{mname}.motors[{j}]")
     for k, sensor in enumerate(cfg.sensors):
         claim(sensor.port, f"sensors[{k}]")
 

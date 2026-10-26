@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StrictBool, model_validator
 
 from vexsim.config.issues import ConfigIssue
 
@@ -26,7 +26,9 @@ class _Model(BaseModel):
 
 
 class ObstacleConfig(_Model):
-    """A fixed field element: the robot, pieces and sensors can't pass through it."""
+    """A fixed field element. The robot and pieces can't pass through it unless it's
+    low enough to drive over (``solid: false``); a distance sensor sees it unless the
+    sensor's beam is above its ``height_in``."""
 
     type: Literal["obstacle"]
     name: str | None = None
@@ -35,6 +37,8 @@ class ObstacleConfig(_Model):
     size_in: tuple[PositiveFloat, PositiveFloat] | None = None  # rect: length (x) by width (y)
     diameter_in: PositiveFloat | None = None  # circle
     heading_deg: FiniteFloat = 0.0  # rect: rotation of its length axis
+    height_in: PositiveFloat | None = None  # top above the floor; omitted = taller than sensors
+    solid: StrictBool = True  # false: robots and pieces pass over it (a low base, a line)
     color: str | None = None  # for the viewer, e.g. "#808080"
 
     @model_validator(mode="after")
@@ -114,6 +118,8 @@ def check_field(cfg: FieldConfig) -> list[ConfigIssue]:
                 continue
             if other.type == "piece":
                 gap = math.dist((x, y), other.pos_in) - other.diameter_in / 2
+            elif not other.solid:
+                continue  # a piece may sit on a low element
             else:
                 gap = _distance_to(other, (x, y))
             if gap < r - 1e-9:

@@ -230,6 +230,11 @@ static void device_scenarios() {
 	} else if (is("kitchen_sink")) {
 		void kitchen_sink();
 		kitchen_sink();
+	} else if (is("lvgl")) {
+		void lvgl_screen();
+		lvgl_screen();
+	} else if (is("seed")) {
+		printf("seed %s\n", std::getenv("VEXSIM_SEED"));
 	} else if (is("report_pose")) {
 		vexsim::report_pose(12, 24, 90);
 		pros::delay(10);

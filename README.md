@@ -129,6 +129,12 @@ vexsim run examples/robots/full_omni_6m.yaml --field examples/fields/practice_el
 ```
 See [docs/conventions.md](docs/conventions.md#field-elements) for the format and [docs/models.md](docs/models.md#game-elements-vexsimphysicsarenapy) for the physics.
 
+**A real team's code**: team 1239E's 2026-27 code runs with three small marked edits: LemLib with distance-sensor wall resets (RCL) and a 2048-particle Monte Carlo localizer (MCL), a lift and end effector, an LVGL auton selector, and nine autonomous routines. `examples/scripts/evaluate_1239e.py` runs every routine and compares LemLib's pose with the truth, with and without the distance sensors:
+```
+vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40"
+```
+[docs/porting_1239e.md](docs/porting_1239e.md) is the step-by-step port, and a guide for porting your own team's code.
+
 **Check a robot config** and see what the simulator will build from it:
 ```
 vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/v5rc_empty.yaml
@@ -267,8 +273,10 @@ vexsim/
   cli.py     `vexsim` command
 examples/    robot configs for each drivetrain, field configs (empty, and with game elements), an
              example Python program, scripted controller input, PROS 4 and LemLib projects
-             (including the calibration routine), benchmark scenarios
+             (including the calibration routine and team 1239E's ported code), benchmark
+             scenarios, scripts (evaluate_1239e.py)
 docs/        conventions, physics models and parameter sources, guides for Python programs, C++
-             (PROS) code, benchmarking and calibration, and an example 100-seed benchmark report
+             (PROS) code, benchmarking, calibration and porting a team's code, and an example
+             100-seed benchmark report
 tests/       including a C++ test project for the bridge (tests/cpp/)
 ```

@@ -56,6 +56,22 @@ Any wheel type works in any drivetrain: a tank drive with traction wheels in the
 
 **GPS:** `pos_in` is where the sensor sits, and `mount_yaw_deg` the direction its camera faces, counter-clockwise from the robot's +x. A GPS facing backward has `mount_yaw_deg: 180`.
 
+**Distance sensors:** `height_in` is the beam's height above the floor. Field elements with a `height_in` at or below it pass under the beam. Without it, the sensor sees every element.
+
+**IMU `scale_error`** (optional) is that IMU's measured scale error: (reading - true) / true over a full turn. An IMU that reads 360.91° for a real 360° has `scale_error: 0.002528`. Without it, each simulated IMU draws its own at random.
+
+**Mechanisms** (lifts, intakes, arms; see [models.md](models.md#mechanisms-vexsimphysicsmechanismpy)):
+```yaml
+mechanisms:
+  lift: {motors: [-7, 21], cartridge: blue, ratio: 1, inertia_kgm2: 0.0004,
+         load_torque_nm: 0.3, friction_nm: 0.03, range_deg: [0, 6300]}
+  intake: {motors: [20], cartridge: blue}
+```
+- A mechanism is one output (a spool, a roller, a pivot). `ratio` is output speed / motor speed, written like the drive's gearing: `"12:48"` is a 4:1 reduction.
+- Positive is the motors' positive direction; a negative port is mounted reversed, as in a `MotorGroup`.
+- Angles are output degrees from where the mechanism starts. `range_deg: [low, high]` are its hard stops, so `low <= 0 <= high`. A lift that starts at the bottom has `low: 0`.
+- `inertia_kgm2`, `load_torque_nm` (pulls toward negative angles) and `friction_nm` are at the output. All default to 0.
+
 **Validation**
 - Typos in keys are errors, and the message suggests the closest valid key.
 - Duplicate keys are errors. Plain YAML silently keeps the last one.
@@ -88,8 +104,10 @@ elements:
 
 - `pos_in` is the center, in the field frame. A rect's `size_in` is its length (along `heading_deg`) by its width.
 - Pieces are discs: give a ring or cylinder its outer diameter. `friction` is the ground friction coefficient (default 0.4); `restitution` is how much of its speed it keeps bouncing off something (default 0.3).
-- `color` (`"#rrggbb"`) is only for the viewer.
-- Validation: elements must be inside the walls; a piece that starts overlapping a wall, an obstacle or another piece gets a warning.
+- An obstacle's `height_in` is its top above the floor. Distance sensors whose beam is higher see over it; without it, the obstacle is taller than any sensor.
+- `solid: false` marks an obstacle low enough to drive over (a goal base the robot straddles, say): robots and pieces pass over it, and only sensors see it.
+- `color` (`"#rrggbb"`) is only for the viewer. The viewer draws elements that aren't solid as outlines.
+- Validation: elements must be inside the walls; a piece that starts overlapping a wall, a solid obstacle or another piece gets a warning.
 
 ## Time
 - Simulation time is an integer number of **microseconds**, so runs never drift.

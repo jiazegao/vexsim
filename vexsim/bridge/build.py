@@ -495,7 +495,23 @@ def build_project(
     lemlib_version = lemlib.find_version(project, templates)
     exclude = {f for t in templates.values() for f in t.system_files if f.startswith("include/")}
     if lemlib_version:
-        exclude |= {"include/lemlib", "include/fmt"}  # replaced by the matching LemLib source
+        edited = lemlib.edited_headers(project, lemlib_version, log)
+        # As on the robot, a project with edited LemLib headers compiles against its own
+        # copies, while the library is LemLib's own build (so edits must keep class layouts).
+        # Otherwise the headers come from the matching LemLib source.
+        for top in ("include/lemlib", "include/fmt"):
+            if any(f.startswith(top + "/") for f in edited):
+                exclude = {f for f in exclude if not f.startswith(top + "/")}
+            else:
+                exclude.add(top)
+        if edited:
+            shown = ", ".join(edited[:3]) + (
+                f" and {len(edited) - 3} more" if len(edited) > 3 else ""
+            )
+            notes.append(
+                f"the project's LemLib headers differ from LemLib {lemlib_version}'s ({shown}); "
+                "its code compiles against its own copies, as on the robot"
+            )
         if not lemlib.tested(lemlib_version):
             notes.append(f"LemLib {lemlib_version} is untested in vexsim (tested: 0.5.x)")
 

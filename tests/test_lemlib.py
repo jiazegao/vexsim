@@ -7,8 +7,8 @@ first run; offline they are skipped, unless VEXSIM_REQUIRE_CXX is set (CI).
 from __future__ import annotations
 
 import json
-import os
 import re
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -141,21 +141,6 @@ def test_missing_asset_explains_itself(build, tmp_path):
 
 
 @pytest.fixture(scope="session")
-def lemlib_build(build):
-    """Build the LemLib template project (fetches and compiles LemLib on first use)."""
-
-    def _build(project: Path):
-        try:
-            return build(project)
-        except BuildError as exc:
-            if "couldn't get LemLib" in str(exc) and not os.environ.get("VEXSIM_REQUIRE_CXX"):
-                pytest.skip(str(exc))
-            raise
-
-    return _build
-
-
-@pytest.fixture(scope="session")
 def template_exe(lemlib_build):
     result = lemlib_build(TEMPLATE)
     assert result.lemlib == "0.5.6"
@@ -196,6 +181,44 @@ def test_lemlib_pose_is_read_back(template_exe):
     assert est is sim.reported_pose
     assert true.distance_to(est) < 1.0  # LemLib's tracking-wheel odometry vs. the truth
     assert abs(true.heading_error(est)) < 3.0
+
+
+EDITED_PID_PROGRAM = """\
+#include "main.h"
+#include "lemlib/api.hpp"
+
+lemlib::PID pid(1, 0, 0);
+
+extern "C" void initialize() {
+    pid.kP = 2.5;  // only possible with this project's edited pid.hpp
+    printf("kP %.1f output %.1f\\n", pid.kP, pid.update(2));
+}
+"""
+
+
+def test_edited_lemlib_headers_are_used_as_on_the_robot(lemlib_build, in_cache, tmp_path):
+    from vexsim.bridge import lemlib
+
+    lemlib_build(TEMPLATE)  # fetches LemLib (skips when offline)
+    with in_cache():
+        source = lemlib.source_dir("0.5.6")
+    project = tmp_path / "edited"
+    shutil.copytree(TEMPLATE, project, ignore=shutil.ignore_patterns("lemlib", "src"))
+    shutil.copytree(source / "include" / "lemlib", project / "include" / "lemlib")
+    pid = project / "include" / "lemlib" / "pid.hpp"
+    text = pid.read_text().replace("    protected:\n", "\n")
+    pid.write_text(re.sub(r"const (float|bool) ", r"\1 ", text))
+    write(project / "src" / "main.cpp", EDITED_PID_PROGRAM)
+    result = lemlib_build(project)
+    assert result.notes == [
+        "the project's LemLib headers differ from LemLib 0.5.6's (include/lemlib/pid.hpp); "
+        "its code compiles against its own copies, as on the robot"
+    ]
+    sim = Simulation(load_robot(LEMLIB_ROBOT), program=CppProgram(result.executable), echo=None)
+    sim.start("driver")
+    sim.run_for(0.01)
+    sim.close()
+    assert console(sim) == ["kP 2.5 output 5.0"]  # LemLib's own PID, built from its source
 
 
 def test_lemlib_controller_in_the_bench(lemlib_build, in_cache, tmp_path):

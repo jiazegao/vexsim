@@ -213,7 +213,8 @@ The robot code is compiled, not interpreted.
 ### 7.3 Expected adjustments
 - **No changes:** typical PROS 4 / LemLib code, meaning motors, motor groups, sensors, tasks, controller input, LemLib chassis/odometry/PID/motion and path following with `ASSET`.
 - **Stubs or small edits:**
-  - LVGL / brain-screen UIs (they run headless)
+  - LVGL / brain-screen UIs (they run headless against a stand-in; nobody taps the screen, so pick routines by environment variable)
+  - wall-clock timing (`std::chrono`): use `pros::millis()`/`micros()`
   - other precompiled ARM libraries (they must be rebuilt from source)
   - inline ARM assembly
   - code that assumes `sizeof(long) == 4` (it's 8 on 64-bit Linux) or that pointers fit in an `int` (they're 8 bytes on a PC)
@@ -305,6 +306,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 8 | **[done]** LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
 | 9 | **[done]** Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
 | 10 | **[done]** Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |
+| port | **[done]** First real team port (1239E 2026-27): mechanisms, element and beam heights, an LVGL stand-in, edited LemLib headers, `--env` | All nine routines run; RCL and MCL evaluated against the truth ([docs/porting_1239e.md](docs/porting_1239e.md)) |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |

@@ -30,4 +30,24 @@ static inline float infinityf(void) { return HUGE_VALF; }
 #endif
 #endif
 
+/* The C++ standard puts the float and long double math functions (std::sqrtf,
+ * std::sinl, ...) in <cmath>. newlib's libstdc++ has them; libstdc++ before
+ * g++ 14 doesn't. */
+#if defined(__cplusplus) && defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE < 14
+#define VEXSIM_MATH_FUNCTIONS(X)                                                         \
+	X(acos) X(asin) X(atan) X(atan2) X(ceil) X(cos) X(cosh) X(exp) X(fabs) X(floor)       \
+	X(fmod) X(frexp) X(ldexp) X(log) X(log10) X(modf) X(pow) X(sin) X(sinh) X(sqrt)       \
+	X(tan) X(tanh) X(acosh) X(asinh) X(atanh) X(cbrt) X(copysign) X(erf) X(erfc) X(exp2) \
+	X(expm1) X(fdim) X(fma) X(fmax) X(fmin) X(hypot) X(ilogb) X(lgamma) X(llrint)       \
+	X(llround) X(log1p) X(log2) X(logb) X(lrint) X(lround) X(nan) X(nearbyint)          \
+	X(nextafter) X(nexttoward) X(remainder) X(remquo) X(rint) X(round) X(scalbln)        \
+	X(scalbn) X(tgamma) X(trunc)
+#define VEXSIM_USING_FL(name) using ::name##f; using ::name##l;
+namespace std {
+VEXSIM_MATH_FUNCTIONS(VEXSIM_USING_FL)
+}
+#undef VEXSIM_USING_FL
+#undef VEXSIM_MATH_FUNCTIONS
+#endif
+
 #endif

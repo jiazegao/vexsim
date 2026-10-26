@@ -70,3 +70,19 @@ def build(cache_dir):
             return build_project(project, **kwargs)
 
     return _build
+
+
+@pytest.fixture(scope="session")
+def lemlib_build(build):
+    """build(project) for projects that use LemLib (fetched and compiled on first use);
+    skips when LemLib can't be downloaded, unless VEXSIM_REQUIRE_CXX is set."""
+
+    def _build(project: Path):
+        try:
+            return build(project)
+        except BuildError as exc:
+            if "couldn't get LemLib" in str(exc) and not os.environ.get("VEXSIM_REQUIRE_CXX"):
+                pytest.skip(str(exc))
+            raise
+
+    return _build

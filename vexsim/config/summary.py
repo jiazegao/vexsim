@@ -9,6 +9,7 @@ from vexsim.config.field import FieldConfig
 from vexsim.config.robot import RobotConfig
 from vexsim.physics.kinematics import DriveKinematics
 from vexsim.units import kg_to_lb, m_to_in
+from vexsim.v5 import CARTRIDGE_FREE_RPM
 
 
 def _xy(v: tuple[float, ...]) -> str:
@@ -51,14 +52,29 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
             f"turning {math.degrees(turn):.0f} deg/s (kinematic, rated motor speed)"
         )
 
+    for k, (mname, mech) in enumerate(cfg.mechanisms.items()):
+        label = "  mechanisms  " if k == 0 else "              "
+        ports = ", ".join(str(p) for p in mech.motors)
+        output_rpm = CARTRIDGE_FREE_RPM[mech.cartridge] * mech.speed_ratio
+        detail = f"motors {ports} | {mech.cartridge} | ratio {mech.ratio} -> {output_rpm:g} rpm"
+        if mech.range_deg is not None:
+            detail += f" | stops at {mech.range_deg[0]:g} and {mech.range_deg[1]:g} deg"
+        if mech.load_torque_nm:
+            detail += f" | load {mech.load_torque_nm:g} N*m"
+        lines.append(f"{label}{mname}: {detail}")
+
     if not cfg.sensors:
         lines.append("  sensors     none")
     for k, s in enumerate(cfg.sensors):
         label = "  sensors     " if k == 0 else "              "
         if s.type == "imu":
             detail = f"at {_xy(s.pos_in)}, mount yaw {s.mount_yaw_deg:g} deg"
+            if s.scale_error is not None:
+                detail += f", scale error {s.scale_error * 100:+.3g}%"
         elif s.type == "distance":
             detail = f"at {_xy(s.pos_in)}, facing {s.heading_deg:g} deg"
+            if s.height_in is not None:
+                detail += f", {s.height_in:g} in high"
         elif s.type == "gps":
             detail = f"at {_xy(s.pos_in)}, camera facing {s.mount_yaw_deg:g} deg"
         elif s.tracking_wheel is not None:
@@ -83,7 +99,9 @@ def field_summary(cfg: FieldConfig) -> list[str]:
     obstacles, pieces = cfg.obstacles, cfg.pieces
     if obstacles or pieces:
         mass = sum(p.mass_kg for p in pieces)
+        low = sum(not o.solid for o in obstacles)
+        over = f" ({low} the robot drives over)" if low else ""
         lines.append(
-            f"  {len(obstacles)} obstacle(s), {len(pieces)} piece(s) ({mass:.2f} kg in all)"
+            f"  {len(obstacles)} obstacle(s){over}, {len(pieces)} piece(s) ({mass:.2f} kg in all)"
         )
     return lines

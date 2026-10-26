@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 
@@ -215,6 +216,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             _print_issues(report.issues)
             return EXIT_INVALID
         field = report.config
+    env = {}
+    for item in args.env or ():
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            print(f"error: --env needs KEY=VALUE, got {item!r}")
+            return EXIT_INVALID
+        env[key] = value
     if args.program and _is_pros_project(args.program):
         from vexsim.bridge.build import BuildError, build_project
         from vexsim.bridge.program import CppProgram
@@ -229,11 +237,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         def make_program():
             return CppProgram(
-                build.executable, name=project.resolve().name, busy_timeout_s=args.busy_timeout
+                build.executable,
+                name=project.resolve().name,
+                busy_timeout_s=args.busy_timeout,
+                env=env,
             )
 
         mode = args.mode or "autonomous"
     else:
+        os.environ.update(env)  # a Python program runs in this process
         module = load_program(args.program) if args.program else None
 
         def make_program():
@@ -276,6 +288,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"{mode} finished at t = {sim.world.time:.2f} s")
         print(f"  true pose      x {true.x:7.2f}  y {true.y:7.2f}  heading {true.heading_360:6.1f}")
         print(f"  estimated pose x {est.x:7.2f}  y {est.y:7.2f}  heading {est.heading_360:6.1f}")
+        error = sim.recorder.pose_error(mode) if sim.recorder is not None else None
+        if error is not None and sim.reported_pose is not None:
+            print(f"  the robot code's pose vs. the true one during {mode}: {error}")
         if args.screenshot:
             from vexsim.viz.viewer import LiveSource, Viewer
 
@@ -540,6 +555,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=5.0,
         help="PROS projects: stop if a task runs this many real seconds without blocking",
+    )
+    p.add_argument(
+        "--env",
+        action="append",
+        metavar="KEY=VALUE",
+        help="an environment variable for the robot program (getenv() in C++); repeatable. "
+        "VEXSIM_SEED is always set to --seed",
     )
     p.set_defaults(func=cmd_run)
 
