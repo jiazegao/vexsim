@@ -15,7 +15,7 @@ LemLib projects need LemLib built from source, which comes in Phase 8. Until the
 **Windows:** install MSYS2's MinGW-w64 g++ (the UCRT64 toolchain).
 1. Install MSYS2 from https://www.msys2.org into the default folder, `C:\msys64`.
 2. In the "MSYS2 UCRT64" terminal, run `pacman -S --needed mingw-w64-ucrt-x86_64-gcc`.
-3. Add `C:\msys64\ucrt64\bin` to your PATH, or set `VEXSIM_CXX` to the full path of `g++.exe`. vexsim also checks `C:\msys64\ucrt64\bin` on its own.
+3. Add `C:\msys64\ucrt64\bin` to your PATH, or set `VEXSIM_CXX` to the full path of `g++.exe`. vexsim also finds MSYS2 on its own in `msys64` or `msys2` at the top of any drive (for example `D:\msys2\ucrt64\bin`).
 
 **Linux:** g++ 11 or newer (`sudo apt install g++`). **macOS:** Homebrew's g++, with `VEXSIM_CXX=g++-14` (or whatever version you install).
 

@@ -142,6 +142,19 @@ def test_cpp_linkage_competition_function_is_reported(cache_dir, tmp_path):
     assert any("autonomous() with C++ linkage" in note for note in result.notes)
 
 
+def test_toolchain_programs_run_with_their_folder_on_path(tmp_path):
+    # MSYS2's g++ helpers need DLLs from g++'s own folder, which may not be on PATH.
+    import sys
+
+    from vexsim.bridge.build import _run
+
+    script = tmp_path / "bin" / "show_path.py"
+    script.parent.mkdir()
+    script.write_text("import os; print(os.environ['PATH'])")
+    out = _run([sys.executable, str(script)]).stdout
+    assert out.split(os.pathsep)[0] == str(Path(sys.executable).parent)
+
+
 def test_not_a_project(tmp_path):
     with pytest.raises(BuildError, match="not a PROS project"):
         build_project(tmp_path / "nothing")

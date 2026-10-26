@@ -34,13 +34,14 @@ SOURCE_SUFFIXES = {".c", ".cpp", ".cc", ".cxx", ".c++"}
 DEFINES = ["-DVEXSIM=1", "-D_PROS_KERNEL_SUPPRESS_LLEMU_WARNING"]
 MIN_GCC = 11
 EXE_NAME = "robot_host.exe" if sys.platform == "win32" else "robot_host"
-MSYS2_GXX = Path(r"C:\msys64\ucrt64\bin\g++.exe")
+MSYS2_FOLDERS = ("msys64", "msys2")  # searched on every drive, in ucrt64\bin
 
 INSTALL_HELP_WINDOWS = """\
 vexsim compiles robot code with MSYS2's MinGW-w64 g++ (UCRT64). To install it:
   1. Install MSYS2 from https://www.msys2.org (default folder C:\\msys64).
   2. In the "MSYS2 UCRT64" terminal run:  pacman -S --needed mingw-w64-ucrt-x86_64-gcc
-  3. Add C:\\msys64\\ucrt64\\bin to your PATH (or set VEXSIM_CXX to the full path of g++.exe).
+  3. vexsim finds it in C:\\msys64 or D:\\msys2 (any drive); elsewhere, add its ucrt64\\bin
+     folder to your PATH or set VEXSIM_CXX to the full path of g++.exe.
 Then run `vexsim doctor` again."""
 
 INSTALL_HELP_UNIX = """\
@@ -87,14 +88,33 @@ def install_help() -> str:
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, errors="replace", **kwargs)
+    """Run a toolchain program with its own folder first on PATH.
+
+    g++ starts helper programs (cc1plus, as, ld) whose DLLs live next to g++.exe
+    in MSYS2. Without that folder on PATH they fail on Windows without a word.
+    """
+    env = os.environ.copy()
+    if Path(cmd[0]).is_absolute():
+        env["PATH"] = str(Path(cmd[0]).parent) + os.pathsep + env.get("PATH", "")
+    return subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=env, **kwargs)
+
+
+def _msys2_candidates() -> list[str]:
+    """MSYS2 UCRT64 g++ in the usual install folders, on any drive."""
+    found = []
+    for drive in "CDEFGH":
+        for folder in MSYS2_FOLDERS:
+            gxx = Path(f"{drive}:\\") / folder / "ucrt64" / "bin" / "g++.exe"
+            if gxx.is_file():
+                found.append(str(gxx))
+    return found
 
 
 def find_toolchain(cxx: str | None = None) -> Toolchain:
-    """Locate g++: ``cxx``, then $VEXSIM_CXX, then PATH, then MSYS2's default folder."""
+    """Locate g++: ``cxx``, then $VEXSIM_CXX, then PATH, then MSYS2's usual folders."""
     candidates = [cxx, os.environ.get("VEXSIM_CXX"), shutil.which("g++")]
     if sys.platform == "win32":
-        candidates.append(str(MSYS2_GXX) if MSYS2_GXX.is_file() else None)
+        candidates += _msys2_candidates()
     for candidate in candidates:
         if not candidate:
             continue
@@ -259,6 +279,17 @@ def _compile_cmd(
     ]
 
 
+def _silent_failure(tc: Toolchain, source: Path, code: int) -> str:
+    text = f"{source}: g++ exited with code {code} without printing an error."
+    if sys.platform == "win32":
+        text += (
+            f" On Windows this usually means one of g++'s helper programs couldn't start: "
+            f"check that {Path(tc.cxx).parent} holds a complete MSYS2 UCRT64 gcc install "
+            "(pacman -S --needed mingw-w64-ucrt-x86_64-gcc)."
+        )
+    return text
+
+
 def _compile_all(
     tc: Toolchain,
     jobs: list[tuple[Path, Path, list[str]]],
@@ -281,7 +312,7 @@ def _compile_all(
             output = rewrite((result.stdout + result.stderr).strip())
             if result.returncode != 0:
                 obj.unlink(missing_ok=True)
-                failures.append(output or f"{source}: compiler exited with {result.returncode}")
+                failures.append(output or _silent_failure(tc, source, result.returncode))
             elif output:
                 print(output, file=sys.stderr)
     if failures:
@@ -338,12 +369,15 @@ def build_runtime(tc: Toolchain, *, workers: int | None = None) -> tuple[list[Pa
         obj = out / ("defaults" if src in defaults else "") / f"{src.stem}.o"
         jobs.append((src, obj, _compile_cmd(tc, src, obj, [SHIM_INCLUDE, RUNTIME_DIR], opt)))
     _compile_all(tc, jobs, workers or os.cpu_count() or 2, lambda s: s)
-    ar = _run([tc.cxx, "-print-prog-name=ar"]).stdout.strip() or "ar"
-    ar_path = shutil.which(ar) or shutil.which(str(Path(tc.cxx).parent / ar)) or ar
     tmp = lib.with_suffix(".tmp")
     tmp.unlink(missing_ok=True)
     result = _run(
-        [ar_path, "rcs", str(tmp), *[str(out / "defaults" / f"{p.stem}.o") for p in defaults]]
+        [
+            _tool(tc, "ar"),
+            "rcs",
+            str(tmp),
+            *[str(out / "defaults" / f"{p.stem}.o") for p in defaults],
+        ]
     )
     if result.returncode != 0:
         raise BuildError(f"archiving the runtime failed: {result.stderr.strip()}")
