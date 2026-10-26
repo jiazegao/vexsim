@@ -21,6 +21,7 @@ dev = [
 ]
 viz = [
     "matplotlib>=3.8",
+    "pygame>=2.5",
 ]
 
 [project.scripts]

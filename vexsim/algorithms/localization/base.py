@@ -26,6 +26,9 @@ class Pose:
     def distance_to(self, other: Pose) -> float:
         return math.hypot(self.x - other.x, self.y - other.y)
 
+    def __str__(self) -> str:
+        return f"Pose(x={self.x:.2f}, y={self.y:.2f}, heading={self.heading:.1f})"
+
     def heading_error(self, other: Pose) -> float:
         """Smallest signed angle (degrees) from ``other`` to this pose."""
         return (self.heading - other.heading + 180.0) % 360.0 - 180.0

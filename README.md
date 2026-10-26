@@ -12,8 +12,9 @@ It's built to test localization and motion-control algorithms, and eventually to
 - V5 motor, thermal, battery and power models
 - full-omni drivetrain and chassis, with drift, weight transfer and traction limits
 - V5 sensors with realistic noise, and odometry baselines
+- a PROS-style Python API, LemLib-style motions (PID, boomerang, pure pursuit, RAMSETE, motion profiles) and a live viewer you can drive with keyboard or gamepad
 
-The Python control API and live viewer come next in Phase 5. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
+The Monte-Carlo benchmark harness comes next in Phase 6. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
 
 ## Install
 
@@ -36,7 +37,33 @@ The `viz` extra (matplotlib) is only needed for plots.
 
 ## Use
 
-Check a robot config and see what the simulator will build from it:
+**Run a robot program in the live viewer** (or drive it yourself: leave out `--program`):
+```
+vexsim run examples/robots/full_omni_6m.yaml --program examples/programs/tour.py
+```
+![The viewer after the example tour](docs/img/viewer_tour.png)
+
+Programs are Python generators against a PROS 4-style API, with LemLib-style chassis motions:
+```python
+from vexsim.api import delay
+
+
+def autonomous(bot):
+    yield from bot.chassis.move_to_point(30, 0)
+    yield from bot.chassis.turn_to_heading(90)
+    yield from bot.chassis.follow([(30, 0), (30, 30), (0, 40)], method="pure_pursuit")
+
+
+def opcontrol(bot):
+    while True:
+        bot.chassis.arcade(
+            bot.controller.get_analog("LEFT_Y"), bot.controller.get_analog("RIGHT_X")
+        )
+        yield delay(10)
+```
+See [docs/programming.md](docs/programming.md) for the API, every motion, viewer keys, and telemetry (`--record`, `vexsim plot`, `vexsim replay`).
+
+**Check a robot config** and see what the simulator will build from it:
 ```
 vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/v5rc_empty.yaml
 ```
@@ -162,9 +189,12 @@ vexsim/
   physics/   world loop; V5 motor, thermal, battery, power; wheel contact, chassis, robot; overrides
   devices/   V5 sensors and motor encoders: sampling, latency, noise presets, PROS-unit frames
   algorithms/localization/  Localizer interface, arc odometry baselines, scripted runner
-  viz/       plots (motor curves, drift, odometry)
+  algorithms/control/       PID, motion profiles, LemLib-style motions, pure pursuit, RAMSETE
+  api/       PROS 4-style devices and a LemLib-style chassis for Python programs
+  runtime/   simulation, competition phases, program coroutines, inputs, telemetry log
+  viz/       live viewer (pygame); plots (motor curves, drift, odometry, telemetry)
   cli.py     `vexsim` command
-examples/    robot and field configs
-docs/        conventions, physics models and parameter sources
+examples/    robot and field configs, example program
+docs/        conventions, physics models and parameter sources, programming guide
 tests/
 ```

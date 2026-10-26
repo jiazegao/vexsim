@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.0 (2026-10-25). Phases 1-4 complete. Next: Phase 5.
+**Status:** Final v1.0 (2026-10-25). Phases 1-5 complete. Next: Phase 6.
 
 ## 0. Decisions
 | Topic | Decision |
@@ -223,9 +223,8 @@ class Localizer(Protocol):
     def update(self, frame: SensorFrame) -> Pose: ...  # called at sensor rate
 
 
-class Controller(Protocol):
-    def reset(self, target: Target) -> None: ...
-    def step(self, est: Pose, frame: SensorFrame, dt: float) -> MotorCommands: ...
+class Controller(Protocol):  # one-shot: the target is given to the constructor
+    def step(self, est: Pose, frame: SensorFrame, dt: float) -> DriveCommand: ...
     def done(self) -> bool: ...
 ```
 Python algorithms use the same device and port model as C++. A C++ algorithm runs through the bridge, and the bench scores both the same way.
@@ -295,7 +294,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 2 | **[done]** Motor and battery models | Motor, thermal and battery tests pass; torque–speed plot generated |
 | 3 | **[done]** Chassis and omni wheel contact (full-omni tank) | Drive and drift tests pass |
 | 4 | **[done]** Device registry and sensors; Python odometry baselines | Odometry tests pass; noise presets in place |
-| 5 | Python control API and baseline controllers; live viewer and plots | Drive a scenario from the keyboard/gamepad and run a Python autonomous route visually |
+| 5 | **[done]** Python control API and baseline controllers; live viewer and plots | Drive a scenario from the keyboard/gamepad and run a Python autonomous route visually |
 | 6 | Benchmark harness | 100-seed comparison of two localizers and two controllers produces an HTML report |
 | 7 | C++ bridge: PROS 4 shim, lockstep scheduler, robot host process, C ABI, `vexsim build` and `vexsim doctor` | `minimal_pros4` runs unchanged on Windows and Linux; scheduler tests pass |
 | 8 | LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
