@@ -37,6 +37,7 @@ jobs:
         run: |
           vexsim motor-curves --cartridge green --out motor_curves_green.png
           vexsim drift examples/robots/full_omni_6m.yaml --out drift_arc.png
+          vexsim odometry examples/robots/full_omni_6m.yaml --out odometry.png
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'windows-latest' && matrix.python == '3.13'
@@ -45,3 +46,4 @@ jobs:
           path: |
             motor_curves_green.png
             drift_arc.png
+            odometry.png

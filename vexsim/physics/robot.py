@@ -227,6 +227,12 @@ class Robot:
         """Motor shaft speed of a group (rad/s, positive = wheels rolling forward)."""
         return float(self.qdot[self.group(name).index])
 
+    def point_velocity(self, rel: Iterable[float]) -> tuple[float, float]:
+        """Body-frame velocity (m/s) of a point given relative to the CG (m)."""
+        px, py = rel
+        u, v, w = self.qdot[:3]
+        return float(u - w * py), float(v + w * px)
+
     # --- simulation -----------------------------------------------------------------
 
     def step(self, world: Any, dt: float) -> None:

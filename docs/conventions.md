@@ -40,6 +40,20 @@ Conversions happen only at those boundaries, using `vexsim.units`.
 - Typos in keys are errors, and the message suggests the closest valid key.
 - Duplicate keys are errors. Plain YAML silently keeps the last one.
 
+## Sensor readings
+Sensor frames (`vexsim.devices.frame.SensorFrame`) carry what PROS code would read, so algorithms move between Python and C++ unchanged.
+
+| Device | Reading | Units |
+|---|---|---|
+| Motor | position, velocity, current, voltage, temperature | degrees, rpm, mA, mV, °C |
+| Rotation | position (cumulative), velocity | centidegrees (int), centidegrees/s |
+| IMU | rotation (cumulative), heading 0–360, gyro z | degrees, **clockwise positive**; `None` while calibrating |
+| Distance | distance | mm (int); `None` when nothing is in range |
+
+- **Reversal follows PROS.** A negative motor port, or `reversed: true` on a rotation sensor, means the raw reading runs backwards, and the robot code is expected to reverse it, exactly like `pros::Motor(-4)`. The baseline localizers read these flags from the config.
+- **Tracking wheel geometry.** A tracking wheel's `heading_deg` is the direction of travel it measures: 0 for vertical, 90 for horizontal. 180 and 270 count backwards.
+- **Odometry offsets** are measured from the footprint center: a vertical wheel by its `y` (+left), a horizontal wheel by its `x` (+forward).
+
 ## Time
 - Simulation time is an integer number of **microseconds**, so runs never drift.
 - The physics step defaults to 1 ms.

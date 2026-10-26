@@ -2,7 +2,8 @@
 
 A key ``<group>.<name>`` replaces one scalar field of that group's spec
 dataclass, e.g. ``motor.free_current_a: 0.2``, ``battery.internal_resistance_ohm: 0.15``
-or ``wheel.omni.lateral_mu: 0.08``.
+or ``wheel.omni.lateral_mu: 0.08``. Sensor keys (``sensor.imu.scale_error``)
+apply on top of each sensor's noise preset.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from vexsim.devices.specs import SPEC_TYPES
 from vexsim.physics.battery import BatterySpec
 from vexsim.physics.chassis import ChassisSpec
 from vexsim.physics.motor import MotorSpec
@@ -25,9 +27,10 @@ PARAM_GROUPS: dict[str, type] = {
     "battery": BatterySpec,
     "chassis": ChassisSpec,
     "wheel.omni": OmniWheelSpec,
+    **{f"sensor.{kind}": cls for kind, cls in SPEC_TYPES.items()},
 }
 # Groups whose models arrive in later phases: accepted now, applied then.
-FUTURE_GROUPS = {"wheel.traction": 9, "wheel.mecanum": 9, "sensor": 4, "field": 9}
+FUTURE_GROUPS = {"wheel.traction": 9, "wheel.mecanum": 9, "field": 9}
 
 
 def scalar_fields(group: str) -> list[str]:
@@ -85,6 +88,7 @@ class PhysicsParams:
     battery: BatterySpec
     chassis: ChassisSpec
     omni_wheel: OmniWheelSpec
+    sensor_overrides: dict[str, dict[str, float]] = dataclasses.field(default_factory=dict)
 
     def wheel(self, wheel_type: str) -> OmniWheelSpec:
         if wheel_type == "omni":
@@ -112,6 +116,15 @@ def resolve_params(overrides: Mapping[str, Any] | None = None) -> PhysicsParams:
         group, _, name = key.rpartition(".")
         if group in PARAM_GROUPS:
             values[group][name] = float(value)
+    sensors = {
+        group.removeprefix("sensor."): vals
+        for group, vals in values.items()
+        if group.startswith("sensor.") and vals
+    }
     return PhysicsParams(
-        **{_FIELD_FOR_GROUP[group]: cls(**values[group]) for group, cls in PARAM_GROUPS.items()}
+        **{
+            _FIELD_FOR_GROUP[group]: PARAM_GROUPS[group](**values[group])
+            for group in _FIELD_FOR_GROUP
+        },
+        sensor_overrides=sensors,
     )

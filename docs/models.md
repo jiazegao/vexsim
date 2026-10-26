@@ -164,6 +164,60 @@ On an **omni** wheel the main wheel and the rollers are mechanically separate, s
 - no energy is created under random commands
 - runs are deterministic
 
+## Sensors: `vexsim/devices/`
+**Timing and units**
+- Every device is sampled on its own period, at sensor priority, so controllers in the same tick see fresh data.
+- Each reading becomes visible `latency_ms` later.
+- Readings use **PROS units and sign conventions**; see [conventions.md](conventions.md#sensor-readings). Python algorithms therefore see exactly what PROS code sees.
+
+**Presets and randomness**
+- Each sensor picks a preset with `noise: ideal | default | harsh`. `ideal` means no noise, latency or quantization, for debugging algorithms.
+- `sensor.<type>.<field>` overrides apply on top of the preset.
+- Per-device static errors are drawn once from the stream `sensor.<type>.<port>.static`. Per-sample noise uses `sensor.<type>.<port>`. Adding or removing a sensor never changes another sensor's noise.
+
+**Default values**
+| Sensor | Default model | Source |
+|---|---|---|
+| Motor encoder | 10 ms; 50 counts per motor-core rev (1800/900/300 per output rev); velocity noise 0.5% of rated | counts: PROS; rest estimates |
+| Rotation sensor | 10 ms; 0.088° resolution; 0.02° noise; per-wheel diameter error 0.5% and mounting error 0.05 in; scrub 1% of sideways travel | 10 ms: [PROS][rot]; 0.088°: retailer spec sheet ([RS][rot-rs]); rest estimates |
+| IMU | 10 ms; 2 s calibration; gyro bias 0.3°/s, removed by calibration; 0.05°/s rate noise; per-device scale error 0.5%, **not** removed by calibration | calibration and scale behavior: [VEX API][imu]; drift level: [VEX Forum][imu-drift]; rest estimates |
+| Distance | ~30 Hz; 20–2000 mm; σ 7.5 mm below 200 mm, 2.5% above | range and accuracy (±15 mm / ±5%, taken as ~2σ): [VEX][dist]; rate: VEX Forum |
+
+**Rotation sensor (tracking wheel).** The wheel's rotation is integrated every physics step from the true contact velocity at its *true* mounting point with its *true* diameter. The localizer only knows the configured geometry, so per-device errors show up as odometry error, as on a real robot. The harsh preset adds random lift-off moments, when the wheel stops counting.
+
+**IMU.**
+- Calibration averages the raw gyro over 2 s and subtracts that from then on.
+- A still robot is left with a few tenths of a degree per minute of drift. That's checked over 20 seeds, matching the VEX Forum's "normal".
+- A robot that *moves* during calibration gets a large phantom turn rate, as in VEX's warning.
+- Heading is clockwise-positive, as in VEX.
+
+## Localization baselines: `vexsim/algorithms/localization/`
+**Interface:** `Localizer.reset(pose, frame)` and `Localizer.update(frame) -> Pose`. Poses are in inches and degrees, counter-clockwise, in the field frame.
+
+**`ArcOdometry`** is the standard arc method used by LemLib-style odometry. Between updates the robot moves along a circular arc:
+- a vertical tracker at lateral offset `y` that rolled `dV` means the center moved `dV + y*dθ` forward;
+- a horizontal tracker at longitudinal offset `x` that rolled `dH` means it moved `dH - x*dθ` sideways;
+- each becomes an arc chord rotated by the mid-step heading.
+
+Heading comes from the IMU, or from two parallel vertical wheels. It's exact for constant-curvature motion (tested to 0.01 in).
+
+**Baselines built from a config** (`baseline_localizers`):
+| Name | Needs |
+|---|---|
+| drive encoders | differential drive |
+| drive encoders + IMU | + IMU |
+| tracking wheels + IMU | ≥1 vertical tracking wheel + IMU |
+| tracking wheels (no IMU) | ≥2 vertical tracking wheels |
+
+![Odometry baselines on the aggressive drive](img/odometry_aggressive.png)
+
+`vexsim odometry examples/robots/full_omni_6m.yaml --out odom.png` regenerates this chart. It calibrates, drives a scripted path (`--script gentle|aggressive`) and compares every baseline the robot supports. Use `--noise ideal|default|harsh` to apply one preset to every sensor.
+
+**Typical results on the example robot:**
+- On the aggressive drive, drive encoders end 70–80 in off, because they can't see the sideways slide. Adding an IMU doesn't help, since the slide is the problem, not the heading.
+- Tracking wheels + IMU end 1–3 in off with default noise and 0.01 in with ideal sensors.
+- While the robot moves, the estimate trails it by the sensor latency (about an inch at 60 in/s).
+
 ## Calibrating against a real robot (Phase 10, or sooner)
 Each of these quick experiments replaces one of the biggest estimates.
 
@@ -176,8 +230,15 @@ Each of these quick experiments replaces one of the biggest estimates.
 5. **Roller friction (`wheel.omni.lateral_mu`).** Hook a luggage scale to the side of the robot at about CG height and pull it sideways across the tiles at a slow, steady speed. Divide the force by the robot's weight. Cross-check with `vexsim drift` against a video of the same arc on the real robot.
 6. **Coast-down (`wheel.omni.rolling_resistance`).** Drive at full speed, release in coast mode, and measure how far the robot glides. Adjust until the sim's coast distance matches.
 7. **Launch traction (`wheel.omni.longitudinal_mu`).** Log `get_actual_velocity()` during a full-power launch. If the wheels spin, the acceleration is about `longitudinal_mu * g`.
+8. **IMU scale error (`sensor.imu.scale_error`).** Spin the robot 10 full turns in place and compare `get_rotation()` with 3600°. Most teams then correct it in code; to simulate your sensor as-is, set the override to the measured fraction.
+9. **Tracking wheel diameter.** Push the robot exactly 10 ft in a straight line and compare the distance the tracking wheel reports. That gives the effective diameter to put in the robot config.
 
 [fit]: https://www.vexforum.com/t/v5-smart-motor-estimating-performance-parameters/135200
 [kb]: https://kb.vex.com/hc/en-us/articles/360044325872-Understanding-V5-Smart-Motor-Performance
 [derate]: https://www.vexforum.com/t/v5-overheating-threshold/64984
 [share]: https://www.vexforum.com/t/10-motor-current-limiting-question/113733
+[rot]: https://pros.cs.purdue.edu/v5/pros-4/group__c-rotation.html
+[rot-rs]: https://uk.rs-online.com/web/p/stem-electronic-components/2097751
+[imu]: https://api.vex.com/v5/home/blocks/inertial_gyro.html
+[imu-drift]: https://www.vexforum.com/t/what-is-the-normal-drift-of-an-inertial-sensor/139591
+[dist]: https://www.vexrobotics.com/276-4852.html

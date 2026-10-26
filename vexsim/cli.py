@@ -113,6 +113,40 @@ def cmd_drift(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_odometry(args: argparse.Namespace) -> int:
+    from vexsim.algorithms.localization.runner import run_odometry
+    from vexsim.viz import odometry
+
+    report = validate_robot(args.robot)
+    if not report.ok or report.config is None:
+        _print_issues(report.issues)
+        return EXIT_INVALID
+    run = run_odometry(report.config, args.script, seed=args.seed, noise=args.noise)
+    if not run.estimates:
+        print("this robot has no sensors any baseline localizer can use")
+        return EXIT_INVALID
+    noise = args.noise or "configured"
+    print(f"{args.script} drive, {noise} sensor noise, seed {args.seed}:")
+    width = max(len(name) for name in run.estimates)
+    for name in run.estimates:
+        position, heading = run.errors(name)
+        print(
+            f"  {name:<{width}}  final error {position[-1]:6.2f} in {heading[-1]:6.2f} deg"
+            f"   worst {position.max():6.2f} in"
+        )
+    if args.csv:
+        sys.stdout.write(odometry.to_csv(run))
+    if args.out:
+        title = f"Odometry baselines: {args.script} drive, {noise} sensor noise, seed {args.seed}"
+        try:
+            path = odometry.plot(run, args.out, title=title)
+        except ModuleNotFoundError:
+            print('error: plotting needs matplotlib; install it with: pip install -e ".[viz]"')
+            return EXIT_INVALID
+        print(f"wrote {path}")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vexsim",
@@ -170,6 +204,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="PNG file to write (needs the viz extra)")
     p.add_argument("--csv", action="store_true", help="print the sampled paths as CSV")
     p.set_defaults(func=cmd_drift)
+
+    p = sub.add_parser(
+        "odometry",
+        help="drive a scripted path and compare the baseline localizers with the truth",
+        description=(
+            "Calibrate the IMU, drive a scripted path with the robot's motors, and run every "
+            "baseline localizer the robot's sensors allow (drive encoders, tracking wheels, IMU)."
+        ),
+    )
+    p.add_argument("robot", help="robot YAML file")
+    p.add_argument("--script", choices=["gentle", "aggressive"], default="aggressive")
+    p.add_argument(
+        "--noise",
+        choices=["ideal", "default", "harsh"],
+        help="use this sensor noise preset for every sensor (default: as configured)",
+    )
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out", help="PNG file to write (needs the viz extra)")
+    p.add_argument("--csv", action="store_true", help="print truth and estimates as CSV")
+    p.set_defaults(func=cmd_odometry)
 
     return parser
 
