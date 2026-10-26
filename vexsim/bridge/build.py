@@ -218,7 +218,8 @@ def _deps(dep_file: Path) -> list[Path] | None:
         return None
     rest = text[match.end() :].split("\n", 1)[0]
     parts = re.split(r"(?<!\\)\s+", rest.strip())
-    return [Path(p.replace("\\ ", " ")) for p in parts if p]
+    # gcc escapes spaces and '#' with a backslash and '$' as '$$' (make syntax)
+    return [Path(p.replace("\\ ", " ").replace("\\#", "#").replace("$$", "$")) for p in parts if p]
 
 
 def _stale(obj: Path, dep_file: Path, stamp: Path, flags_key: str) -> bool:

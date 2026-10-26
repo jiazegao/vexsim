@@ -64,6 +64,8 @@ void host_emit(const std::string& line);
 void host_warn_once(const std::string& key, const std::string& message);
 void host_drain_console();
 [[noreturn]] void host_busy(const Tcb* task, double seconds);
+// An exception escaped a task: report it as a crash (on the V5 it would end the program).
+[[noreturn]] void host_uncaught_exception(const char* what);
 
 // --- devices (devices.cpp) -------------------------------------------------------------
 void devices_register(int port, const std::string& kind, const std::string& detail);

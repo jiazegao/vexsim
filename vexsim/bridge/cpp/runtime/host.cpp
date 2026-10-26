@@ -208,6 +208,8 @@ LONG WINAPI on_exception(EXCEPTION_POINTERS* info) {
 			crash("stack overflow (infinite recursion?)");
 		case EXCEPTION_ILLEGAL_INSTRUCTION:
 			crash("illegal instruction");
+		case 0x20474343:  // a GCC C++ exception nothing caught
+			crash("uncaught C++ exception");
 		default:
 			crash("unhandled exception");
 	}
@@ -293,6 +295,15 @@ void host_warn_once(const std::string& key, const std::string& message) {
 void host_drain_console() {
 	std::lock_guard<std::mutex> lock(g_out_mutex);
 	drain_locked();
+}
+
+void host_uncaught_exception(const char* what) {
+	if (what) {
+		std::fprintf(stderr, "terminate called after throwing: %s\n", what);
+	} else {
+		std::fprintf(stderr, "terminate called after throwing a non-standard exception\n");
+	}
+	crash("uncaught C++ exception");
 }
 
 void host_busy(const Tcb* task, double seconds) {

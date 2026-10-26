@@ -11,6 +11,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <mutex>
 #include <thread>
 
@@ -123,7 +124,15 @@ void thread_main(Tcb* t) {
 		t->cv.wait(lk, [t] { return S().running == t; });
 	}
 	t_current = t;
-	t->fn(t->arg);
+	// Caught here, not left to std::terminate: on Windows an exception that leaves the
+	// thread reaches the OS crash filter first, without its message.
+	try {
+		t->fn(t->arg);
+	} catch (const std::exception& e) {
+		host_uncaught_exception(e.what());
+	} catch (...) {
+		host_uncaught_exception(nullptr);
+	}
 	Lock lk(S().m);
 	mark_deleted(t);
 	S().running = nullptr;
