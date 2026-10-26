@@ -46,9 +46,13 @@ jobs:
         run: ruff check .
 
       - name: Test
-        run: pytest
+        run: pytest --junitxml=pytest.xml
         env:
           VEXSIM_REQUIRE_CXX: "1"  # fail, don't skip, the C++ bridge tests
+
+      - name: Report test failures as annotations
+        if: failure()
+        run: python .github/scripts/pytest_annotations.py pytest.xml
 
       - name: Validate example configs
         run: vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/v5rc_empty.yaml --strict
