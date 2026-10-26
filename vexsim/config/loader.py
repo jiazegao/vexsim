@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from vexsim.config.checks import check_robot
-from vexsim.config.field import FieldConfig
+from vexsim.config.field import FIELD_MODELS, FieldConfig, check_field
 from vexsim.config.issues import ConfigError, ConfigIssue, ValidationReport
 from vexsim.config.robot import ROBOT_MODELS, SENSOR_TYPES, RobotConfig
 from vexsim.config.yaml_io import load_yaml_file
@@ -19,7 +19,7 @@ M = TypeVar("M", bound=BaseModel)
 Source = str | os.PathLike[str] | Mapping[str, Any]
 
 _KNOWN_KEYS = sorted(
-    {name for model in (*ROBOT_MODELS, FieldConfig) for name in model.model_fields}
+    {name for model in (*ROBOT_MODELS, *FIELD_MODELS) for name in model.model_fields}
 )
 
 
@@ -33,7 +33,7 @@ def load_robot(source: Source) -> RobotConfig:
 
 
 def validate_field(source: Source) -> ValidationReport[FieldConfig]:
-    return _validate(source, FieldConfig, None)
+    return _validate(source, FieldConfig, check_field)
 
 
 def load_field(source: Source | None = None) -> FieldConfig:

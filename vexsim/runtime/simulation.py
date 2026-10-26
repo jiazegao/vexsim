@@ -21,12 +21,22 @@ from vexsim.algorithms.localization.base import Localizer, Pose
 from vexsim.algorithms.localization.baselines import baseline_localizers
 from vexsim.api import delay
 from vexsim.api.chassis import Chassis
-from vexsim.api.devices import ANALOG, Controller, Distance, Imu, Motor, MotorGroup, Rotation
+from vexsim.api.devices import (
+    ANALOG,
+    Controller,
+    Distance,
+    Gps,
+    Imu,
+    Motor,
+    MotorGroup,
+    Rotation,
+)
 from vexsim.api.drive import Drive
 from vexsim.config.field import FieldConfig
 from vexsim.config.robot import RobotConfig
 from vexsim.devices.devices import ImuDevice
 from vexsim.devices.suite import SensorSuite
+from vexsim.physics.arena import Arena
 from vexsim.physics.field import Walls
 from vexsim.physics.params import resolve_params
 from vexsim.physics.robot import Robot
@@ -109,6 +119,12 @@ class Bot:
     def Distance(self, port: int) -> Distance:  # noqa: N802
         return Distance(self._sim, port)
 
+    def Gps(self, port: int, *args: float) -> Gps:  # noqa: N802
+        """``Gps(port[, x, y, heading][, x_offset, y_offset])``, as pros::Gps's constructors."""
+        if len(args) == 2:
+            return Gps(self._sim, port, x_offset=args[0], y_offset=args[1])
+        return Gps(self._sim, port, *args)
+
     def millis(self) -> int:
         return self._sim.world.clock.us // 1000
 
@@ -169,15 +185,21 @@ class Simulation:
         self.world = World(seed=seed)
         si_start = (in_to_m(start.x), in_to_m(start.y), start.heading * 3.141592653589793 / 180)
         params = resolve_params(config.overrides)
-        robot = Robot(
-            config,
-            params=params,
-            pose=si_start,
-            battery_soc=battery_soc,
-            walls=Walls.of(self.field, params.field) if walls else None,
-        )
+        # Game elements need the full arena; an empty field only needs its walls.
+        self.arena: Arena | None = None
+        boundary: Walls | Arena | None = None
+        if walls:
+            boundary = Walls.of(self.field, params.field)
+            if self.field.elements:
+                boundary = self.arena = Arena.of(self.field, params.field)
+        robot = Robot(config, params=params, pose=si_start, battery_soc=battery_soc, walls=boundary)
         self.robot = self.world.add_system(robot)
-        self.sensors = SensorSuite(self.robot, self.world.rng, field=self.field, noise=noise)
+        if self.arena is not None:
+            self.arena.robots.append(robot)
+            self.world.add_system(self.arena)  # pieces move after the robot
+        self.sensors = SensorSuite(
+            self.robot, self.world.rng, field=self.field, noise=noise, arena=self.arena
+        )
         self.sensors.attach(self.world)
         native = bool(getattr(program, "native", False))
         baselines = [] if native else baseline_localizers(config)  # robot code localizes itself

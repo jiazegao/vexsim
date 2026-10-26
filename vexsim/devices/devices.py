@@ -14,9 +14,15 @@ from typing import Any
 import numpy as np
 
 from vexsim.config.field import FieldConfig
-from vexsim.config.robot import DistanceConfig, ImuConfig, RotationConfig
-from vexsim.devices.frame import ImuReading, MotorReading, RotationReading
-from vexsim.devices.specs import DistanceSensorSpec, ImuSpec, MotorSensorSpec, RotationSensorSpec
+from vexsim.config.robot import DistanceConfig, GpsConfig, ImuConfig, RotationConfig
+from vexsim.devices.frame import GpsReading, ImuReading, MotorReading, RotationReading
+from vexsim.devices.specs import (
+    DistanceSensorSpec,
+    GpsSpec,
+    ImuSpec,
+    MotorSensorSpec,
+    RotationSensorSpec,
+)
 from vexsim.physics.motor import V5Motor
 from vexsim.physics.robot import Robot
 from vexsim.units import in_to_m, rad_s_to_rpm
@@ -67,7 +73,8 @@ class MotorDevice(Device):
 
     def measure(self, now_us: int) -> MotorReading:
         m = self.motor
-        noise = self.rng.normal(0.0, self.spec.velocity_noise * self.rated_rpm)
+        sigma = self.spec.velocity_noise * self.rated_rpm
+        noise = self.rng.normal(0.0, sigma) if sigma else 0.0
         return MotorReading(
             position_deg=_quantize(math.degrees(m.position), self.degrees_per_count),
             velocity_rpm=rad_s_to_rpm(m.velocity_estimate) + noise,
@@ -234,7 +241,8 @@ class ImuDevice(Device):
 
 
 class DistanceDevice(Device):
-    """V5 Distance Sensor: a ray from the sensor to the nearest field wall."""
+    """V5 Distance Sensor: a ray from the sensor to the nearest field wall, or to a game
+    element when the field has an arena of them."""
 
     kind = "distance"
 
@@ -245,9 +253,10 @@ class DistanceDevice(Device):
         field: FieldConfig,
         spec: DistanceSensorSpec,
         rng: np.random.Generator,
+        arena=None,
     ):
         super().__init__(cfg.port, spec.period_ms, spec.latency_ms)
-        self.spec, self.rng, self.robot = spec, rng, robot
+        self.spec, self.rng, self.robot, self.arena = spec, rng, robot, arena
         self.mount = (in_to_m(cfg.pos_in[0]), in_to_m(cfg.pos_in[1]))
         self.heading = math.radians(cfg.heading_deg)
         self.half_size = (in_to_m(field.size_in[0]) / 2, in_to_m(field.size_in[1]) / 2)
@@ -257,6 +266,9 @@ class DistanceDevice(Device):
         c, s = math.cos(heading), math.sin(heading)
         ox = x + c * self.mount[0] - s * self.mount[1]
         oy = y + s * self.mount[0] + c * self.mount[1]
+        if self.arena is not None:
+            meters = self.arena.ray((ox, oy), heading + self.heading)
+            return None if meters is None else meters * 1000.0
         return ray_to_walls(ox, oy, heading + self.heading, *self.half_size)
 
     def measure(self, now_us: int) -> int | None:
@@ -267,6 +279,98 @@ class DistanceDevice(Device):
         sigma = spec.short_noise_mm if true < 200.0 else spec.long_noise_fraction * true
         reading = true + (self.rng.normal(0.0, sigma) if sigma else 0.0)
         return max(round(reading), 0)
+
+
+class GpsDevice(Device):
+    """V5 GPS Sensor: a camera that reads the code strip around the field perimeter.
+
+    It has a fix while its camera ray meets a wall between ``min_range_m`` and
+    ``max_range_m`` away; position noise grows with that distance. Without a fix
+    its internal gyro carries the heading, the position holds, and the error it
+    reports grows. Field elements (obstacles, not pieces) block its view.
+    Readings are for the sensor itself: the robot code applies its offset
+    (``set_offset``), as PROS does.
+    """
+
+    kind = "gps"
+
+    def __init__(
+        self,
+        cfg: GpsConfig,
+        robot: Robot,
+        field: FieldConfig,
+        spec: GpsSpec,
+        rng: np.random.Generator,
+        arena=None,
+    ):
+        super().__init__(cfg.port, spec.period_ms, spec.latency_ms)
+        self.spec, self.rng, self.robot, self.arena = spec, rng, robot, arena
+        self.mount = (in_to_m(cfg.pos_in[0]), in_to_m(cfg.pos_in[1]))
+        self.yaw = math.radians(cfg.mount_yaw_deg)
+        self.half_size = (in_to_m(field.size_in[0]) / 2, in_to_m(field.size_in[1]) / 2)
+        self.offset = (0.0, 0.0)  # set by the robot code: sensor relative to the robot (m)
+        self.initial: tuple[float, float, float] | None = None  # pose the code says it starts at
+        self._last_true = robot.heading
+        self._heading: float | None = None  # clockwise from +y, degrees, unwrapped
+        self._position = (0.0, 0.0)
+        self._error = 0.0
+        self._since_fix = 0.0
+
+    def sensor_pose(self) -> tuple[float, float, float]:
+        """(x m, y m, camera direction rad CCW) of the sensor in the field frame."""
+        x, y, heading = self.robot.pose
+        c, s = math.cos(heading), math.sin(heading)
+        mx, my = self.mount
+        return x + c * mx - s * my, y + s * mx + c * my, heading + self.yaw
+
+    def range_m(self) -> float | None:
+        """Distance along the camera's line of sight to the code strip (m)."""
+        x, y, yaw = self.sensor_pose()
+        mm = ray_to_walls(x, y, yaw, *self.half_size)
+        if mm is None:
+            return None
+        if self.arena is not None and self.arena.obstacles:
+            seen = self.arena.ray((x, y), yaw, pieces=False)
+            if seen is not None and seen < mm / 1000.0 - 1e-6:
+                return None  # an obstacle hides the strip
+        return mm / 1000.0
+
+    def measure(self, now_us: int) -> GpsReading | None:
+        spec, rng = self.spec, self.rng
+        dt = self.period_ms / 1000.0
+        true = self.robot.heading
+        rate = -math.degrees(true - self._last_true) / dt  # clockwise
+        self._last_true = true
+        rate += rng.normal(0.0, spec.gyro_noise_deg_s) if spec.gyro_noise_deg_s else 0.0
+        distance = self.range_m()
+        fix = distance is not None and spec.min_range_m <= distance <= spec.max_range_m
+        if fix:
+            x, y, yaw = self.sensor_pose()
+            sigma = spec.position_noise_m + spec.range_noise * distance
+            if sigma:
+                x, y = x + rng.normal(0.0, sigma), y + rng.normal(0.0, sigma)
+            heading = 90.0 - math.degrees(yaw)
+            if spec.heading_noise_deg:
+                heading += rng.normal(0.0, spec.heading_noise_deg)
+            if self._heading is not None:  # keep the cumulative count continuous
+                heading = self._heading + (heading - self._heading + 180.0) % 360.0 - 180.0
+            self._heading, self._position = heading, (x, y)
+            self._error, self._since_fix = sigma, 0.0
+        elif self._heading is None:
+            return None  # no fix yet
+        else:
+            self._heading += rate * dt
+            self._since_fix += dt
+        error = self._error + spec.error_growth_m_s * self._since_fix
+        return GpsReading(
+            x_m=self._position[0],
+            y_m=self._position[1],
+            heading_deg=self._heading % 360.0,
+            rotation_deg=self._heading,
+            error_m=error,
+            gyro_z_deg_s=rate,
+            fix=fix,
+        )
 
 
 def ray_to_walls(x: float, y: float, angle: float, half_w: float, half_h: float) -> float | None:

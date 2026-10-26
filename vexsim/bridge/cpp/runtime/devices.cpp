@@ -25,7 +25,7 @@
 namespace vexsim {
 namespace {
 
-enum class Kind { none, motor, imu, rotation, distance };
+enum class Kind { none, motor, imu, rotation, distance, gps };
 
 const char* kind_name(Kind k) {
 	switch (k) {
@@ -37,6 +37,8 @@ const char* kind_name(Kind k) {
 			return "a rotation sensor";
 		case Kind::distance:
 			return "a distance sensor";
+		case Kind::gps:
+			return "a GPS sensor";
 		default:
 			return "nothing";
 	}
@@ -79,6 +81,14 @@ struct DistancePort {
 	std::int32_t mm = -1;
 };
 
+struct GpsPort {
+	bool have = false;  // the sensor has had a fix (readings arrive from then on)
+	double x = 0, y = 0, heading = 0, rotation = 0, error = 0, gyro = 0;  // the sensor's own
+	double off_x = 0, off_y = 0;  // set by the code: the sensor relative to the robot's center
+	bool initial = false;  // set_position: where the robot starts, until the first fix
+	double ix = 0, iy = 0, ih = 0;
+};
+
 struct Controller {
 	std::array<std::int32_t, 4> analog{};
 	std::uint32_t buttons = 0;
@@ -94,6 +104,7 @@ struct State {
 	std::array<ImuPort, 22> imu{};
 	std::array<RotationPort, 22> rotation{};
 	std::array<DistancePort, 22> distance{};
+	std::array<GpsPort, 22> gps{};
 	Controller controller;
 	std::uint8_t competition = 0;
 	std::int32_t battery_mv = 12800, battery_ma = 0;
@@ -215,6 +226,28 @@ RotationPort* rotation(std::uint8_t port) {
 
 std::int64_t rotation_sign(const RotationPort& r) { return r.reversed ? -1 : 1; }
 
+GpsPort* gps(std::uint8_t port) { return check_port(port, Kind::gps) ? &D().gps[port] : nullptr; }
+
+// The robot center's position and heading, with the code's offset applied.
+bool gps_state(std::uint8_t port, double* x, double* y, double* heading) {
+	GpsPort* g = gps(port);
+	if (!g) return false;
+	if (!g->have) {
+		if (!g->initial) {
+			errno = EAGAIN;
+			return false;
+		}
+		*x = g->ix, *y = g->iy, *heading = g->ih;
+		return true;
+	}
+	double h = g->heading * 3.14159265358979323846 / 180.0;
+	// The offset's +x is to the right of the camera's direction, +y along it.
+	*x = g->x - (g->off_x * std::cos(h) + g->off_y * std::sin(h));
+	*y = g->y - (-g->off_x * std::sin(h) + g->off_y * std::cos(h));
+	*heading = g->heading;
+	return true;
+}
+
 bool controller_ok(pros::controller_id_e_t id) {
 	api_call();
 	if (id != pros::E_CONTROLLER_MASTER && id != pros::E_CONTROLLER_PARTNER) {
@@ -274,6 +307,7 @@ void devices_register(int port, const std::string& kind, const std::string& deta
 	         : kind == "imu" ? Kind::imu
 	         : kind == "rotation" ? Kind::rotation
 	         : kind == "distance" ? Kind::distance
+	         : kind == "gps"      ? Kind::gps
 	                              : Kind::none;
 	D().kind[port] = k;
 	if (k == Kind::motor) D().motor[port].cartridge = detail == "red" ? 36 : detail == "blue" ? 6 : 18;
@@ -338,6 +372,17 @@ bool devices_reading(const char* line) {
 		case 'd': {
 			int mm;
 			if (std::sscanf(line + 1, "%d %d", &port, &mm) == 2 && port >= 1 && port <= 21) D().distance[port].mm = mm;
+			return true;
+		}
+		case 'g': {
+			double x, y, heading, rotation, error, gyro;
+			if (std::sscanf(line + 1, "%d %lf %lf %lf %lf %lf %lf", &port, &x, &y, &heading, &rotation, &error, &gyro) ==
+			        7 &&
+			    port >= 1 && port <= 21) {
+				GpsPort& g = D().gps[port];
+				g.have = true, g.x = x, g.y = y, g.heading = heading, g.rotation = rotation;
+				g.error = error, g.gyro = gyro;
+			}
 			return true;
 		}
 		case 'c': {
@@ -419,6 +464,8 @@ v5_device_e_t get_plugged_type(uint8_t port) {
 			return E_DEVICE_ROTATION;
 		case Kind::distance:
 			return E_DEVICE_DISTANCE;
+		case Kind::gps:
+			return E_DEVICE_GPS;
 		default:
 			return E_DEVICE_NONE;
 	}
@@ -920,6 +967,120 @@ double distance_get_object_velocity(uint8_t port) {
 	if (!check_port(port, Kind::distance)) return PROS_ERR_F;
 	return 0.0;
 }
+
+// ---- GPS -------------------------------------------------------------------------------
+
+int32_t gps_set_offset(uint8_t port, double xOffset, double yOffset) {
+	GpsPort* g = gps(port);
+	if (!g) return PROS_ERR;
+	g->off_x = xOffset, g->off_y = yOffset;
+	return 1;
+}
+
+int32_t gps_set_position(uint8_t port, double xInitial, double yInitial, double headingInitial) {
+	GpsPort* g = gps(port);
+	if (!g) return PROS_ERR;
+	g->initial = true, g->ix = xInitial, g->iy = yInitial, g->ih = headingInitial;
+	return 1;
+}
+
+int32_t gps_initialize_full(uint8_t port, double xInitial, double yInitial, double headingInitial, double xOffset,
+                            double yOffset) {
+	if (gps_set_offset(port, xOffset, yOffset) == PROS_ERR) return PROS_ERR;
+	return gps_set_position(port, xInitial, yInitial, headingInitial);
+}
+
+gps_position_s_t gps_get_offset(uint8_t port) {
+	GpsPort* g = gps(port);
+	if (!g) return {PROS_ERR_F, PROS_ERR_F};
+	return {g->off_x, g->off_y};
+}
+
+int32_t gps_set_data_rate(uint8_t port, uint32_t rate) {
+	(void)rate;  // the simulated GPS keeps its configured rate
+	return gps(port) ? 1 : PROS_ERR;
+}
+
+double gps_get_error(uint8_t port) {
+	GpsPort* g = gps(port);
+	if (!g) return PROS_ERR_F;
+	if (!g->have) {
+		errno = EAGAIN;
+		return PROS_ERR_F;
+	}
+	return g->error;
+}
+
+gps_position_s_t gps_get_position(uint8_t port) {
+	double x, y, h;
+	if (!gps_state(port, &x, &y, &h)) return {PROS_ERR_F, PROS_ERR_F};
+	return {x, y};
+}
+
+double gps_get_position_x(uint8_t port) { return gps_get_position(port).x; }
+
+double gps_get_position_y(uint8_t port) { return gps_get_position(port).y; }
+
+double gps_get_heading(uint8_t port) {
+	double x, y, h;
+	if (!gps_state(port, &x, &y, &h)) return PROS_ERR_F;
+	return std::fmod(std::fmod(h, 360.0) + 360.0, 360.0);
+}
+
+double gps_get_heading_raw(uint8_t port) {
+	GpsPort* g = gps(port);
+	if (!g) return PROS_ERR_F;
+	if (!g->have) return g->initial ? g->ih : (errno = EAGAIN, PROS_ERR_F);
+	return g->rotation;
+}
+
+double gps_get_yaw(uint8_t port) {
+	double heading = gps_get_heading(port);
+	if (heading == PROS_ERR_F) return PROS_ERR_F;
+	return heading > 180.0 ? heading - 360.0 : heading;
+}
+
+double gps_get_pitch(uint8_t port) {
+	double x, y, h;
+	return gps_state(port, &x, &y, &h) ? 0.0 : PROS_ERR_F;  // the field is flat
+}
+
+double gps_get_roll(uint8_t port) { return gps_get_pitch(port); }
+
+gps_orientation_s_t gps_get_orientation(uint8_t port) {
+	return {gps_get_pitch(port), gps_get_roll(port), gps_get_yaw(port)};
+}
+
+gps_status_s_t gps_get_position_and_orientation(uint8_t port) {
+	gps_position_s_t p = gps_get_position(port);
+	return {p.x, p.y, gps_get_pitch(port), gps_get_roll(port), gps_get_yaw(port)};
+}
+
+gps_status_s_t gps_get_status(uint8_t port) { return gps_get_position_and_orientation(port); }
+
+gps_gyro_s_t gps_get_gyro_rate(uint8_t port) {
+	GpsPort* g = gps(port);
+	if (!g || !g->have) return {PROS_ERR_F, PROS_ERR_F, PROS_ERR_F};
+	return {0.0, 0.0, g->gyro};
+}
+
+double gps_get_gyro_rate_x(uint8_t port) { return gps_get_gyro_rate(port).x; }
+
+double gps_get_gyro_rate_y(uint8_t port) { return gps_get_gyro_rate(port).y; }
+
+double gps_get_gyro_rate_z(uint8_t port) { return gps_get_gyro_rate(port).z; }
+
+gps_accel_s_t gps_get_accel(uint8_t port) {
+	GpsPort* g = gps(port);
+	if (!g || !g->have) return {PROS_ERR_F, PROS_ERR_F, PROS_ERR_F};
+	return {0.0, 0.0, 0.0};  // not modeled
+}
+
+double gps_get_accel_x(uint8_t port) { return gps_get_accel(port).x; }
+
+double gps_get_accel_y(uint8_t port) { return gps_get_accel(port).y; }
+
+double gps_get_accel_z(uint8_t port) { return gps_get_accel(port).z; }
 
 // ---- controller ------------------------------------------------------------------------
 

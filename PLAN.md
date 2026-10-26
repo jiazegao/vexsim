@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.1 (2026-10-26). Phases 1-9 complete. Next: Phase 10.
+**Status:** Final v1.1 (2026-10-26). All phases (1-10) complete.
 
 **v1.1:** Phase 7 runs robot code in a separate host process over pipes instead of a DLL loaded with `ctypes`, and compiles with g++ directly instead of CMake and Ninja. Sections 0, 2, 3 and 7 are updated.
 
@@ -47,7 +47,7 @@ vexsim/
     chassis.py     2D rigid body + per-wheel normal loads (spring model)
     field.py       12'x12' perimeter, collisions
     world.py       fixed-step loop: 1 kHz physics, sensor/command scheduling, sim clock
-  devices/         port-addressed devices (motor, rotation, IMU, distance; GPS and controller later)
+  devices/         port-addressed devices (motor, rotation, IMU, distance, GPS)
                    with their noise / quantization / latency models and presets (specs.py)
   algorithms/
     localization/  Localizer interface + baselines
@@ -63,7 +63,7 @@ vexsim/
     doctor.py      toolchain check
   bench/           scenarios, metrics, Monte-Carlo runner (multiprocessing), HTML/CSV reports
   viz/             live top-down view, telemetry plots, replay, log export
-  calibration/     fit model params from real robot logs (later phase)
+  calibration/     fit model params from real robot logs (Phase 10)
   cli.py           vexsim run | build | doctor | bench | replay | validate-config
 examples/
   robots/          full_omni_6m.yaml, ...
@@ -144,7 +144,7 @@ Configs are validated on load. Errors include duplicate ports, wheels assigned t
 
 ### 5.4 Integration and field
 - Semi-implicit Euler at 1 kHz, with adaptive substeps when friction gets stiff. A seeded RNG drives all noise.
-- Field: the 12'×12' perimeter. The robot footprint collides with walls (impulse-based, with restitution and friction). Game elements come in a later phase.
+- Field: the 12'×12' perimeter. The robot footprint collides with walls (impulse-based, with restitution and friction). Game elements (Phase 10): fixed obstacles and movable pieces from the field config.
 
 ## 6. Sensors
 | Sensor | Model |
@@ -153,7 +153,7 @@ Configs are validated on load. Errors include duplicate ports, wheels assigned t
 | Rotation (tracking wheel) | 0.01° resolution, configurable data rate. Diameter and mount offset errors, small scrub, optional lift-off events |
 | IMU | Calibration period, heading bias drift, white noise, scale-factor error, mount yaw offset |
 | Distance | Ray-cast against the walls, range-dependent noise, maximum range, invalid readings out of range |
-| GPS | Later phase |
+| GPS | Phase 10: position and heading from the perimeter code strip when the camera sees it, range-dependent noise, latency, dead-reckoned heading without a fix |
 | Controller | Gamepad (Xbox mapped to V5 layout), keyboard fallback, or scripted input file |
 
 Every sensor has an update period and a latency. Noise profiles are named presets (`ideal`, `default`, `harsh`) and can be overridden per parameter.
@@ -304,7 +304,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 7 | **[done]** C++ bridge: PROS 4 shim, lockstep scheduler, robot host process over pipes, `vexsim build` and `vexsim doctor` | `minimal_pros4` runs unchanged on Windows and Linux; scheduler tests pass |
 | 8 | **[done]** LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
 | 9 | **[done]** Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
-| 10 | Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |
+| 10 | **[done]** Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |

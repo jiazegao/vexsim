@@ -3,12 +3,15 @@
 A VEX V5 robot mechanics simulator. It models:
 - drive physics, including wheel slip and drift, on omni, traction and mecanum wheels
 - tank drives, X-drives, mecanum drives and H-drives, and collisions with the field walls
+- game elements: fixed obstacles and pieces the robot pushes around
 - the V5 motor, including current limiting, heat and battery sag
-- sensors and odometry, with realistic noise
+- sensors (including the GPS) and odometry, with realistic noise
+
+You can calibrate it to your own robot from a log of a short drive.
 
 It's built to test localization and motion-control algorithms, and to run unmodified PROS 4 and LemLib robot code.
 
-**Status: Phases 1-9 of 10 are done**:
+**Status: all 10 planned phases are done**:
 - configs and world loop
 - V5 motor, thermal, battery and power models
 - full-omni drivetrain and chassis, with drift, weight transfer and traction limits
@@ -18,8 +21,9 @@ It's built to test localization and motion-control algorithms, and to run unmodi
 - unmodified PROS 4 C++ projects, compiled for your PC and run in lockstep with the physics
 - LemLib projects, with LemLib built from source, `ASSET()` path files, and LemLib motions as benchmark controllers
 - traction and mecanum wheels; X-drive, mecanum and H-drive layouts; field wall collisions with bounce, wall friction and wall resets
+- calibration from real robot logs; game elements; the V5 GPS sensor, in Python and C++, with a GPS-corrected odometry baseline
 
-Phase 10 (calibration from real robot logs, game elements, GPS) comes next. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
+See [PLAN.md](PLAN.md) for the plan and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
 
 ## Install
 
@@ -109,6 +113,21 @@ S-curve under a mid-path shove: 400 trials in 97 s
   drive encoders + IMU / RAMSETE            18%     3.07 /  5.12 in      2.08 /  4.54 in
 ```
 It writes `report.html` (self-contained), CSVs, charts and replayable worst cases. Plug in your own localizers and controllers by file, or a PROS project, such as LemLib's motions against the Python ones (`examples/scenarios/lemlib_vs_python.yaml`). See [docs/benchmarking.md](docs/benchmarking.md).
+
+**Calibrate to your robot**: add a short drive routine to your PROS project, run it on the robot, and fit the wheel parameters to its log:
+```
+vexsim calibration-routine ROBOT.yaml MY_PROS_PROJECT    # adds the routine and a logger
+vexsim calibrate ROBOT.yaml vexsim_log.csv --out cal     # replays the log and fits
+```
+![A logged calibration run vs. the simulation, before and after the fit](docs/img/calibration.png)
+
+The fitted values go into the robot config's `overrides:`. [docs/calibration.md](docs/calibration.md) has the whole process, including trying it in the simulator first.
+
+**Game elements**: a field config can list fixed obstacles and movable pieces; robots collide with them, push pieces around, and distance sensors see them:
+```
+vexsim run examples/robots/full_omni_6m.yaml --field examples/fields/practice_elements.yaml
+```
+See [docs/conventions.md](docs/conventions.md#field-elements) for the format and [docs/models.md](docs/models.md#game-elements-vexsimphysicsarenapy) for the physics.
 
 **Check a robot config** and see what the simulator will build from it:
 ```
@@ -235,19 +254,21 @@ vexsim/
   config/    robot + field schemas, strict YAML loading, cross-field checks, summaries
   core/      integer-microsecond clock, deterministic event scheduler, named RNG streams
   physics/   world loop; V5 motor, thermal, battery, power; wheel contact, chassis, robot,
-             drive kinematics, field walls; overrides
+             drive kinematics, field walls, game elements; overrides
   devices/   V5 sensors and motor encoders: sampling, latency, noise presets, PROS-unit frames
   algorithms/localization/  Localizer interface, arc odometry baselines, scripted runner
   algorithms/control/       PID, motion profiles, LemLib-style motions, pure pursuit, RAMSETE
   api/       PROS 4-style devices, a drive for any drivetrain, and a LemLib-style chassis
   runtime/   simulation, competition phases, program coroutines, inputs, telemetry log
   bench/     scenarios, Monte-Carlo trials, metrics, parallel runner, HTML reports
+  calibration/  robot logs, the calibration routine (and its C++), replays, fitting
   bridge/    PROS 4 shim headers and robot host runtime (C++), `vexsim build`, the host process
   viz/       live viewer (pygame); plots (motor curves, drift, odometry, telemetry)
   cli.py     `vexsim` command
-examples/    robot configs for each drivetrain, a field config, an example Python program,
-             scripted controller input, PROS 4 and LemLib projects, benchmark scenarios
+examples/    robot configs for each drivetrain, field configs (empty, and with game elements), an
+             example Python program, scripted controller input, PROS 4 and LemLib projects
+             (including the calibration routine), benchmark scenarios
 docs/        conventions, physics models and parameter sources, guides for Python programs, C++
-             (PROS) code and benchmarking, and an example 100-seed benchmark report
+             (PROS) code, benchmarking and calibration, and an example 100-seed benchmark report
 tests/       including a C++ test project for the bridge (tests/cpp/)
 ```

@@ -236,6 +236,35 @@ The impulses act on the body. The wheels follow through tire friction over the n
 - wall friction slows sliding along a wall
 - away from the walls, the physics is exactly unchanged
 
+## Game elements: `vexsim/physics/arena.py`
+A field config can list elements ([conventions.md](conventions.md#field-elements)):
+- **Obstacles** are fixed rectangles and circles: goals, barriers.
+- **Pieces** are discs that slide on the tiles: balls, rings and cylinders, by their outer diameter. Each has a mass, a ground friction coefficient and a restitution.
+
+**The robot and obstacles.** The footprint collides with obstacles as with the walls, using the same impulses (`field.wall_restitution`, `field.wall_friction`). A contact is any of:
+- a footprint corner inside an obstacle;
+- an obstacle corner inside the footprint;
+- the footprint's nearest point to a circle.
+
+So the robot stops flush against a barrier, squares up against its face, and pivots onto the nearer face when it meets a corner off center.
+
+**Pieces.** Each step, after the robot moves:
+1. **Move.** Ground friction slows each piece (Coulomb, `friction * g`), and it moves.
+2. **Find contacts.** Contacts between a piece and a wall, an obstacle, another piece or the robot are found.
+3. **Impulses.** Sequential impulses settle the contacts with the piece's restitution and the field's wall friction. A piece pinned against a wall or an obstacle counts as fixed while the robot pushes it into that, so the robot stalls instead of squeezing through.
+4. **Separate.** Nothing may overlap. Pieces move out of the robot, then out of walls, obstacles and each other; whatever still overlaps the robot pushes it back.
+
+Pieces don't spin. Robots can't drive over or pick them up: intakes and scoring are future work. While every piece is at rest and no robot is near one, a step skips them, so a field full of pieces costs nothing extra.
+
+**Sensors.** Distance sensors see obstacles and pieces. A GPS camera's view of the code strip is blocked by obstacles, not by pieces.
+
+**What the tests check** (`tests/test_elements.py`):
+- the robot stops flush at a barrier and squares up, at a round goal, and against a corner
+- a pushed piece moves ahead of the robot; pushed into a wall, both stop, without overlap or creep
+- a sliding piece stops after `v^2 / (2 mu g)`, bounces off a wall with its restitution, and two equal elastic pieces swap velocities
+- a field whose pieces are out of reach drives exactly like an empty one
+- distance sensors see obstacles and pieces, and obstacles block the GPS
+
 ## Sensors: `vexsim/devices/`
 **Timing and units**
 - Every device is sampled on its own period, at sensor priority, so controllers in the same tick see fresh data.
@@ -253,7 +282,8 @@ The impulses act on the body. The wheels follow through tire friction over the n
 | Motor encoder | 10 ms; 50 counts per motor-core rev (1800/900/300 per output rev); velocity noise 0.5% of rated | counts: PROS; rest estimates |
 | Rotation sensor | 10 ms; 0.088° resolution; 0.02° noise; per-wheel diameter error 0.5% and mounting error 0.05 in; scrub 1% of sideways travel | 10 ms: [PROS][rot]; 0.088°: retailer spec sheet ([RS][rot-rs]); rest estimates |
 | IMU | 10 ms; 2 s calibration; gyro bias 0.3°/s, removed by calibration; 0.05°/s rate noise; per-device scale error 0.5%, **not** removed by calibration | calibration and scale behavior: [VEX API][imu]; drift level: [VEX Forum][imu-drift]; rest estimates |
-| Distance | ~30 Hz; 20–2000 mm; σ 7.5 mm below 200 mm, 2.5% above | range and accuracy (±15 mm / ±5%, taken as ~2σ): [VEX][dist]; rate: VEX Forum |
+| Distance | ~30 Hz; 20–2000 mm; σ 7.5 mm below 200 mm, 2.5% above; sees walls, obstacles and pieces | range and accuracy (±15 mm / ±5%, taken as ~2σ): [VEX][dist]; rate: VEX Forum |
+| GPS | 20 ms, 20 ms latency; fix while its camera sees the code strip 0.3–4 m away; position σ 5 mm + 4 mm per meter to the strip; heading σ 0.3° | update rate "at worst 20 Hz": VEX Forum; rest estimates |
 
 **Rotation sensor (tracking wheel).** The wheel's rotation is integrated every physics step from the true contact velocity at its *true* mounting point with its *true* diameter. The localizer only knows the configured geometry, so per-device errors show up as odometry error, as on a real robot. The harsh preset adds random lift-off moments, when the wheel stops counting.
 
@@ -262,6 +292,15 @@ The impulses act on the body. The wheels follow through tire friction over the n
 - A still robot is left with a few tenths of a degree per minute of drift. That's checked over 20 seeds, matching the VEX Forum's "normal".
 - A robot that *moves* during calibration gets a large phantom turn rate, as in VEX's warning.
 - Heading is clockwise-positive, as in VEX.
+
+### GPS
+The V5 GPS Sensor is a camera that reads the code strip around the field perimeter.
+- **Fix.** The sensor has a fix while its camera's line of sight meets a wall between `min_range_m` (0.3 m) and `max_range_m` (4 m) away, unblocked by an obstacle. Closer, it sees too little strip; farther, the strip is too small to read. Both limits are estimates.
+- **Noise.** Position noise grows with the distance to the strip it reads; heading noise is constant. The error it reports (`get_error`) is that position σ.
+- **Without a fix.** Its internal gyro carries the heading, the position holds at the last fix, and the reported error grows by 5 cm per second (an estimate). Before its first fix, readings come from the pose the code gave (`set_position`), else `PROS_ERR_F`.
+- **Units and frame.** Meters from the field center, heading degrees clockwise from +y, as PROS reports them ([conventions.md](conventions.md#sensor-readings)). The reading is the sensor's own position; the robot code applies its offset (`set_offset`), as on the robot.
+
+VEX publishes no accuracy figures, so every number above is an estimate. Compare a logged run (calibration below) to tune them.
 
 ## Localization baselines: `vexsim/algorithms/localization/`
 **Interface:** `Localizer.reset(pose, frame)` and `Localizer.update(frame) -> Pose`. Poses are in inches and degrees, counter-clockwise, in the field frame.
@@ -280,6 +319,7 @@ Heading comes from the IMU, or from two parallel vertical wheels. It's exact for
 | drive encoders + IMU | + IMU |
 | tracking wheels + IMU | ≥1 vertical tracking wheel + IMU |
 | tracking wheels (no IMU) | ≥2 vertical tracking wheels |
+| tracking wheels + IMU + GPS | tracking wheels + IMU, and a GPS |
 
 X-drive, mecanum and H-drive robots slide sideways on purpose, so drive encoders can't follow them. Give them a vertical and a horizontal tracking wheel (as in the examples) for the tracking-wheel baseline.
 
@@ -292,8 +332,10 @@ X-drive, mecanum and H-drive robots slide sideways on purpose, so drive encoders
 - Tracking wheels + IMU end 1–3 in off with default noise and 0.01 in with ideal sensors.
 - While the robot moves, the estimate trails it by the sensor latency (about an inch at 60 in/s).
 
-## Calibrating against a real robot (Phase 10, or sooner)
-Each of these quick experiments replaces one of the biggest estimates.
+**GPS correction** (`GpsCorrected`) is a complementary filter: every fresh GPS fix pulls the odometry position a fraction `dt / 0.5 s` of the way toward the GPS. Position errors then decay over about half a second while GPS noise averages out; heading stays with the IMU. A fix shows where the robot was 30 ms earlier, so it is compared with the odometry from then. Fixes with a reported error above 5 cm are ignored. On the aggressive drive it cuts the tracking-wheel baseline's final error by about half (`tests/test_gps.py`), and on long runs it keeps odometry drift from growing.
+
+## Calibrating against a real robot
+`vexsim calibrate` fits the wheel parameters (and the battery's resistance) to a log of your robot driving a short routine; [calibration.md](calibration.md) walks through it. The quick experiments below measure other estimates directly.
 
 1. **Voltage-mode free speed.** Run `move_voltage(12000)` on a motor with nothing attached and log `get_actual_velocity()` for 3 s.
    - About 113% of rated speed confirms the model.

@@ -59,6 +59,8 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
             detail = f"at {_xy(s.pos_in)}, mount yaw {s.mount_yaw_deg:g} deg"
         elif s.type == "distance":
             detail = f"at {_xy(s.pos_in)}, facing {s.heading_deg:g} deg"
+        elif s.type == "gps":
+            detail = f"at {_xy(s.pos_in)}, camera facing {s.mount_yaw_deg:g} deg"
         elif s.tracking_wheel is not None:
             tw = s.tracking_wheel
             detail = (
@@ -77,4 +79,11 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
 
 
 def field_summary(cfg: FieldConfig) -> list[str]:
-    return [f"  {cfg.name}, {cfg.size_in[0]:.1f} x {cfg.size_in[1]:.1f} in inside the walls"]
+    lines = [f"  {cfg.name}, {cfg.size_in[0]:.1f} x {cfg.size_in[1]:.1f} in inside the walls"]
+    obstacles, pieces = cfg.obstacles, cfg.pieces
+    if obstacles or pieces:
+        mass = sum(p.mass_kg for p in pieces)
+        lines.append(
+            f"  {len(obstacles)} obstacle(s), {len(pieces)} piece(s) ({mass:.2f} kg in all)"
+        )
+    return lines

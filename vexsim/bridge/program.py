@@ -16,7 +16,13 @@ from vexsim.algorithms.localization.base import Pose
 from vexsim.api.devices import ANALOG, DIGITAL
 from vexsim.bridge.build import BuildResult, build_project
 from vexsim.bridge.host import HostError, Reply, RobotHost
-from vexsim.devices.devices import DistanceDevice, ImuDevice, MotorDevice, RotationDevice
+from vexsim.devices.devices import (
+    DistanceDevice,
+    GpsDevice,
+    ImuDevice,
+    MotorDevice,
+    RotationDevice,
+)
 from vexsim.physics.motor import BrakeMode
 from vexsim.physics.world import PRIORITY_CONTROL, World
 from vexsim.units import rpm_to_rad_s
@@ -125,6 +131,8 @@ class CppProgram:
                 devices.append((port, "rotation", ""))
             elif isinstance(device, DistanceDevice):
                 devices.append((port, "distance", ""))
+            elif isinstance(device, GpsDevice):
+                devices.append((port, "gps", ""))
         self.host = RobotHost(
             self.executable,
             devices,
@@ -201,6 +209,11 @@ class CppProgram:
                 lines.append(f"r {port} {value.position_cdeg} {value.velocity_cdeg_s:.6g}")
             elif isinstance(device, DistanceDevice):
                 lines.append(f"d {port} {-1 if value is None else value}")
+            elif isinstance(device, GpsDevice) and value is not None:
+                lines.append(
+                    f"g {port} {value.x_m:.9g} {value.y_m:.9g} {value.heading_deg:.9g} "
+                    f"{value.rotation_deg:.9g} {value.error_m:.6g} {value.gyro_z_deg_s:.6g}"
+                )
         controller = sim.controller
         buttons = sum(1 << i for i, b in enumerate(DIGITAL) if b in controller.digital)
         axes = tuple(controller.analog[a] for a in ANALOG)

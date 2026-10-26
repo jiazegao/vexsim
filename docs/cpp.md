@@ -108,14 +108,15 @@ The robot code runs in its own process, in **lockstep** with the physics:
 | `pros::Motor`, `pros::MotorGroup` | Everything: `move*`, getters (and `_all`), brake modes, current and voltage limits, encoder units, gearing, zero position. See the PROS 4 behaviors below. |
 | `pros::Imu` | Rotation, heading, yaw, z gyro rate, tare/set offsets, `reset`, `is_calibrating`. Pitch and roll stay 0 (flat field); acceleration reads 0. Heading is clockwise-positive, as on the V5. |
 | `pros::Rotation` | Position, angle, velocity, reversal (negative port), `reset`, `set_position`. |
-| `pros::Distance` | Distance to the field walls (no game objects yet). Confidence reads 63 and object size 400 when a wall is in range; object velocity reads 0. |
+| `pros::Distance` | Distance to the field walls and to game elements (obstacles and pieces, from the field config). Confidence reads 63 and object size 400 when something is in range; object velocity reads 0. |
+| `pros::Gps` | Position (meters from the field center) and heading (degrees clockwise from +y), with the offset and initial position the code sets (`set_offset`, `set_position`, `initialize_full`, constructors). `get_error`, `get_heading_raw`, `get_yaw`, z gyro rate. Pitch and roll read 0, acceleration 0. Without a view of the code strip it keeps its last position. See [models.md](models.md#gps). |
 | `pros::Controller` | Master sticks and buttons from the keyboard, a gamepad or `--input`, with `get_digital_new_press` / `_new_release` as in PROS. Screen text is kept (`sim.controller_screen`). The partner controller is not connected. |
 | Tasks, `delay`, `delay_until`, `Mutex`, `RecursiveMutex`, `MutexVar`, notifications, `millis`, `micros` | Everything (see above). |
 | `pros::battery`, `pros::competition` | Battery voltage, current and charge from the battery model; competition status per mode. |
 | `pros::lcd` (LLEMU), `pros::screen::print` | Text lines appear in the viewer's "brain screen" panel. Drawing calls are accepted and ignored. Screen buttons are never pressed. |
 | `printf`, `std::cout`, `std::cerr` | Console panel and terminal, stamped with simulated time. |
 | `pros::adi::*` (pneumatics, encoders, ...) | Not simulated yet. Outputs remember what was written, so a `Pneumatics` reads back as extended. Inputs and encoders read 0. The first use logs a note. |
-| `pros::Optical`, `Gps`, `Vision`, `Link`, `Serial` | Not simulated yet. Calls fail with `errno = ENODEV`, and the first one logs a note. |
+| `pros::Optical`, `Vision`, `Link`, `Serial` | Not simulated yet. Calls fail with `errno = ENODEV`, and the first one logs a note. |
 | LVGL, SD card, AI Vision | Not available. Code using LVGL or AI Vision headers won't compile. |
 
 **PROS 4 behaviors that are reproduced, so they can bite in the simulator too**

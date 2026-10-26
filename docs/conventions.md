@@ -54,6 +54,8 @@ Any wheel type works in any drivetrain: a tank drive with traction wheels in the
 
 **`inertia_kgm2: auto`** treats the robot as a uniform box over its footprint, using `m(L^2 + W^2)/12`. Give a measured value if you have one.
 
+**GPS:** `pos_in` is where the sensor sits, and `mount_yaw_deg` the direction its camera faces, counter-clockwise from the robot's +x. A GPS facing backward has `mount_yaw_deg: 180`.
+
 **Validation**
 - Typos in keys are errors, and the message suggests the closest valid key.
 - Duplicate keys are errors. Plain YAML silently keeps the last one.
@@ -67,10 +69,27 @@ Sensor frames (`vexsim.devices.frame.SensorFrame`) carry what PROS code would re
 | Rotation | position (cumulative), velocity | centidegrees (int), centidegrees/s |
 | IMU | rotation (cumulative), heading 0–360, gyro z | degrees, **clockwise positive**; `None` while calibrating |
 | Distance | distance | mm (int); `None` when nothing is in range |
+| GPS | position, heading, error | meters from the field center; degrees **clockwise from +y**; meters. `None` before the first fix |
 
 - **Reversal follows PROS.** A negative motor port, or `reversed: true` on a rotation sensor, means the raw reading runs backwards, and the robot code is expected to reverse it, exactly like `pros::Motor(-4)`. The baseline localizers read these flags from the config.
 - **Tracking wheel geometry.** A tracking wheel's `heading_deg` is the direction of travel it measures: 0 for vertical, 90 for horizontal. 180 and 270 count backwards.
 - **Odometry offsets** are measured from the footprint center: a vertical wheel by its `y` (+left), a horizontal wheel by its `x` (+forward).
+- **GPS frame.** vexsim's field frame is the GPS's: +y is the GPS's "north" (heading 0), so a robot facing +x reads heading 90. On a real field, point vexsim's +y the way your GPS reads 0. The reading is the sensor's own position and camera direction. The robot code's offset (`set_offset(x, y)`, in meters) is where the sensor sits relative to the robot's center, with +y along the camera's direction and +x to its right, as PROS defines it. With it, the GPS reports the robot's center.
+
+## Field elements
+A field config lists game elements under `elements:`. See `examples/fields/practice_elements.yaml`; it is generic, not any season's layout.
+
+```yaml
+elements:
+  - {type: obstacle, name: barrier, shape: rect, pos_in: [0, 0], size_in: [48, 3], heading_deg: 0}
+  - {type: obstacle, name: goal, shape: circle, pos_in: [-48, 48], diameter_in: 10, color: "#d33f49"}
+  - {type: piece, name: ball, pos_in: [-24, 24], diameter_in: 7, mass_kg: 0.25, friction: 0.4, restitution: 0.3}
+```
+
+- `pos_in` is the center, in the field frame. A rect's `size_in` is its length (along `heading_deg`) by its width.
+- Pieces are discs: give a ring or cylinder its outer diameter. `friction` is the ground friction coefficient (default 0.4); `restitution` is how much of its speed it keeps bouncing off something (default 0.3).
+- `color` (`"#rrggbb"`) is only for the viewer.
+- Validation: elements must be inside the walls; a piece that starts overlapping a wall, an obstacle or another piece gets a warning.
 
 ## Time
 - Simulation time is an integer number of **microseconds**, so runs never drift.

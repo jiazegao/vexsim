@@ -1,0 +1,20 @@
+# A practice field with generic game elements: two goals, a barrier, and balls.
+# Not any season's real layout: describe your own game's elements the same way.
+#
+# Positions are inches from the field center (+x and +y as in docs/conventions.md),
+# angles degrees counter-clockwise from +x.
+version: 1
+name: Practice field with game elements
+size_in: [144, 144]
+elements:
+  # Fixed obstacles: rect (size_in = length x width, turned by heading_deg) or circle.
+  - {type: obstacle, name: barrier, shape: rect, pos_in: [0, 0], size_in: [48, 3]}
+  - {type: obstacle, name: red goal, shape: circle, pos_in: [-48, 48], diameter_in: 10, color: "#d33f49"}
+  - {type: obstacle, name: blue goal, shape: circle, pos_in: [48, -48], diameter_in: 10, color: "#2a78d6"}
+  # Game pieces: discs that slide on the tiles (mass, ground friction, bounce).
+  - {type: piece, name: ball 1, pos_in: [-24, 24], diameter_in: 7, mass_kg: 0.25, color: "#eda100"}
+  - {type: piece, name: ball 2, pos_in: [24, -24], diameter_in: 7, mass_kg: 0.25, color: "#eda100"}
+  - {type: piece, name: ball 3, pos_in: [24, 24], diameter_in: 7, mass_kg: 0.25, color: "#eda100"}
+  - {type: piece, name: ball 4, pos_in: [-24, -24], diameter_in: 7, mass_kg: 0.25, color: "#eda100"}
+  - {type: piece, name: ball 5, pos_in: [0, 36], diameter_in: 7, mass_kg: 0.25, color: "#eda100"}
+  - {type: piece, name: ball 6, pos_in: [0, -36], diameter_in: 7, mass_kg: 0.25, color: "#eda100"}

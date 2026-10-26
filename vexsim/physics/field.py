@@ -96,7 +96,8 @@ class Walls:
         if not found:
             return []
 
-        impulses = self._impulses(robot, corners, [(k, n) for k, n, _ in found], (c, s))
+        points = [(*corners[k], *n) for k, n, _ in found]
+        impulses = robot_impulses(robot, points, self.spec)
         # Move straight back in: per wall, by its deepest corner.
         shift = np.zeros(2)
         for _, normal, depth in found:
@@ -114,45 +115,52 @@ class Walls:
             for (k, n, depth), j in zip(found, impulses, strict=True)
         ]
 
-    def _impulses(self, robot: Robot, corners, contacts, rotation) -> list[float]:
-        """Sequential impulses on the body velocity (u, v, w); returns each normal impulse."""
-        c, s = rotation
-        m, inertia = robot.mass, robot.yaw_inertia
-        mu, e = self.spec.wall_friction, self.spec.wall_restitution
-        q = robot.qdot
-        geometry = []
-        for k, normal in contacts:
-            rx, ry = corners[k]
-            # the wall's normal and tangent in the body frame
-            nx, ny = c * normal[0] + s * normal[1], -s * normal[0] + c * normal[1]
-            tx, ty = -ny, nx
-            rn, rt = rx * ny - ry * nx, rx * ty - ry * tx
-            vn = (q[0] - q[2] * ry) * nx + (q[1] + q[2] * rx) * ny
-            target = -e * vn if vn < -BOUNCE_SPEED_M_S else 0.0
-            geometry.append((rx, ry, (nx, ny, rn), (tx, ty, rt), target))
 
-        def push(direction: tuple[float, float, float], amount: float) -> None:
-            dx, dy, moment = direction
-            q[0] += amount * dx / m
-            q[1] += amount * dy / m
-            q[2] += amount * moment / inertia
+def robot_impulses(
+    robot: Robot, points: list[tuple[float, float, float, float]], spec: FieldSpec
+) -> list[float]:
+    """Sequential impulses on the robot's body velocity (u, v, w) at fixed contacts.
 
-        def speed(rx: float, ry: float, direction: tuple[float, float, float]) -> float:
-            return (q[0] - q[2] * ry) * direction[0] + (q[1] + q[2] * rx) * direction[1]
+    ``points`` are (rx, ry, nx, ny): the contact point relative to the CG in the
+    body frame, and the field-frame normal pushing the robot away. Returns each
+    contact's normal impulse.
+    """
+    c, s = math.cos(robot.heading), math.sin(robot.heading)
+    m, inertia = robot.mass, robot.yaw_inertia
+    mu, e = spec.wall_friction, spec.wall_restitution
+    q = robot.qdot
+    geometry = []
+    for rx, ry, fx, fy in points:
+        # the normal and tangent in the body frame
+        nx, ny = c * fx + s * fy, -s * fx + c * fy
+        tx, ty = -ny, nx
+        rn, rt = rx * ny - ry * nx, rx * ty - ry * tx
+        vn = (q[0] - q[2] * ry) * nx + (q[1] + q[2] * rx) * ny
+        target = -e * vn if vn < -BOUNCE_SPEED_M_S else 0.0
+        geometry.append((rx, ry, (nx, ny, rn), (tx, ty, rt), target))
 
-        normal_impulse = [0.0] * len(geometry)
-        friction_impulse = [0.0] * len(geometry)
-        for _ in range(ITERATIONS):
-            for i, (rx, ry, n, t, target) in enumerate(geometry):
-                kn = 1.0 / m + n[2] * n[2] / inertia  # effective mass^-1 along the normal
-                total = max(normal_impulse[i] + (target - speed(rx, ry, n)) / kn, 0.0)
-                push(n, total - normal_impulse[i])
-                normal_impulse[i] = total
+    def push(direction: tuple[float, float, float], amount: float) -> None:
+        dx, dy, moment = direction
+        q[0] += amount * dx / m
+        q[1] += amount * dy / m
+        q[2] += amount * moment / inertia
 
-                kt = 1.0 / m + t[2] * t[2] / inertia
-                bound = mu * total
-                friction = friction_impulse[i] - speed(rx, ry, t) / kt
-                friction = min(max(friction, -bound), bound)
-                push(t, friction - friction_impulse[i])
-                friction_impulse[i] = friction
-        return normal_impulse
+    def speed(rx: float, ry: float, direction: tuple[float, float, float]) -> float:
+        return (q[0] - q[2] * ry) * direction[0] + (q[1] + q[2] * rx) * direction[1]
+
+    normal_impulse = [0.0] * len(geometry)
+    friction_impulse = [0.0] * len(geometry)
+    for _ in range(ITERATIONS):
+        for i, (rx, ry, n, t, target) in enumerate(geometry):
+            kn = 1.0 / m + n[2] * n[2] / inertia  # effective mass^-1 along the normal
+            total = max(normal_impulse[i] + (target - speed(rx, ry, n)) / kn, 0.0)
+            push(n, total - normal_impulse[i])
+            normal_impulse[i] = total
+
+            kt = 1.0 / m + t[2] * t[2] / inertia
+            bound = mu * total
+            friction = friction_impulse[i] - speed(rx, ry, t) / kt
+            friction = min(max(friction, -bound), bound)
+            push(t, friction - friction_impulse[i])
+            friction_impulse[i] = friction
+    return normal_impulse

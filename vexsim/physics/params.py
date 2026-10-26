@@ -84,6 +84,13 @@ class PhysicsParams:
     field: FieldSpec
     sensor_overrides: dict[str, dict[str, float]] = dataclasses.field(default_factory=dict)
 
+    def value(self, key: str) -> float:
+        """The value of a dotted parameter key, e.g. ``wheel.omni.lateral_mu``."""
+        group, _, name = key.rpartition(".")
+        if group not in _FIELD_FOR_GROUP:
+            raise KeyError(key)
+        return float(getattr(getattr(self, _FIELD_FOR_GROUP[group]), name))
+
     def wheel(self, wheel_type: str) -> WheelSpec:
         specs = {
             "omni": self.omni_wheel,

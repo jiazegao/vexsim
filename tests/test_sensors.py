@@ -50,9 +50,9 @@ def drive(robot, left, right):
 
 
 def test_presets_cover_every_sensor_type():
-    assert set(PRESETS) == {"ideal", "default", "harsh"}
+    assert set(PRESETS) == {"ideal", "default", "harsh", "replay"}  # replay: calibration's
     for preset in PRESETS.values():
-        assert set(preset) == {"motor", "rotation", "imu", "distance"}
+        assert set(preset) == {"motor", "rotation", "imu", "distance", "gps"}
     ideal = PRESETS["ideal"]
     assert ideal["imu"].scale_error == 0 and ideal["rotation"].diameter_error == 0
     assert PRESETS["harsh"]["imu"].scale_error > PRESETS["default"]["imu"].scale_error

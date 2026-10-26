@@ -104,7 +104,7 @@ def test_bad_sensor_ports(robot_data, port):
 
 
 def test_unknown_sensor_type(robot_data):
-    robot_data["sensors"].append({"type": "gps", "port": 20})
+    robot_data["sensors"].append({"type": "optical", "port": 20})
     report = validate_robot(robot_data)
     assert "sensors[4]" in {loc for loc, _ in issues_at(report, "error")}
 

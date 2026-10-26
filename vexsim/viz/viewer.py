@@ -35,6 +35,20 @@ WALL = (60, 60, 58)
 ROBOT = (40, 40, 38)
 ESTIMATE = (42, 120, 214)  # series 1
 TARGET = (235, 104, 52)  # series 2
+OBSTACLE = (150, 149, 145)
+PIECE = (237, 161, 0)
+
+
+def _color(text: str | None, default: tuple[int, int, int]) -> tuple[int, int, int]:
+    """A "#rrggbb" color from a field config, or the default."""
+    if text and len(text) == 7 and text.startswith("#"):
+        try:
+            return tuple(int(text[i : i + 2], 16) for i in (1, 3, 5))
+        except ValueError:
+            pass
+    return default
+
+
 TRAIL = (27, 175, 122)  # series 3
 SLIP_LOW, SLIP_HIGH = (90, 90, 86), (227, 73, 72)  # wheel color: grip in use -> sliding
 
@@ -86,6 +100,9 @@ class Snapshot:
     sticks: dict[str, int] = field(default_factory=dict)
     field_in: tuple[float, float] = (144.0, 144.0)  # inside the walls
     wall_contacts: list[tuple[float, float]] = field(default_factory=list)  # inches
+    # Game elements, inches: obstacles as polygons or (x, y, r) circles, pieces as (x, y, r).
+    obstacles: list[tuple[str, tuple, str | None]] = field(default_factory=list)
+    pieces: list[tuple[float, float, float, str | None]] = field(default_factory=list)
 
 
 class KeyboardInput:
@@ -244,7 +261,28 @@ class LiveSource:
             sticks=dict(sim.controller.analog),
             field_in=sim.field.size_in,
             wall_contacts=[(m_to_in(c.point[0]), m_to_in(c.point[1])) for c in robot.wall_contacts],
+            **_elements(sim),
         )
+
+
+def _elements(sim) -> dict:
+    arena = sim.arena
+    if arena is None:
+        return {}
+    obstacles = []
+    for shape in arena.obstacles:
+        if shape.circle:
+            x, y = (m_to_in(v) for v in shape.center)
+            obstacles.append(("circle", (x, y, m_to_in(shape.half[0])), shape.color))
+        else:
+            corners = tuple((m_to_in(x), m_to_in(y)) for x, y in shape.corners())
+            obstacles.append(("polygon", corners, shape.color))
+    p = arena.pieces
+    pieces = [
+        (m_to_in(x), m_to_in(y), m_to_in(r), color)
+        for (x, y), r, color in zip(p.position, p.radius, p.colors, strict=True)
+    ]
+    return {"obstacles": obstacles, "pieces": pieces}
 
 
 class ReplaySource:
@@ -432,6 +470,17 @@ class Viewer:
         left, top = self._to_px(-half_x, half_y)
         right, bottom = self._to_px(half_x, -half_y)
         pg.draw.rect(scr, WALL, (left, top, right - left, bottom - top), 3)
+        for kind, geometry, color in snap.obstacles:
+            fill = _color(color, OBSTACLE)
+            if kind == "circle":
+                x, y, r = geometry
+                pg.draw.circle(scr, fill, self._to_px(x, y), max(2, round(r * scale)))
+            else:
+                pg.draw.polygon(scr, fill, [self._to_px(x, y) for x, y in geometry])
+        for x, y, r, color in snap.pieces:
+            center = self._to_px(x, y)
+            pg.draw.circle(scr, _color(color, PIECE), center, max(2, round(r * scale)))
+            pg.draw.circle(scr, WALL, center, max(2, round(r * scale)), 1)
 
         if snap.time - self._last_trail_t >= 0.03 or snap.time < self._last_trail_t:
             self.trail_true.append(self._to_px(snap.true_pose.x, snap.true_pose.y))

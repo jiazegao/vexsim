@@ -355,9 +355,11 @@ def test_api_surface_and_c_sources(test_exe):
     assert "c api 5" in out
     # Warnings come out in order with the code's own output.
     unsupported = out.index("unsupported 2147483647 1 2147483647 2147483647")
-    for device in ("pros::Optical", "pros::Gps", "pros::Vision", "pros::Serial"):
+    for device in ("pros::Optical", "pros::Vision", "pros::Serial"):
         warning = f"vexsim: {device} is not simulated yet: its calls fail with errno ENODEV"
         assert out.index("battery 100% comp 0 usd 0") > out.index(warning) < unsupported
+    gps = [line for line in out if line.startswith("vexsim: port 6: the code uses a GPS sensor")]
+    assert len(gps) == 1 and out.index(gps[0]) < unsupported  # simulated, but not on port 6
 
 
 def test_reported_pose_becomes_the_estimate(test_exe):

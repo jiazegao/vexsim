@@ -7,6 +7,9 @@
 * IMU rotation and heading in degrees, **clockwise positive** (VEX convention),
   ``None`` while calibrating (PROS returns PROS_ERR).
 * Distance in mm (int), ``None`` when nothing is in range.
+* GPS position in meters and heading in degrees **clockwise from +y** (the GPS's
+  "north"), in the field frame, for the sensor itself: the robot code applies
+  its offset. ``None`` until the sensor's first fix.
 """
 
 from __future__ import annotations
@@ -50,9 +53,21 @@ class ImuReading:
 
 
 @dataclass(frozen=True)
+class GpsReading:
+    x_m: float  # the sensor's position, field frame
+    y_m: float
+    heading_deg: float  # where its camera faces, clockwise from +y, 0..360
+    rotation_deg: float  # the same heading, cumulative
+    error_m: float  # the sensor's own estimate of its position error
+    gyro_z_deg_s: float  # clockwise positive
+    fix: bool  # this sample read the code strip (else heading is dead-reckoned)
+
+
+@dataclass(frozen=True)
 class SensorFrame:
     time: float  # seconds of simulation time
     motors: dict[int, MotorReading | None] = field(default_factory=dict)
     rotation: dict[int, RotationReading | None] = field(default_factory=dict)
     imu: dict[int, ImuReading | None] = field(default_factory=dict)
     distance: dict[int, int | None] = field(default_factory=dict)
+    gps: dict[int, GpsReading | None] = field(default_factory=dict)

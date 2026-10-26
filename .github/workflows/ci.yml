@@ -60,6 +60,7 @@ jobs:
           for robot in examples/robots/*.yaml; do
             vexsim validate-config "$robot" --field examples/fields/v5rc_empty.yaml --strict -q
           done
+          vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/practice_elements.yaml --strict -q
 
       - name: Plots
         shell: bash  # stop at the first failing command (Windows pwsh only checks the last)
@@ -70,11 +71,14 @@ jobs:
           vexsim run examples/robots/full_omni_6m.yaml --program examples/programs/tour.py --headless --record tour.csv --screenshot tour.png
           vexsim plot tour.csv --out telemetry.png
           vexsim run examples/robots/mecanum_4m.yaml --input examples/inputs/strafe_square.csv --headless --seconds 10 --start=-12,12,0 --screenshot mecanum_square.png
+          vexsim run examples/robots/full_omni_6m.yaml --field examples/fields/practice_elements.yaml --input examples/inputs/strafe_square.csv --headless --seconds 9 --start=-48,24,0 --screenshot elements.png
           vexsim bench examples/scenarios/s_curve.yaml --seeds 4 --workers 2 --out bench
           vexsim build examples/pros_projects/minimal_pros4
           vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/minimal_pros4 --headless --start 0,0,90 --record cpp_square.csv --screenshot cpp_square.png
           vexsim run examples/robots/lemlib_example.yaml --program examples/pros_projects/lemlib_template --headless --start 0,0,90 --record lemlib.csv --screenshot lemlib.png
           vexsim bench examples/scenarios/lemlib_vs_python.yaml --seeds 4 --workers 2 --out bench_lemlib
+          vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/calibration --headless > calibration_run.txt
+          vexsim calibrate examples/robots/full_omni_6m.yaml calibration_run.txt --max-iterations 3 --out calibration
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'windows-latest' && matrix.python == '3.13'
@@ -88,6 +92,8 @@ jobs:
             telemetry.png
             tour.csv
             mecanum_square.png
+            elements.png
+            calibration/calibration.png
             cpp_square.png
             cpp_square.csv
             lemlib.png

@@ -13,7 +13,13 @@ import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from vexsim.devices.devices import DistanceDevice, ImuDevice, MotorDevice, RotationDevice
+from vexsim.devices.devices import (
+    DistanceDevice,
+    GpsDevice,
+    ImuDevice,
+    MotorDevice,
+    RotationDevice,
+)
 from vexsim.physics.motor import BrakeMode
 from vexsim.units import rpm_to_rad_s
 
@@ -220,6 +226,107 @@ class Distance:
         """Distance in mm; 9999 when nothing is in range."""
         value = self._device.value
         return DISTANCE_NO_OBJECT if value is None else value
+
+
+class Gps:
+    """V5 GPS Sensor, in PROS units: meters from the field center, and heading in degrees
+    clockwise from +y (the GPS's north).
+
+    ``set_offset(x, y)`` is where the sensor sits relative to the robot's center, in meters,
+    +x to the right of where the camera faces and +y along it. Positions then refer to the
+    robot's center. The offset belongs to the sensor, so every object on the port shares it.
+    Until the first fix, readings come from ``set_position`` (or are PROS_ERR_F).
+    """
+
+    def __init__(
+        self,
+        sim: Simulation,
+        port: int,
+        x_initial: float | None = None,
+        y_initial: float | None = None,
+        heading_initial: float | None = None,
+        x_offset: float | None = None,
+        y_offset: float | None = None,
+    ):
+        self._device: GpsDevice = _device(sim, port, GpsDevice)
+        if x_offset is not None and y_offset is not None:
+            self.set_offset(x_offset, y_offset)
+        if x_initial is not None and y_initial is not None and heading_initial is not None:
+            self.set_position(x_initial, y_initial, heading_initial)
+
+    def initialize_full(
+        self, x: float, y: float, heading: float, x_offset: float, y_offset: float
+    ) -> None:
+        self.set_offset(x_offset, y_offset)
+        self.set_position(x, y, heading)
+
+    def set_offset(self, x_offset: float, y_offset: float) -> None:
+        self._device.offset = (x_offset, y_offset)
+
+    def get_offset(self) -> tuple[float, float]:
+        return self._device.offset
+
+    def set_position(self, x: float, y: float, heading: float) -> None:
+        """Where the robot starts, for until the sensor first reads the code strip."""
+        self._device.initial = (x, y, heading)
+
+    def set_data_rate(self, ms: int) -> None:
+        """Accepted; the simulated GPS keeps its configured rate."""
+
+    def _state(self) -> tuple[float, float, float] | None:
+        """(x, y, heading) of the robot's center, offset applied."""
+        r = self._device.value
+        if r is None:
+            return self._device.initial
+        h = math.radians(r.heading_deg)
+        ox, oy = self._device.offset
+        # +x of the offset is to the right of the camera's direction, +y along it.
+        x = r.x_m - (ox * math.cos(h) + oy * math.sin(h))
+        y = r.y_m - (-ox * math.sin(h) + oy * math.cos(h))
+        return x, y, r.heading_deg
+
+    def get_position(self) -> tuple[float, float]:
+        state = self._state()
+        return (PROS_ERR_F, PROS_ERR_F) if state is None else (state[0], state[1])
+
+    def get_position_x(self) -> float:
+        return self.get_position()[0]
+
+    def get_position_y(self) -> float:
+        return self.get_position()[1]
+
+    def get_heading(self) -> float:
+        state = self._state()
+        return PROS_ERR_F if state is None else state[2] % 360.0
+
+    def get_heading_raw(self) -> float:
+        r = self._device.value
+        if r is None:
+            return PROS_ERR_F if self._device.initial is None else self._device.initial[2]
+        return r.rotation_deg
+
+    def get_yaw(self) -> float:
+        heading = self.get_heading()
+        return PROS_ERR_F if heading == PROS_ERR_F else (heading + 180.0) % 360.0 - 180.0
+
+    def get_pitch(self) -> float:
+        return 0.0 if self._device.value is not None else PROS_ERR_F
+
+    def get_roll(self) -> float:
+        return self.get_pitch()
+
+    def get_position_and_orientation(self) -> tuple[float, float, float, float, float]:
+        """(x, y, pitch, roll, yaw), like PROS's gps_status_s_t."""
+        x, y = self.get_position()
+        return x, y, self.get_pitch(), self.get_roll(), self.get_yaw()
+
+    def get_error(self) -> float:
+        r = self._device.value
+        return PROS_ERR_F if r is None else r.error_m
+
+    def get_gyro_rate(self) -> tuple[float, float, float]:
+        r = self._device.value
+        return (PROS_ERR_F,) * 3 if r is None else (0.0, 0.0, r.gyro_z_deg_s)
 
 
 class Controller:

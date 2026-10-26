@@ -6,7 +6,14 @@ from collections.abc import Mapping
 
 from vexsim.config.field import FieldConfig
 from vexsim.core.rng import RngStreams
-from vexsim.devices.devices import Device, DistanceDevice, ImuDevice, MotorDevice, RotationDevice
+from vexsim.devices.devices import (
+    Device,
+    DistanceDevice,
+    GpsDevice,
+    ImuDevice,
+    MotorDevice,
+    RotationDevice,
+)
 from vexsim.devices.frame import SensorFrame
 from vexsim.devices.specs import sensor_spec
 from vexsim.physics.robot import Robot
@@ -31,6 +38,7 @@ class SensorSuite:
         *,
         field: FieldConfig | None = None,
         noise: str | None = None,
+        arena=None,
     ):
         self.robot = robot
         field = field or FieldConfig()
@@ -52,8 +60,11 @@ class SensorSuite:
                 device = RotationDevice(cfg, robot, spec("rotation", cfg.noise), noisy, static)
             elif cfg.type == "imu":
                 device = ImuDevice(cfg, robot, spec("imu", cfg.noise), noisy, static)
+            elif cfg.type == "gps":
+                device = GpsDevice(cfg, robot, field, spec("gps", cfg.noise), noisy, arena)
             else:
-                device = DistanceDevice(cfg, robot, field, spec("distance", cfg.noise), noisy)
+                distance_spec = spec("distance", cfg.noise)
+                device = DistanceDevice(cfg, robot, field, distance_spec, noisy, arena)
             self.devices[cfg.port] = device
 
     def attach(self, world: World) -> SensorSuite:
@@ -75,7 +86,7 @@ class SensorSuite:
             device.publish(end_us)
 
     def frame(self, time: float) -> SensorFrame:
-        groups: dict[str, dict] = {"motor": {}, "rotation": {}, "imu": {}, "distance": {}}
+        groups: dict[str, dict] = {k: {} for k in ("motor", "rotation", "imu", "distance", "gps")}
         for port, device in self.devices.items():
             groups[device.kind][port] = device.value
         return SensorFrame(
@@ -84,6 +95,7 @@ class SensorSuite:
             rotation=groups["rotation"],
             imu=groups["imu"],
             distance=groups["distance"],
+            gps=groups["gps"],
         )
 
     def device(self, port: int) -> Device:

@@ -83,11 +83,28 @@ class DistanceSensorSpec:
         _check(self, "sensor.distance")
 
 
+@dataclass(frozen=True)
+class GpsSpec:
+    period_ms: float = 20.0  # PROS's default data rate (estimate)
+    latency_ms: float = 20.0  # camera exposure and processing (estimate)
+    position_noise_m: float = 0.005  # std. dev. close to the code strip (estimate)
+    range_noise: float = 0.004  # extra std. dev. per meter to the strip it reads (estimate)
+    heading_noise_deg: float = 0.3  # (estimate)
+    min_range_m: float = 0.3  # closer than this the camera sees too little strip (estimate)
+    max_range_m: float = 4.0  # farther than this the strip is too small to read (estimate)
+    gyro_noise_deg_s: float = 0.1  # the internal gyro that carries heading between fixes
+    error_growth_m_s: float = 0.05  # reported error growth while it has no fix (estimate)
+
+    def __post_init__(self) -> None:
+        _check(self, "sensor.gps")
+
+
 SPEC_TYPES: dict[str, type] = {
     "motor": MotorSensorSpec,
     "rotation": RotationSensorSpec,
     "imu": ImuSpec,
     "distance": DistanceSensorSpec,
+    "gps": GpsSpec,
 }
 
 _IDEAL = {
@@ -104,6 +121,15 @@ _IDEAL = {
         heading_noise_deg=0,
     ),
     "distance": DistanceSensorSpec(latency_ms=0, short_noise_mm=0, long_noise_fraction=0),
+    "gps": GpsSpec(
+        latency_ms=0,
+        position_noise_m=0,
+        range_noise=0,
+        heading_noise_deg=0,
+        min_range_m=0,
+        max_range_m=100,
+        gyro_noise_deg_s=0,
+    ),
 }
 _HARSH = {
     "motor": MotorSensorSpec(latency_ms=10, velocity_noise=0.02),
@@ -124,11 +150,22 @@ _HARSH = {
         heading_noise_deg=0.03,
     ),
     "distance": DistanceSensorSpec(latency_ms=20, short_noise_mm=15, long_noise_fraction=0.05),
+    "gps": GpsSpec(
+        latency_ms=40,
+        position_noise_m=0.015,
+        range_noise=0.01,
+        heading_noise_deg=1.0,
+        min_range_m=0.5,
+        max_range_m=3.0,
+        gyro_noise_deg_s=0.3,
+    ),
 }
 PRESETS: dict[str, dict[str, Any]] = {
     "ideal": _IDEAL,
     "default": {kind: cls() for kind, cls in SPEC_TYPES.items()},
     "harsh": _HARSH,
+    # Replaying a robot log (vexsim.calibration): the state every millisecond, no errors.
+    "replay": {kind: replace(spec, period_ms=1.0) for kind, spec in _IDEAL.items()},
 }
 
 

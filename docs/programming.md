@@ -46,6 +46,7 @@ When a period's time runs out, every motor stops, as under field control.
 ```
 vexsim run examples/robots/full_omni_6m.yaml --program examples/programs/tour.py
 vexsim run examples/robots/full_omni_6m.yaml                 # no program: drive it yourself
+vexsim run ROBOT.yaml --field examples/fields/practice_elements.yaml   # with game elements
 vexsim run ROBOT.yaml --program auton.py --headless --record run.csv --screenshot end.png
 ```
 
@@ -65,6 +66,8 @@ imu.get_rotation()  # degrees, CLOCKWISE positive (VEX convention)
 tracker = bot.Rotation(11)
 tracker.get_position()  # centidegrees
 bot.Distance(13).get()  # mm, 9999 if nothing in range
+gps = bot.Gps(15, 0.0, 0.15)  # like pros::Gps(port, x_offset, y_offset), meters
+gps.get_position()  # (x, y) meters from the field center; heading: gps.get_heading()
 bot.controller.get_analog("LEFT_Y")
 bot.controller.get_digital_new_press("R1")
 bot.millis()
@@ -76,6 +79,7 @@ bot.print("text")  # console panel + terminal
 - Before a device's first sample, a reading returns `PROS_ERR_F` (infinity), as PROS does.
 - `Imu.reset()` starts a ~2 s calibration; poll `is_calibrating()` until it finishes.
 - `set_zero_position(p)` makes the motor's current position read `p` and `tare_position()` reads 0, as in PROS 4. The zero belongs to the motor on that port, so every object using the port sees it.
+- `Gps` follows PROS: meters, and heading clockwise from +y. `set_offset(x, y)` is where the sensor sits relative to the robot's center, with +y along its camera's direction; positions then refer to the robot's center ([conventions.md](conventions.md#sensor-readings)).
 - Every class and method is in `vexsim/api/devices.py`.
 
 ## Driving any drivetrain (`bot.drive`)
@@ -128,7 +132,8 @@ These were measured on the example 6-motor full-omni robot, with the tests in `t
 - path trails;
 - the active motion's target or path (orange);
 - wheels shaded from dark (gripping) to red (sliding), and sideways roller forces (orange ticks); mecanum wheels show their ground rollers' axis as a light stroke;
-- wall contacts (orange dots);
+- wall and obstacle contacts (orange dots);
+- game elements from the field config: obstacles (gray, or their color) and pieces (orange discs, or their color);
 - a side panel with poses, odometry error, speed, battery, per-motor current and temperature, controller sticks, the brain screen (C++ programs' `pros::lcd` lines) and the program console.
 
 | Key | Action |

@@ -241,6 +241,17 @@ class V5Motor:
         return self._mode
 
     @property
+    def command(self) -> float:
+        """The active command: volts (voltage mode), rad/s (velocity), rad (position), else 0."""
+        if self._mode is ControlMode.VOLTAGE:
+            return self._voltage_cmd
+        if self._mode is ControlMode.VELOCITY:
+            return self._velocity_cmd
+        if self._mode is ControlMode.POSITION:
+            return self._position_cmd
+        return 0.0
+
+    @property
     def velocity_estimate(self) -> float:
         """Filtered shaft speed, as the motor's own controller (and get_actual_velocity) sees it."""
         return self._velocity_est

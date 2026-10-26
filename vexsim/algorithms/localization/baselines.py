@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from vexsim.algorithms.localization.gps import GpsCorrected
 from vexsim.algorithms.localization.odometry import ArcOdometry, MotorTracker, RotationTracker
 from vexsim.config.robot import RobotConfig
 
@@ -54,7 +55,7 @@ def tracking_wheels(config: RobotConfig) -> tuple[list[RotationTracker], list[Ro
     return vertical, horizontal
 
 
-def baseline_localizers(config: RobotConfig) -> list[ArcOdometry]:
+def baseline_localizers(config: RobotConfig) -> list[ArcOdometry | GpsCorrected]:
     """Every baseline the robot's sensors allow, from simplest to best equipped."""
     imu = next((s.port for s in config.sensors if s.type == "imu"), None)
     out: list[ArcOdometry] = []
@@ -68,4 +69,8 @@ def baseline_localizers(config: RobotConfig) -> list[ArcOdometry]:
         out.append(ArcOdometry("tracking wheels + IMU", vertical, horizontal, imu_port=imu))
     if len(vertical) >= 2 and vertical[0].offset_in != vertical[1].offset_in:
         out.append(ArcOdometry("tracking wheels (no IMU)", vertical, horizontal))
+    gps = next((s for s in config.sensors if s.type == "gps"), None)
+    if gps is not None and vertical and imu is not None:
+        odometry = ArcOdometry("tracking wheels + IMU", vertical, horizontal, imu_port=imu)
+        out.append(GpsCorrected("tracking wheels + IMU + GPS", odometry, gps.port, gps.pos_in))
     return out

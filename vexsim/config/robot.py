@@ -192,8 +192,18 @@ class DistanceConfig(_Model):
     noise: NoisePreset = "default"
 
 
-SensorConfig = Annotated[ImuConfig | RotationConfig | DistanceConfig, Field(discriminator="type")]
-SENSOR_TYPES = ("imu", "rotation", "distance")
+class GpsConfig(_Model):
+    type: Literal["gps"]
+    port: SensorPort
+    pos_in: Vec2  # where the sensor sits
+    mount_yaw_deg: FiniteFloat = 0.0  # direction its camera faces, CCW from robot +x
+    noise: NoisePreset = "default"
+
+
+SensorConfig = Annotated[
+    ImuConfig | RotationConfig | DistanceConfig | GpsConfig, Field(discriminator="type")
+]
+SENSOR_TYPES = ("imu", "rotation", "distance", "gps")
 
 OverrideKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")]
 
@@ -218,4 +228,5 @@ ROBOT_MODELS: tuple[type[BaseModel], ...] = (
     ImuConfig,
     RotationConfig,
     DistanceConfig,
+    GpsConfig,
 )

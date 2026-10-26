@@ -67,6 +67,8 @@ controllers:
   - {name: boomerang 12V, kind: boomerang, options: {max_volts: 12}}
 ```
 
+**Fields and sensors.** A scenario's `field:` can be any field config, game elements included: the robot drives around obstacles and pushes pieces, and distance sensors see them. A robot with a GPS gets the `tracking wheels + IMU + GPS` baseline ([models.md](models.md#localization-baselines-vexsimalgorithmslocalization)), so GPS correction can be benchmarked against plain odometry.
+
 **Tasks and their built-in controllers.** The first kind listed is the default. `options` are passed to the controller's constructor; see [programming.md](programming.md).
 
 | `task.type` | Fields | Built-in `kind`s |

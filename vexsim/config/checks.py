@@ -175,7 +175,7 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
 
     # Sensor placement
     for k, sensor in enumerate(cfg.sensors):
-        if sensor.type in ("imu", "distance") and not inside(sensor.pos_in):
+        if sensor.type in ("imu", "distance", "gps") and not inside(sensor.pos_in):
             add(
                 "error",
                 f"sensors[{k}].pos_in",

@@ -241,6 +241,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         mode = args.mode or ("autonomous" if hasattr(module, "autonomous") else "driver")
     inputs = ScriptedInput.from_csv(args.input) if args.input else None
+    robot_logs = []  # the latest run's, when --robot-log asks for one
 
     def factory() -> Simulation:
         sim = Simulation(
@@ -252,6 +253,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             start=args.start,
             input_source=inputs,
         )
+        if args.robot_log:
+            from vexsim.calibration.record import RobotLogger
+
+            robot_logs.append(RobotLogger(sim.robot, sim.sensors).attach(sim.world))
         sim.start(mode)
         return sim
 
@@ -302,6 +307,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         sim = viewer.source.sim
     if args.record and sim.recorder is not None:
         print(f"wrote {sim.recorder.write_csv(args.record)}")
+    if args.robot_log and robot_logs:
+        print(f"wrote {robot_logs[-1].log().write(args.robot_log)}")
     return EXIT_OK
 
 
@@ -519,6 +526,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--speed", type=float, default=1.0, help="viewer speed (0.1 to 8; 0 = max)")
     p.add_argument("--input", help="scripted controller input CSV (time_s, LEFT_Y, ..., buttons)")
     p.add_argument("--record", help="write a telemetry CSV log")
+    p.add_argument(
+        "--robot-log",
+        help="write a robot log: what the robot's own sensors read, as on a real robot "
+        "(for vexsim calibrate, or to compare with a real robot's log)",
+    )
     p.add_argument("--headless", action="store_true", help="no window: run, print, save")
     p.add_argument("--seconds", type=float, help="headless: run exactly this long")
     p.add_argument("--max-seconds", type=float, default=180.0, help="headless: give up after")
@@ -586,7 +598,157 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--screenshot", help="headless: save the frame as PNG")
     p.set_defaults(func=cmd_replay)
 
+    p = sub.add_parser(
+        "calibration-routine",
+        help="add the calibration routine (C++) for a robot to a PROS project",
+        description=(
+            "Write include/vexsim_calibration.hpp and src/vexsim_calibration.cpp into a PROS 4 "
+            "project: a drive routine that logs what the robot measures, for vexsim calibrate. "
+            "It builds with PROS for the real robot and runs in vexsim unchanged."
+        ),
+    )
+    p.add_argument("robot", help="robot YAML file")
+    p.add_argument("project", help="PROS project folder")
+    p.set_defaults(func=cmd_calibration_routine)
+
+    p = sub.add_parser(
+        "calibrate",
+        help="fit model parameters to a robot log",
+        description=(
+            "Replay a robot log (from the calibration routine, or any program that logs with "
+            "vexsim_calibration::start_logging) in the simulator and fit model parameters until "
+            "the simulated sensors match the logged ones."
+        ),
+    )
+    p.add_argument("robot", help="robot YAML file")
+    p.add_argument("log", help="robot log: the CSV, or terminal/console output that contains it")
+    p.add_argument(
+        "--fit",
+        help="comma-separated parameters to fit (default: the wheel parameters); "
+        "'none' replays and compares only",
+    )
+    p.add_argument("--max-iterations", type=int, default=12)
+    p.add_argument(
+        "--workers", type=int, default=0, help="parallel replays (default: CPUs, up to 8)"
+    )
+    p.add_argument("--out", help="folder for overrides.yaml, calibration.png and simulated.csv")
+    p.set_defaults(func=cmd_calibrate)
+
     return parser
+
+
+def cmd_calibration_routine(args: argparse.Namespace) -> int:
+    from vexsim.calibration.cpp import write_routine
+    from vexsim.calibration.routine import schedule, standard_routine
+
+    config = _load_config(args.robot)
+    if config is None:
+        return EXIT_INVALID
+    for path in write_routine(config, args.project):
+        print(f"wrote {path}")
+    seconds = schedule(config, standard_routine(config))[-1][0] / 1000
+    print(
+        f"Call vexsim_calibration::run() from autonomous() (it takes {seconds:g} s plus IMU "
+        "calibration, and needs about 3 x 3 m of open floor), then copy /usd/vexsim_log.csv "
+        "from the SD card, or save the terminal output, and run: vexsim calibrate ROBOT.yaml LOG"
+    )
+    return EXIT_OK
+
+
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from vexsim.calibration.fit import UNITS, compare, fit, worker_count
+    from vexsim.calibration.log import RobotLog
+
+    config = _load_config(args.robot)
+    if config is None:
+        return EXIT_INVALID
+    try:
+        log = RobotLog.read(args.log)
+    except (OSError, ValueError) as exc:
+        print(f"error: {args.log}: {exc}")
+        return EXIT_INVALID
+    seconds = (log.time_ms[-1] - log.time_ms[0]) / 1000
+    kinds = [
+        (len(log.ports("m")), "motor"),
+        (len(log.ports("r")), "rotation sensor"),
+        (len(log.ports("imu")), "IMU"),
+        (len(log.ports("gps")), "GPS"),
+    ]
+    found = ", ".join(f"{n} {name}{'s' if n > 1 else ''}" for n, name in kinds if n)
+    print(f"Robot log: {len(log)} rows ({seconds:.1f} s): {found}")
+    if log.skipped_lines:
+        print(f"  skipped {log.skipped_lines} malformed line(s)")
+    unknown = sorted(
+        set(log.ports("m")) - {abs(p) for g in config.drivetrain.gearing.values() for p in g.motors}
+    )
+    if unknown:
+        print(f"  ignoring motors not in the drivetrain: {', '.join(map(str, unknown))}")
+
+    before = after = None
+    if args.fit == "none":
+        try:
+            rms, after = compare(config, log)
+        except ValueError as exc:
+            print(f"error: {exc}")
+            return EXIT_INVALID
+        print("\nRMS difference, simulated vs. logged:")
+        for group, value in rms.items():
+            print(f"  {group} ({UNITS[group]}): {value:.3g}")
+        overrides: dict[str, float] = {}
+    else:
+        names = [n.strip() for n in args.fit.split(",") if n.strip()] if args.fit else None
+        try:
+            result = fit(
+                config,
+                log,
+                names,
+                max_iterations=args.max_iterations,
+                workers=worker_count(args.workers),
+                progress=lambda text: print(f"  {text}"),
+            )
+        except ValueError as exc:
+            print(f"error: {exc}")
+            return EXIT_INVALID
+        before, after = result.sim_before, result.sim_after
+        width = max([len(n) for n in result.overrides] + [9])
+        print(f"\n{'parameter':<{width}}  {'before':>9}  {'after':>9}  uncertainty")
+        for name in result.parameters:
+            spread = result.uncertainty[name]
+            note = f"+/-{spread * 100:.2g}%" if spread < 0.5 else "poorly determined by this log"
+            print(
+                f"{name:<{width}}  {result.before[name]:>9.4g}  {result.after[name]:>9.4g}  {note}"
+            )
+        for name, value in result.direct.items():
+            old = config.overrides.get(name)
+            shown = f"{old:>9.4g}" if old is not None else f"{'':>9}"
+            print(f"{name:<{width}}  {shown}  {value:>9.4g}  from battery voltage vs. current")
+        print(f"\nRMS difference, simulated vs. logged ({result.replays} replays):")
+        for group, value in result.rms_after.items():
+            print(f"  {group} ({UNITS[group]}): {result.rms_before[group]:.3g} -> {value:.3g}")
+        overrides = result.overrides
+        print("\nAdd to the robot config:\noverrides:")
+        for name, value in overrides.items():
+            print(f"  {name}: {value:g}")
+
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        if overrides:
+            text = "overrides:\n" + "".join(f"  {k}: {v:g}\n" for k, v in overrides.items())
+            (out / "overrides.yaml").write_text(text, encoding="utf-8")
+        after.write(out / "simulated.csv")
+        try:
+            from vexsim.viz import calibration as cal_plot
+
+            title = f"{Path(args.log).name}: logged vs. simulated"
+            path = cal_plot.plot(config, log, before, after, out / "calibration.png", title=title)
+            print(f"wrote {path}")
+        except ModuleNotFoundError:
+            print('note: plots need matplotlib; install it with: pip install -e ".[viz]"')
+        print(f"wrote {out}")
+    return EXIT_OK
 
 
 def main(argv: Sequence[str] | None = None) -> int:
