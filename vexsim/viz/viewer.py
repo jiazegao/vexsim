@@ -296,9 +296,11 @@ class Viewer:
         pygame.init()
         pygame.display.set_caption("vexsim")
         self.screen = pygame.display.set_mode((FIELD_PX + PANEL_PX, FIELD_PX))
-        self.font = pygame.font.SysFont(None, 19)
-        self.small = pygame.font.SysFont(None, 16)
-        self.big = pygame.font.SysFont(None, 24)
+        # pygame's default font. Not SysFont: on Windows, pygame 2.6 crashes scanning the
+        # registry's font list when an entry isn't text.
+        self.font = pygame.font.Font(None, 19)
+        self.small = pygame.font.Font(None, 16)
+        self.big = pygame.font.Font(None, 24)
         self.source = source
         self.keyboard = KeyboardInput()
         self.keyboard.gamepad = None if headless else Gamepad.first()
