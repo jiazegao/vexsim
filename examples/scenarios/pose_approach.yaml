@@ -1,0 +1,22 @@
+# Drive to a pose; compare boomerang at its default 9 V against full 12 V.
+#   vexsim bench examples/scenarios/pose_approach.yaml --seeds 50
+version: 1
+name: Boomerang to a pose, 9 V vs 12 V
+description: >
+  Approach (30, 30) facing 90 degrees from the origin. The IMU's gyro bias jumps
+  0.5 deg/s one second in, as after a hard bump.
+robot: ../robots/full_omni_6m.yaml
+noise: default
+time_limit_s: 6
+task: {type: move_to_pose, x: 30, y: 30, heading: 90}
+disturbances:
+  - {type: imu_bias_step, at_s: 1.0, deg_per_s: 0.5}
+randomize:
+  start_xy_in: 0.5
+  start_heading_deg: 1.0
+  params:
+    wheel.omni.lateral_mu: [0.15, 0.25]
+localizers: [tracking wheels + IMU]
+controllers:
+  - {name: boomerang 9V, kind: boomerang}
+  - {name: boomerang 12V, kind: boomerang, options: {max_volts: 12}}

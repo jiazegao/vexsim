@@ -140,6 +140,7 @@ class Simulation:
         seed: int = 0,
         noise: str | None = None,
         start: Pose = ORIGIN,
+        believed_start: Pose | None = None,
         battery_soc: float = 1.0,
         localizer: Localizer | None = None,
         input_source: InputSource | None = None,
@@ -156,7 +157,8 @@ class Simulation:
         baselines = baseline_localizers(config)
         self.localizer = localizer or (baselines[-1] if baselines else None)
         self.localizer_ready = False
-        self.start_pose = start
+        self.start_pose = start  # where the robot really is
+        self.believed_start = believed_start or start  # where its odometry starts from
         self.controller = Controller()
         self.input_source = input_source
         self.program = program
@@ -204,7 +206,7 @@ class Simulation:
     @property
     def estimated_pose(self) -> Pose:
         if self.localizer is None or not self.localizer_ready:
-            return self.start_pose
+            return self.believed_start
         return self.localizer.pose
 
     def reset_localizer(self, pose: Pose) -> None:
@@ -226,7 +228,7 @@ class Simulation:
             self.localizer.update(frame)
         else:
             try:
-                self.localizer.reset(self.start_pose, frame)
+                self.localizer.reset(self.believed_start, frame)
                 self.localizer_ready = True
             except ValueError:
                 pass  # sensors not ready yet (IMU calibrating)

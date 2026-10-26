@@ -1,0 +1,29 @@
+# Follow an S-curve while being shoved: compare two localizers and two path followers.
+#   vexsim bench examples/scenarios/s_curve.yaml --seeds 100
+version: 1
+name: S-curve under a mid-path shove
+description: >
+  Follow an S through four waypoints at the controllers' default speeds. Halfway through,
+  another robot shoves ours sideways for 0.3 s. Each seed varies where the robot really
+  starts (odometry believes it is exactly at the start), the battery charge, and the
+  omni roller friction (field and wheel wear).
+robot: ../robots/full_omni_6m.yaml
+start: {x: -40, y: -20, heading: 0}
+noise: default
+time_limit_s: 10
+task:
+  type: follow
+  waypoints: [[-40, -20], [-10, -20], [10, 10], [40, 10]]
+  tolerance_in: 2.0
+disturbances:
+  - {type: push, at_s: 1.2, duration_s: 0.3, force_n: [0, 25]}
+randomize:
+  start_xy_in: 0.5
+  start_heading_deg: 1.0
+  battery_soc: [0.6, 1.0]
+  params:
+    wheel.omni.lateral_mu: [0.15, 0.25]
+localizers: [tracking wheels + IMU, drive encoders + IMU]
+controllers:
+  - {name: pure pursuit, kind: pure_pursuit}
+  - {name: RAMSETE, kind: ramsete}

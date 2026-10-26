@@ -40,6 +40,7 @@ jobs:
           vexsim odometry examples/robots/full_omni_6m.yaml --out odometry.png
           vexsim run examples/robots/full_omni_6m.yaml --program examples/programs/tour.py --headless --record tour.csv --screenshot tour.png
           vexsim plot tour.csv --out telemetry.png
+          vexsim bench examples/scenarios/s_curve.yaml --seeds 4 --workers 2 --out bench
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'windows-latest' && matrix.python == '3.13'
@@ -52,3 +53,4 @@ jobs:
             tour.png
             telemetry.png
             tour.csv
+            bench/

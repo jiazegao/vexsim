@@ -7,14 +7,15 @@ A VEX V5 robot mechanics simulator. It models:
 
 It's built to test localization and motion-control algorithms, and eventually to run unmodified PROS 4 / LemLib robot code.
 
-**Status: Phases 1-4 of 10 are done**:
+**Status: Phases 1-6 of 10 are done**:
 - configs and world loop
 - V5 motor, thermal, battery and power models
 - full-omni drivetrain and chassis, with drift, weight transfer and traction limits
 - V5 sensors with realistic noise, and odometry baselines
 - a PROS-style Python API, LemLib-style motions (PID, boomerang, pure pursuit, RAMSETE, motion profiles) and a live viewer you can drive with keyboard or gamepad
+- Monte-Carlo benchmarks of localizers and controllers, with HTML reports
 
-The Monte-Carlo benchmark harness comes next in Phase 6. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
+Running real PROS 4 C++ code comes next in Phase 7. See [PLAN.md](PLAN.md) for the full roadmap and [docs/models.md](docs/models.md) for the physics, including the source of every parameter.
 
 ## Install
 
@@ -33,7 +34,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev,viz]"
 ```
-The `viz` extra (matplotlib) is only needed for plots.
+The `viz` extra (matplotlib, pygame) is only needed for plots and the viewer.
 
 ## Use
 
@@ -62,6 +63,20 @@ def opcontrol(bot):
         yield delay(10)
 ```
 See [docs/programming.md](docs/programming.md) for the API, every motion, viewer keys, and telemetry (`--record`, `vexsim plot`, `vexsim replay`).
+
+**Benchmark algorithms**: run a scenario across many seeds for every localizer x controller, in parallel:
+```
+vexsim bench examples/scenarios/s_curve.yaml --seeds 100
+```
+```
+S-curve under a mid-path shove: 400 trials in 97 s
+  localizer / controller                success  final error mean/p95  loc error mean/p95
+  tracking wheels + IMU / pure pursuit      47%     2.13 /  3.70 in      1.40 /  2.87 in
+  tracking wheels + IMU / RAMSETE           17%     3.39 /  5.87 in      1.40 /  2.85 in
+  drive encoders + IMU / pure pursuit       18%     3.58 /  6.52 in      4.56 /  7.76 in
+  drive encoders + IMU / RAMSETE            18%     3.07 /  5.12 in      2.08 /  4.54 in
+```
+It writes `report.html` (self-contained), CSVs, charts and replayable worst cases. Plug in your own localizers and controllers by file. See [docs/benchmarking.md](docs/benchmarking.md).
 
 **Check a robot config** and see what the simulator will build from it:
 ```
@@ -192,9 +207,11 @@ vexsim/
   algorithms/control/       PID, motion profiles, LemLib-style motions, pure pursuit, RAMSETE
   api/       PROS 4-style devices and a LemLib-style chassis for Python programs
   runtime/   simulation, competition phases, program coroutines, inputs, telemetry log
+  bench/     scenarios, Monte-Carlo trials, metrics, parallel runner, HTML reports
   viz/       live viewer (pygame); plots (motor curves, drift, odometry, telemetry)
   cli.py     `vexsim` command
-examples/    robot and field configs, example program
-docs/        conventions, physics models and parameter sources, programming guide
+examples/    robot and field configs, example program, benchmark scenarios
+docs/        conventions, physics models and parameter sources, programming and benchmarking guides,
+             and an example 100-seed benchmark report
 tests/
 ```

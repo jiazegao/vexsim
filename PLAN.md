@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.0 (2026-10-25). Phases 1-5 complete. Next: Phase 6.
+**Status:** Final v1.0 (2026-10-25). Phases 1-6 complete. Next: Phase 7.
 
 ## 0. Decisions
 | Topic | Decision |
@@ -295,7 +295,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 3 | **[done]** Chassis and omni wheel contact (full-omni tank) | Drive and drift tests pass |
 | 4 | **[done]** Device registry and sensors; Python odometry baselines | Odometry tests pass; noise presets in place |
 | 5 | **[done]** Python control API and baseline controllers; live viewer and plots | Drive a scenario from the keyboard/gamepad and run a Python autonomous route visually |
-| 6 | Benchmark harness | 100-seed comparison of two localizers and two controllers produces an HTML report |
+| 6 | **[done]** Benchmark harness | 100-seed comparison of two localizers and two controllers produces an HTML report |
 | 7 | C++ bridge: PROS 4 shim, lockstep scheduler, robot host process, C ABI, `vexsim build` and `vexsim doctor` | `minimal_pros4` runs unchanged on Windows and Linux; scheduler tests pass |
 | 8 | LemLib: build from source, `ASSET` embedding, pose readback | `lemlib_template` autonomous (moveToPoint, turnToHeading, follow) runs unchanged; C++ algorithms run in the bench |
 | 9 | Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
