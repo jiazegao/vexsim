@@ -73,6 +73,8 @@ float elapsedMs() const { return (pros::micros() - startTime) * 0.001f; };
 ```
 `vexsim run --env "VEXSIM_AUTON=Right 40"` sets it. A name that doesn't match prints `VEXSIM_AUTON: no routine named "..."`.
 
+vexsim can now pick routines without this edit: `vexsim run --routine right40`, or the **Routine** list in `vexsim ui`, runs `right40()` inside the team's own `autonomous()`, in place of the routine its selector picks ([README, section 9](../README.md#picking-an-autonomous-routine)), with the same result to the last digit. This repository's saved runs pick their routines that way; the edit stays for the evaluation script and for `startMcl`, which replays real logs.
+
 **Repeatable randomness.** MCL seeded its particles from `std::random_device`, so no two runs matched. Under `#ifdef VEXSIM` it seeds from `VEXSIM_SEED`, which vexsim always sets to the simulation's `--seed`.
 
 **Choose the localization, and say where to start.** Under `#ifdef VEXSIM`, `startMcl()` reads `VEXSIM_TRACKING` (see [Switching RCL and MCL](#switching-rcl-and-mcl)) and prints the `--start` that matches the pose it sets:

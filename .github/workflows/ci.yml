@@ -88,7 +88,7 @@ jobs:
           vexsim bench examples/scenarios/lemlib_vs_python.yaml --seeds 4 --workers 2 --out bench_lemlib
           vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/calibration --headless > calibration_run.txt
           vexsim calibrate examples/robots/full_omni_6m.yaml calibration_run.txt --max-iterations 3 --out calibration
-          vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40" --headless --record 1239e_left40.csv --screenshot 1239e_left40.png
+          vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --routine left40 --headless --record 1239e_left40.csv --screenshot 1239e_left40.png
           python examples/scripts/evaluate_1239e.py --autons "Left 40,Right 30_10" --seeds 1 --workers 2 --plot 1239e_localization.png
 
       - uses: actions/upload-artifact@v4

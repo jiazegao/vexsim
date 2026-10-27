@@ -34,66 +34,66 @@ configurations:
   - name: '1239E: Left 40'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: left40
     field: examples/fields/1239e_2026-27.yaml
     start: [60, 0, 0]
-    env: {VEXSIM_AUTON: Left 40}
 
   - name: '1239E: Left 30'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: left30
     field: examples/fields/1239e_2026-27.yaml
     start: [60, 0, 0]
-    env: {VEXSIM_AUTON: Left 30}
 
   - name: '1239E: Left 30_10'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: left3_1
     field: examples/fields/1239e_2026-27.yaml
     start: [60, 0, 0]
-    env: {VEXSIM_AUTON: Left 30_10}
 
   - name: '1239E: Right 40'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: right40
     field: examples/fields/1239e_2026-27.yaml
     start: [-60, 0, 180]
-    env: {VEXSIM_AUTON: Right 40}
 
   - name: '1239E: Right 30'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: right30
     field: examples/fields/1239e_2026-27.yaml
     start: [-60, 0, 180]
-    env: {VEXSIM_AUTON: Right 30}
 
   - name: '1239E: Right 30_10'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: right3_1
     field: examples/fields/1239e_2026-27.yaml
     start: [-60, 0, 180]
-    env: {VEXSIM_AUTON: Right 30_10}
 
   - name: '1239E: Right 20_10'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: right2_1
     field: examples/fields/1239e_2026-27.yaml
     start: [-60, 0, 180]
-    env: {VEXSIM_AUTON: Right 20_10}
 
   - name: '1239E: alliance1pin'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: alliance1pin
     field: examples/fields/1239e_2026-27.yaml
     start: [-60, 0, 180]
-    env: {VEXSIM_AUTON: alliance1pin}
 
   - name: '1239E: skills'
     robot: examples/robots/1239e_2026-27.yaml
     program: examples/pros_projects/1239e_2026-27
+    routine: skills
     field: examples/fields/1239e_2026-27.yaml
     mode: skills
     start: [60, 0, 0]
-    env: {VEXSIM_AUTON: skills}
 
   - name: '1239E: driver'
     robot: examples/robots/1239e_2026-27.yaml

@@ -4,6 +4,7 @@ and its localization keeps LemLib's pose near the truth."""
 import importlib.util
 import math
 import os
+import re
 import sys
 
 import pytest
@@ -19,6 +20,12 @@ from vexsim.runtime.simulation import Simulation
 PROJECT = ROOT / "examples" / "pros_projects" / "1239e_2026-27"
 ROBOT = ROOT / "examples" / "robots" / "1239e_2026-27.yaml"
 FIELD = ROOT / "examples" / "fields" / "1239e_2026-27.yaml"
+
+
+def team_routines() -> dict[str, str]:
+    """The team's own names for its routines: its selector's AutonCollection."""
+    text = (PROJECT / "include" / "custom" / "auton_selector.hpp").read_text()
+    return dict(re.findall(r'\{"([^"]+)",\s*(\w+)\}', text))
 
 
 def load_script(name="evaluate_1239e"):
@@ -67,9 +74,10 @@ def test_the_evaluation_runs_as_a_sweep(port_exe, in_cache):
     assert {t.run.removeprefix("1239E: ") for t in trials} == set(evaluate.AUTONS)
     assert {t.variation["VEXSIM_TRACKING"] for t in trials} == set(evaluate.TRACKING)
     assert sweep.max_seconds == evaluate.MAX_SECONDS
+    routines = team_routines()
     for t in trials:
         auton = t.run.removeprefix("1239E: ")
-        assert t.spec.env["VEXSIM_AUTON"] == auton
+        assert t.spec.routine == routines[auton]  # the script picks it by the team's name
         assert t.spec.start == pytest.approx(evaluate.placement(auton, t.seed))
     trial = next(
         t
@@ -82,6 +90,35 @@ def test_the_evaluation_runs_as_a_sweep(port_exe, in_cache):
     assert swept["error"] is None and swept["finished"] == script.finished
     for key in ("seconds", "mean_in", "max_in", "final_in", "max_deg"):
         assert swept[key] == pytest.approx(getattr(script, key), abs=1e-9), key
+
+
+def test_a_routine_picked_runs_inside_autonomous(port_exe, tmp_path):
+    """The routine switch (bridge/routines.py) runs right30() inside the team's own
+    autonomous(), setup and all, exactly as the team's selector does when it picks it."""
+    from vexsim.app.runspec import RunSpec
+    from vexsim.bridge.routines import find_routines
+    from vexsim.cli import build_parser
+
+    found = find_routines(PROJECT)
+    assert sorted(r.name for r in found.routines) == sorted(team_routines().values())
+    assert found.named("right30").start_pose() == (-60, 0, 180)  # its setPose(-60, 0, -90)
+    args = ["run", str(ROBOT), "--program", str(PROJECT), "--routine", "right30"]
+    spec = RunSpec.from_args(build_parser().parse_args(args))
+    assert spec.start == (-60, 0, 180) and spec.to_args()[4:6] == ["--routine", "right30"]
+    poses, consoles = {}, {}
+    picks = {"selector": {"env": {"VEXSIM_AUTON": "Right 30"}}, "switch": {"routine": "right30"}}
+    for how, kwargs in picks.items():
+        program = CppProgram(port_exe, **kwargs)
+        sim = Simulation(load_robot(ROBOT), program=program, field=load_field(FIELD), seed=1,
+                         start=Pose(-60, 0, 180), echo=None)  # fmt: skip
+        sim.start("autonomous")
+        sim.run_for(6.0)
+        sim.close()
+        poses[how], consoles[how] = sim.robot.pose, sim.console
+    assert poses["switch"] == pytest.approx(poses["selector"], abs=1e-9)
+    assert math.dist(poses["switch"][:2], (-60 * 0.0254, 0)) > 0.3  # it went somewhere
+    note = "vexsim: autonomous() called left40(); running right30() instead"
+    assert any(line.endswith(note) for line in consoles["switch"])
 
 
 def test_routines_are_picked_by_name(port_exe):

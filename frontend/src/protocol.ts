@@ -23,6 +23,7 @@ export interface Follow {
 export interface RunSpec {
   robot: string;
   program?: string | null;
+  routine?: string | null;
   field?: string | null;
   mode?: "autonomous" | "driver" | "match" | "skills" | null;
   start?: [number, number, number];
@@ -202,6 +203,7 @@ export interface Preview {
 export interface RunConfiguration {
   robot: string;
   program?: string | null;
+  routine?: string | null;
   field?: string | null;
   mode?: "autonomous" | "driver" | "match" | "skills" | null;
   start?: [number, number, number];
@@ -497,6 +499,28 @@ export interface MclLogTape {
   times: number[];
   estimate: [number, number, number][];
   drawings: [number, Record<string, Shape[]>][];
+}
+
+/** A PROS project's routine (`vexsim.bridge.routines`): a function its include/custom/auton.hpp declares that takes no arguments. */
+export interface RoutineInfo {
+  name: string;
+  line: number;
+  source: string | null;
+  start: [number, number, number] | null;
+}
+
+export interface NotRoutineInfo {
+  name: string;
+  line: number;
+  why: string;
+}
+
+/** A PROS project's routines, to pick one for a run. */
+export interface ProjectRoutines {
+  header: string;
+  found: boolean;
+  routines: RoutineInfo[];
+  others: NotRoutineInfo[];
 }
 
 export interface RobotConfig {

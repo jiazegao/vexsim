@@ -507,6 +507,31 @@ class MclLogTape(_Message):
     drawings: list[tuple[float, dict[str, list[Shape]]]]  # each update's: rays, particles, spread
 
 
+class RoutineInfo(_Message):
+    """A PROS project's routine (``vexsim.bridge.routines``): a function its
+    include/custom/auton.hpp declares that takes no arguments."""
+
+    name: str  # as C++ calls it: left40, or auton::left40
+    line: int  # its declaration's, in the header
+    source: str | None  # the file that defines it; None: vexsim can't tell, so it can't be picked
+    start: tuple[float, float, float] | None  # where its setPose puts the robot: x, y, heading
+
+
+class NotRoutineInfo(_Message):
+    name: str
+    line: int
+    why: str  # it takes arguments, returns a value, ...
+
+
+class ProjectRoutines(_Message):
+    """A PROS project's routines, to pick one for a run."""
+
+    header: str  # where they're declared, in the project
+    found: bool  # whether the project has that header
+    routines: list[RoutineInfo]
+    others: list[NotRoutineInfo]  # functions the header declares that can't be routines
+
+
 # --- config editors ---------------------------------------------------------------------------
 
 
@@ -1020,6 +1045,9 @@ MODELS: list[type[BaseModel]] = [
     Replay,
     MclLogSummary,
     MclLogTape,
+    RoutineInfo,
+    NotRoutineInfo,
+    ProjectRoutines,
     *ROBOT_MODELS,
     *FIELD_MODELS,
     TextSpan,

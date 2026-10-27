@@ -84,12 +84,15 @@ from vexsim.ui.protocol import (
     ConfigSave,
     ConfigSaved,
     JobInfo,
+    NotRoutineInfo,
     PlacedIssue,
     Preview,
     PreviewRequest,
+    ProjectRoutines,
     ReplayRequest,
     ResultAbout,
     ResultReplayRequest,
+    RoutineInfo,
     RoutinePlan,
     RoutineRequest,
     RunConfigurations,
@@ -735,6 +738,35 @@ def create_app(
         except (MclLogError, ValueError) as exc:
             return JSONResponse(RunProblem(error=f"{path}: {exc}", issues=[]).model_dump(), 422)
         return Response(dumps(tape), media_type="application/json")
+
+    @app.get("/api/routines", responses={422: {"model": RunProblem}})
+    def project_routines(project: str) -> Response:
+        """A PROS project's autonomous routines (``ProjectRoutines``), to pick one to run."""
+        from vexsim.bridge.build import is_pros_project
+        from vexsim.bridge.routines import AUTON_HEADER, find_routines
+
+        try:
+            folder = server.workspace.path(project)
+        except ValueError as exc:
+            return JSONResponse(RunProblem(error=str(exc), issues=[]).model_dump(), 422)
+        folder = folder.parent if folder.is_file() else folder  # project.pros, say
+        if not is_pros_project(folder):
+            problem = RunProblem(error=f"{project} isn't a PROS project", issues=[])
+            return JSONResponse(problem.model_dump(), 422)
+        found = find_routines(folder)
+        listed = ProjectRoutines(
+            header=AUTON_HEADER,
+            found=found is not None,
+            routines=[
+                RoutineInfo(name=r.name, line=r.line, source=r.source, start=r.start_pose())
+                for r in (found.routines if found else [])
+            ],
+            others=[
+                NotRoutineInfo(name=o.name, line=o.line, why=o.why)
+                for o in (found.others if found else [])
+            ],
+        )
+        return Response(listed.model_dump_json(), media_type="application/json")
 
     @app.post("/api/sessions", responses={422: {"model": RunProblem}})
     def start_session(request: StartSession):

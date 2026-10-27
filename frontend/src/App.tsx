@@ -20,7 +20,7 @@ import { LogPlayback, logSummary } from "./mcllog";
 import { Playhead, usePlayheadClock } from "./playhead";
 import type { Editor } from "./problems";
 import { EDITORS } from "./problems";
-import type { AppInfo, Preview, RunConfiguration, RunProblem, RunRecord, RunSpec, SweepTrial, WorkspaceInfo, WorkspaceItem } from "./protocol";
+import type { AppInfo, Preview, ProjectRoutines, RunConfiguration, RunProblem, RunRecord, RunSpec, SweepTrial, WorkspaceInfo, WorkspaceItem } from "./protocol";
 import type { Recording } from "./recording";
 import { COMPARE_DASHES, forgetTelemetry, MAX_COMPARED, openLog, openRun, openWorstCase, renamed, shortName } from "./recording";
 import type { RunForm } from "./runform";
@@ -91,6 +91,7 @@ export function App() {
   const [replayWith, setReplayWith] = useState<string | null>(null); // the saved run to replay it with ("": the form)
   const [theme, setTheme] = useState<Theme>(() => hostTheme() ?? loadTheme());
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [routines, setRoutines] = useState<ProjectRoutines | null>(null); // the PROS project's
   const [rescans, setRescans] = useState(0);
   const [configurations, setConfigurations] = useState<RunConfiguration[]>([]);
   const [configFile, setConfigFile] = useState(".vexsim/launch.yaml");
@@ -223,6 +224,23 @@ export function App() {
   useEffect(() => {
     if (info) saveForm(info.workspace, form);
   }, [form, info]);
+
+  // A PROS project's routines (include/custom/auton.hpp), to pick one in the run bar.
+  const isProject = !!workspace?.items.some((item) => item.kind === "project" && item.path === form.program);
+  useEffect(() => {
+    if (!info || !isProject) {
+      setRoutines(null);
+      return;
+    }
+    let current = true;
+    api
+      .routines(form.program)
+      .then((result) => current && setRoutines("ok" in result ? result.ok : null))
+      .catch(() => current && setRoutines(null));
+    return () => {
+      current = false;
+    };
+  }, [info, isProject, form.program, rescans]);
 
   // The robot and field as configured, to show before a run and drag the robot's start.
   useEffect(() => {
@@ -833,6 +851,7 @@ export function App() {
             <RunBar
               workspace={workspace}
               form={form}
+              routines={routines}
               onChange={setForm}
               onRun={run}
               starting={starting}

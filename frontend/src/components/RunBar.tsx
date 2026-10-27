@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { lemlibTheta } from "../pose";
-import type { RunConfiguration, WorkspaceInfo } from "../protocol";
+import type { ProjectRoutines, RunConfiguration, WorkspaceInfo } from "../protocol";
 import type { RunForm } from "../runform";
 import { MODES, NOISE, sameRun, STICKS } from "../runform";
 
@@ -9,6 +9,7 @@ const ANY_LOG = "*"; // a saved run that follows whichever log it's given
 export function RunBar(props: {
   workspace: WorkspaceInfo | null;
   form: RunForm;
+  routines: ProjectRoutines | null; // the program's, when it's a PROS project
   onChange: (form: RunForm) => void;
   onRun: () => void;
   starting: boolean;
@@ -27,6 +28,12 @@ export function RunBar(props: {
   const theta = Number.isFinite(heading) ? lemlibTheta(heading) : null;
   const project = of("project").some((item) => item.path === form.program);
   const following = !!form.follow || form.following;
+  const routines = project && props.routines?.found ? props.routines : null;
+  const pickRoutine = (name: string) => {
+    const start = routines?.routines.find((r) => r.name === name)?.start; // where its setPose puts it
+    const at = start ? { x: String(start[0]), y: String(start[1]), heading: String(start[2]) } : {};
+    onChange({ ...form, routine: name, ...at });
+  };
 
   const chosen = configurations.find((c) => c.name === form.config) ?? null;
   const changed = chosen !== null && !sameRun(form, chosen);
@@ -89,7 +96,7 @@ export function RunBar(props: {
         </label>
         <label className="field wide">
           <span>Program</span>
-          <select value={form.program} onChange={(e) => set("program")(e.target.value)} data-testid="program">
+          <select value={form.program} onChange={(e) => onChange({ ...form, program: e.target.value, routine: "" })} data-testid="program">
             <option value="">None: drive it with the keys or a gamepad</option>
             {of("program").length > 0 && (
               <optgroup label="Python programs">
@@ -112,6 +119,21 @@ export function RunBar(props: {
             )}
           </select>
         </label>
+        {routines && (
+          <label className="field routine" title={`The routine to run inside the project's autonomous(), in place of the one it calls (they're the functions in ${routines.header}); picking one starts the robot where its setPose puts it`}>
+            <span>Routine</span>
+            <select value={form.routine} onChange={(e) => pickRoutine(e.target.value)} data-testid="routine">
+              <option value="">As the project picks</option>
+              {form.routine && !routines.routines.some((r) => r.name === form.routine) && <option value={form.routine}>{form.routine} (not in {routines.header})</option>}
+              {routines.routines.map((r) => (
+                <option key={r.name} value={r.name} disabled={!r.source} title={r.source ? `${r.source}` : "vexsim can't tell which file defines it"}>
+                  {r.name}
+                  {r.source ? "" : " (not found)"}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="field narrow-ish">
           <span>Mode</span>
           <select value={form.mode} onChange={(e) => set("mode")(e.target.value as RunForm["mode"])} data-testid="mode">

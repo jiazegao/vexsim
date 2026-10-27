@@ -15,6 +15,7 @@ export interface RunForm {
   robot: string;
   field: string; // "" = an empty field
   program: string; // "" = none: the controller drives
+  routine: string; // a PROS project's routine, run inside autonomous(); "" = as the project picks
   mode: "" | Mode; // "" = the program's default
   x: string;
   y: string;
@@ -36,6 +37,7 @@ export function emptyForm(): RunForm {
     robot: "",
     field: "",
     program: "",
+    routine: "",
     mode: "",
     x: "0",
     y: "0",
@@ -84,6 +86,7 @@ export function formToSpec(form: RunForm): { spec: RunSpec } | { error: string }
     const spec: RunSpec = {
       robot: form.robot,
       program: form.program || null,
+      routine: (form.program && form.routine) || null,
       field: form.field || null,
       mode: form.mode || null,
       start: [number(form.x, "Start x"), number(form.y, "Start y"), number(form.heading, "Heading")],
@@ -107,6 +110,7 @@ export function specToForm(spec: RunSpec, config = ""): RunForm {
     robot: spec.robot,
     field: spec.field ?? "",
     program: spec.program ?? "",
+    routine: spec.routine ?? "",
     mode: (spec.mode ?? "") as RunForm["mode"],
     x: String(x),
     y: String(y),
@@ -130,6 +134,7 @@ function canonical(spec: RunSpec): string {
   return JSON.stringify({
     robot: spec.robot,
     program: spec.program || null,
+    routine: spec.routine || null,
     field: spec.field || null,
     mode: spec.mode || null,
     start: (spec.start ?? [0, 0, 0]).map(Number),

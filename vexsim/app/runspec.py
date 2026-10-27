@@ -1,7 +1,8 @@
 """A run of the simulator, as ``vexsim run`` takes it, and how to get it ready to start.
 
-``RunSpec`` holds what decides what is simulated: the robot, program, field, start pose,
-mode, seed, noise, scripted input or a log to follow, and the program's environment. It
+``RunSpec`` holds what decides what is simulated: the robot, program (and for a PROS
+project, the autonomous routine picked), field, start pose, mode, seed, noise, scripted
+input or a log to follow, and the program's environment. It
 converts to and from ``vexsim run``'s arguments, so the UI can show any run as a command.
 
 Getting a run ready takes three steps, which the CLI runs one after another and the UI
@@ -73,6 +74,7 @@ class RunSpec(BaseModel):
 
     robot: str
     program: str | None = None
+    routine: str | None = None  # a PROS project's, run inside autonomous() (bridge/routines.py)
     field: str | None = None
     mode: Mode | None = None
     start: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -86,22 +88,25 @@ class RunSpec(BaseModel):
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunSpec:
         """The spec of a parsed ``vexsim run`` command line. A run that follows a log
-        starts where the log does, unless ``--start`` says otherwise."""
+        starts where the log does, and one with a routine where its setPose puts it, unless
+        ``--start`` says otherwise."""
         follow = None
         if getattr(args, "follow", None):
             curve = parse_curve(args.curve) if args.curve else None
             follow = Follow(log=args.follow, sticks=args.sticks or "tank", curve=curve)
         elif getattr(args, "sticks", None) or getattr(args, "curve", None):
             raise RunError("--sticks and --curve go with --follow")
+        routine = getattr(args, "routine", None)
         if args.start is not None:
             start = (args.start.x, args.start.y, args.start.heading)
         elif follow is not None:
             start = log_start(follow.log)
         else:
-            start = (0.0, 0.0, 0.0)
+            start = routine_start(args.program, routine) or (0.0, 0.0, 0.0)
         return cls(
             robot=args.robot,
             program=args.program,
+            routine=routine,
             field=args.field,
             mode=args.mode,
             start=start,
@@ -116,7 +121,11 @@ class RunSpec(BaseModel):
     def to_args(self) -> list[str]:
         """``vexsim run``'s arguments for this spec (defaults left out)."""
         args = ["run", self.robot]
-        for flag, value in (("--program", self.program), ("--field", self.field)):
+        for flag, value in (
+            ("--program", self.program),
+            ("--routine", self.routine),
+            ("--field", self.field),
+        ):
             if value:
                 args += [flag, value]
         if self.mode:
@@ -169,6 +178,17 @@ class RunSpec(BaseModel):
                 "follow": follow,
             }
         )
+
+
+def routine_start(project: str | None, routine: str | None) -> tuple[float, float, float] | None:
+    """Where a PROS project's routine starts (its setPose), if it says."""
+    from vexsim.bridge.routines import find_routines
+
+    if not project or not routine or not Path(project).is_dir():
+        return None
+    found = find_routines(project)
+    picked = found.named(routine) if found else None
+    return picked.start_pose() if picked else None
 
 
 def parse_curve(text: str) -> tuple[float, float, float]:
@@ -269,6 +289,8 @@ def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared
             prepared.program_file = Path(spec.program)
         else:
             raise RunError(f"program not found: {named.program}")
+    if spec.routine:
+        _check_routine(prepared, named)
     if spec.input and not Path(spec.input).is_file():
         raise RunError(f"input not found: {named.input}")
     if spec.follow is not None:
@@ -281,6 +303,33 @@ def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared
         )
         prepared.warnings.append(ConfigIssue("warning", "start", message))
     return prepared
+
+
+def _check_routine(prepared: Prepared, named: RunSpec) -> None:
+    """The routine picked is one of the PROS project's (bridge/routines.py)."""
+    from vexsim.bridge.routines import AUTON_HEADER, find_routines
+
+    routine = prepared.spec.routine
+    if prepared.project is None:
+        raise RunError(f"{routine}() is a PROS project's routine, but the program isn't one")
+    found = find_routines(prepared.project)
+    if found is None:
+        raise RunError(f"{named.program} has no {AUTON_HEADER}, so no routines to pick from")
+    picked = found.named(routine)
+    if picked is None:
+        other = next((o for o in found.others if o.name == routine), None)
+        if other is not None:
+            raise RunError(f"{routine}() {other.why}, so it isn't a routine ({AUTON_HEADER})")
+        names = ", ".join(r.name for r in found.routines) or "none"
+        raise RunError(f"there's no routine {routine}() in {AUTON_HEADER} (its routines: {names})")
+    if picked.source is None:
+        raise RunError(
+            f"{routine}() is declared in {AUTON_HEADER}, but vexsim can't tell which file "
+            "defines it, so a run can't pick it"
+        )
+    if prepared.spec.mode == "driver":
+        message = "a routine runs in the autonomous period: in autonomous, match or skills mode"
+        prepared.warnings.append(ConfigIssue("warning", "routine", message))
 
 
 def _path_to_follow(spec: RunSpec, named: RunSpec):
@@ -360,9 +409,14 @@ def build(prepared: Prepared, log: Callable[[str], None] | None = print) -> Path
     if prepared.project is None:
         raise ValueError("this run's program isn't a PROS project")
     try:
-        return build_project(prepared.project, log=log).executable
+        result = build_project(prepared.project, log=log)
     except BuildError as exc:
         raise RunError(str(exc)) from None
+    routine = prepared.spec.routine
+    if routine and routine not in result.routines:
+        why = next((n for n in result.notes if n.startswith(f"{routine}() ")), None)
+        raise RunError(why or f"the build has no routine {routine}() to pick")
+    return result.executable
 
 
 def program_factory(
@@ -384,7 +438,11 @@ def program_factory(
 
         def make_cpp():
             return CppProgram(
-                executable, name=name, busy_timeout_s=spec.busy_timeout, env=dict(spec.env)
+                executable,
+                name=name,
+                busy_timeout_s=spec.busy_timeout,
+                env=dict(spec.env),
+                routine=spec.routine,
             )
 
         return make_cpp, spec.mode or "autonomous"

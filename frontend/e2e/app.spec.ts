@@ -106,16 +106,36 @@ test("says why a run can't start", async ({ page }) => {
   await expect(page.getByTestId("problem")).toContainText("Start x must be a number");
 });
 
-test("fills the run in from a saved run, start and environment too", async ({ page }) => {
+test("fills the run in from a saved run: start, routine and environment too", async ({ page }) => {
   await page.getByTestId("config").selectOption("1239E: Left 40");
   await expect(page.getByTestId("robot")).toHaveValue("examples/robots/1239e_2026-27.yaml");
   await expect(page.getByTestId("program")).toHaveValue("examples/pros_projects/1239e_2026-27");
+  await expect(page.getByTestId("routine")).toHaveValue("left40");
   expect(await startValue(page, "x")).toBe(60);
-  await page.locator("summary", { hasText: "More" }).click();
-  await expect(page.getByPlaceholder("VEXSIM_AUTON=Left 40")).toHaveValue("VEXSIM_AUTON=Left 40");
   await expect(page.locator(".changed")).toHaveCount(0);
   await page.getByLabel("Seed").fill("3");
   await expect(page.locator(".changed")).toHaveCount(1); // no longer the saved run as it is
+  await page.getByTestId("config").selectOption("1239E: replay an MCL log");
+  await page.locator("summary", { hasText: "More" }).click();
+  await expect(page.getByPlaceholder("VEXSIM_AUTON=Left 40")).toHaveValue("VEXSIM_AUTON=startMcl\nVEXSIM_BRAKE=hold");
+});
+
+test("runs the routine picked inside the project's autonomous(), from where it starts", async ({ page }) => {
+  test.setTimeout(150_000); // the first PROS build here compiles vexsim's runtime too
+  await page.getByTestId("robot").selectOption(ROBOT);
+  await page.getByTestId("program").selectOption("tests/cpp/routine_test");
+  const routine = page.getByTestId("routine");
+  await expect(routine.locator("option")).toHaveText(["As the project picks", "alpha", "beta", "extra::gamma", "delta", "ghost (not found)"]);
+  await expect(routine.locator("option", { hasText: "ghost" })).toHaveAttribute("disabled", "");
+  await routine.selectOption("beta"); // its setPose(12, -36, 180): x, y and heading -90
+  expect([await startValue(page, "x"), await startValue(page, "y"), await startValue(page, "heading")]).toEqual([12, -36, -90]);
+  await page.getByTestId("run").click();
+  const output = page.getByTestId("console");
+  await expect(output).toContainText("vexsim: autonomous() called alpha(); running beta() instead", { timeout: 120_000 });
+  await expect(output).toContainText("beta runs");
+  await expect(output).toContainText("autonomous done");
+  await page.getByTestId("program").selectOption(PROGRAM); // a Python program: no routines
+  await expect(routine).toHaveCount(0);
 });
 
 test("drags the robot to where it starts, and turns it by its handle", async ({ page }) => {

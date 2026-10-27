@@ -532,6 +532,23 @@ def test_the_server_plays_mcl_logs(client):
         assert response.status_code == 422 and message in response.json()["error"]
 
 
+def test_the_server_lists_a_projects_routines(client):
+    authorized(client)
+    listed = client.get("/api/routines", params={"project": "tests/cpp/routine_test"}).json()
+    assert listed["header"] == "include/custom/auton.hpp" and listed["found"]
+    alpha = listed["routines"][0]
+    assert alpha == {"name": "alpha", "line": 5, "source": "src/auton.cpp", "start": [-60, 24.5, 0]}
+    assert {"name": "ghost", "line": 12, "source": None, "start": None} in listed["routines"]
+    assert listed["others"][0] == {"name": "drive_for", "line": 13, "why": "takes arguments"}
+    minimal_pros4 = {"project": "examples/pros_projects/minimal_pros4"}  # no auton.hpp
+    minimal = client.get("/api/routines", params=minimal_pros4)
+    assert minimal.json() == {
+        "header": "include/custom/auton.hpp", "found": False, "routines": [], "others": [],
+    }  # fmt: skip
+    for project in ("examples/robots", "../outside"):
+        assert client.get("/api/routines", params={"project": project}).status_code == 422
+
+
 def test_the_server_previews_a_robot_and_field(client):
     authorized(client)
     preview = client.post("/api/preview", json={"robot": ROBOT, "field": PRACTICE}).json()

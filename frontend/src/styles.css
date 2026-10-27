@@ -1217,6 +1217,15 @@ button.place:hover:not(:disabled) {
   min-width: 100px;
 }
 
+.field.routine {
+  flex: 0 1 100px; /* routines' names are short */
+  min-width: 90px;
+}
+
+.runbar .row:has(.field.routine) .field.wide {
+  flex-basis: 170px; /* room for Run beside a routine */
+}
+
 .changed {
   margin-left: 4px;
   padding: 0 5px;

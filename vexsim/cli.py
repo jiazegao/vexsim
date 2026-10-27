@@ -192,6 +192,36 @@ def cmd_build(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_routines(args: argparse.Namespace) -> int:
+    from vexsim.bridge.build import is_pros_project
+    from vexsim.bridge.routines import AUTON_HEADER, find_routines
+
+    if not is_pros_project(args.project):
+        print(f"error: {args.project} is not a PROS project")
+        return EXIT_INVALID
+    found = find_routines(args.project)
+    if found is None:
+        print(f"{args.project} has no {AUTON_HEADER}, so no routines")
+        return EXIT_OK
+    print(f"Routines in {found.header} (vexsim run --routine NAME):")
+    width = max((len(r.name) for r in found.routines), default=0) + 2
+    for r in found.routines:
+        if r.source is None:
+            where = "vexsim can't tell which file defines it, so a run can't pick it"
+        elif r.start is None:
+            where = f"defined in {r.source}"
+        else:
+            x, y, heading = r.start_pose()
+            theta = r.start[2]
+            where = f"starts at --start={x:g},{y:g},{heading:g} (setPose {x:g}, {y:g}, {theta:g})"
+        print(f"  {r.name:<{width}}{where}")
+    if not found.routines:
+        print("  (none)")
+    for other in found.others:
+        print(f"Not a routine: {other.name}() (line {other.line}) {other.why}")
+    return EXIT_OK
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from vexsim.bridge.doctor import run_doctor
 
@@ -494,6 +524,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Python robot program file, or a PROS 4 project folder (built with `vexsim build`)",
     )
     p.add_argument(
+        "--routine",
+        metavar="NAME",
+        help="PROS projects: run this routine from include/custom/auton.hpp in place of the "
+        "one autonomous() calls (vexsim routines PROJECT lists them)",
+    )
+    p.add_argument(
         "--mode",
         choices=["autonomous", "driver", "match", "skills"],
         help="competition mode (default: autonomous for PROS projects and Python programs "
@@ -503,7 +539,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--start",
         type=_parse_start,
-        help="x,y,heading (in, deg; default 0,0,0, or where --follow's log starts)",
+        help="x,y,heading (in, deg; default 0,0,0, or where --follow's log starts, or where "
+        "--routine sets its pose)",
     )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--noise", choices=["ideal", "default", "harsh"], help="sensor noise preset")
@@ -550,6 +587,19 @@ def build_parser() -> argparse.ArgumentParser:
         "VEXSIM_SEED is always set to --seed",
     )
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser(
+        "routines",
+        help="list a PROS project's autonomous routines (for run --routine)",
+        description=(
+            "List the routines in a PROS project's include/custom/auton.hpp: the functions it "
+            "declares that take no arguments. vexsim run --routine NAME runs one of them in "
+            "place of the routine the project's autonomous() calls, without changing the "
+            "project. Where a routine sets LemLib's pose (chassis.setPose), its start is shown."
+        ),
+    )
+    p.add_argument("project", help="PROS project folder")
+    p.set_defaults(func=cmd_routines)
 
     p = sub.add_parser(
         "build",

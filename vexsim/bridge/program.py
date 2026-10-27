@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from vexsim.algorithms.localization.base import Pose
 from vexsim.api.devices import ANALOG, DIGITAL
+from vexsim.bridge import routines
 from vexsim.bridge.build import BuildResult, build_project
 from vexsim.bridge.host import HostError, Reply, RobotHost
 from vexsim.devices.devices import (
@@ -64,6 +65,7 @@ class HostPhase:
             return
         if self.serial in self.program.finished_serials:
             self.finished = True
+            self.program.phase_over(self.name)
         elif self.end_us is not None and now_us >= self.end_us:
             self.timed_out = True
             self.stop()
@@ -71,6 +73,7 @@ class HostPhase:
     def stop(self) -> None:
         """Field control ends the period: the competition task is deleted, disabled() starts."""
         self.finished = True
+        self.program.phase_over(self.name)
         self.program.start_phase("disabled", None, 0)
 
 
@@ -87,9 +90,14 @@ class CppProgram:
         spin_calls_per_ms: int = 1000,
         busy_timeout_s: float = 5.0,
         env: dict[str, str] | None = None,
+        routine: str | None = None,
     ):
+        """``routine``: the routine to run in place of the one autonomous() calls
+        (routines.py)."""
         self.executable = Path(executable)
         self.env = env
+        self.routine = routine
+        self.routine_ran = False  # the switch said it ran it
         self.name = name or self.executable.parent.name
         self.spin_calls_per_ms = spin_calls_per_ms
         self.busy_timeout_s = busy_timeout_s
@@ -142,6 +150,8 @@ class CppProgram:
             "VEXSIM_START": f"{start.x:g},{start.y:g},{(90.0 - start.heading) % 360:g}",
             **(self.env or {}),
         }
+        if self.routine:
+            env[routines.ENV] = self.routine
         self.host = RobotHost(
             self.executable,
             devices,
@@ -164,6 +174,15 @@ class CppProgram:
             status = connection
         self._pending.append(f"MODE {self._serial} {name} {status}")
         return HostPhase(self, name, self._serial, now_us, limit_s)
+
+    def phase_over(self, name: str) -> None:
+        """A competition function returned, or its period ended."""
+        if name == "autonomous" and self.routine and not self.routine_ran and self.sim:
+            self.sim.log(
+                f"vexsim: autonomous() didn't call a routine from {routines.AUTON_HEADER} "
+                f"that vexsim can switch, so {self.routine}() didn't run"
+            )
+            self.routine_ran = True  # said once
 
     def close(self) -> None:
         if self.host is not None:
@@ -265,6 +284,8 @@ class CppProgram:
                 motor.current_limit_a = int(cmd[2]) / 1000.0
         for text in reply.console:
             sim.log(text)
+            if text.startswith(routines.NOTE):
+                self.routine_ran = True
         sim.lcd.update(reply.lcd)
         sim.controller_screen.update(reply.controller_screen)
         if reply.pose is not None:

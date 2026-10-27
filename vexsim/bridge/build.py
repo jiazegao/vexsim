@@ -24,6 +24,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from vexsim.bridge import routines
+from vexsim.bridge.routines import Routine
+
 CPP_DIR = Path(__file__).parent / "cpp"
 SHIM_INCLUDE = CPP_DIR / "include"
 RUNTIME_DIR = CPP_DIR / "runtime"
@@ -174,6 +177,7 @@ class BuildResult:
     kernel: str | None = None  # PROS kernel version from project.pros
     notes: list[str] = field(default_factory=list)
     lemlib: str | None = None  # LemLib version built from source, if the project uses it
+    routines: list[str] = field(default_factory=list)  # the ones a run can pick (routines.py)
 
 
 @dataclass(frozen=True)
@@ -290,9 +294,11 @@ def _compile_cmd(
     includes: list[Path],
     opt: list[str],
     quote: list[Path] = (),
+    first: list[Path] = (),
 ) -> list[str]:
     """``quote``: folders searched for #include "..." only. PROS's makefile adds
-    include/<dir> for every src/<dir>/ source, so "pid.hpp" works in src/lemlib/."""
+    include/<dir> for every src/<dir>/ source, so "pid.hpp" works in src/lemlib/.
+    ``first``: headers included before the source (the routine switch's, see routines.py)."""
     lang = ["-x", "c", "-std=gnu11"] if source.suffix == ".c" else ["-std=gnu++20"]
     return [
         tc.cxx,
@@ -302,6 +308,7 @@ def _compile_cmd(
         *DEFINES,
         "-include",
         str(SHIM_INCLUDE / "vexsim" / "newlib_compat.h"),
+        *[arg for header in first for arg in ("-include", str(header))],
         *[f"-iquote{p}" for p in quote],
         *[f"-I{p}" for p in includes],
         "-MMD",
@@ -557,73 +564,141 @@ def build_project(
             )
         return text
 
-    jobs, objs = [], []
-    for src in sources:
-        rel = src.relative_to(stage if src.is_relative_to(stage) else out)
-        obj = out / "obj" / rel.with_suffix(rel.suffix + ".o")
-        objs.append(obj)
-        stamp = obj.with_suffix(".flags")
-        quote = [stage / "include" / Path(*rel.parts[1:-1])] if rel.parts[0] == "src" else []
-        if _stale(obj, obj.with_suffix(".d"), stamp, flags_key):
-            jobs.append((src, obj, _compile_cmd(tc, src, obj, includes, opt, quote)))
+    # The routine switch (routines.py): a routine vexsim can't switch is left out of it
+    found = routines.find_routines(project)
+    switchable = [r for r in found.routines if r.source] if found else []
+    for r in found.routines if found else []:
+        if r.source is None:
+            notes.append(
+                f"{r.name}() is declared in {routines.AUTON_HEADER}, but vexsim can't tell "
+                "which file defines it, so a run can't pick it"
+            )
     user_sources = [s for s in sources if s.is_relative_to(stage)]
-    if log and any(src.is_relative_to(stage) for src, _, _ in jobs):
-        count = sum(src.is_relative_to(stage) for src, _, _ in jobs)
-        log(f"compiling {count} of {len(user_sources)} source file(s) with g++ {tc.version_text}")
-    compiled = _compile_all(tc, jobs, workers or os.cpu_count() or 2, rewrite)
-    for _, obj, _ in jobs:
-        obj.with_suffix(".flags").write_text(flags_key)
-
     runtime_objs, runtime_lib = build_runtime(tc, workers=workers)
     exe = out / EXE_NAME
-    inputs = objs + runtime_objs + [runtime_lib] + libraries
-    if (
-        exe.exists()
-        and all(p.stat().st_mtime <= exe.stat().st_mtime for p in inputs)
-        and not compiled
-    ):
-        return BuildResult(
-            exe,
-            0,
-            len(user_sources),
-            time.perf_counter() - start,
-            linked=False,
-            kernel=kernel,
-            notes=notes,
-        )
+    left_out: dict[str, str] = {}  # routine: why, as linking found
+    compiled_user = 0
+    while True:
+        switched = [r for r in switchable if r.name not in left_out]
+        first = _routine_files(switched, generated, stage)
+        units = sources + ([generated / "vexsim_routines.cpp"] if switched else [])
+        jobs, objs = [], []
+        for src in units:
+            rel = src.relative_to(stage if src.is_relative_to(stage) else out)
+            obj = out / "obj" / rel.with_suffix(rel.suffix + ".o")
+            objs.append(obj)
+            header = first.get(src)
+            key = flags_key if header is None else _digest(flags_key, header.read_text())
+            quote = [stage / "include" / Path(*rel.parts[1:-1])] if rel.parts[0] == "src" else []
+            if _stale(obj, obj.with_suffix(".d"), obj.with_suffix(".flags"), key):
+                cmd = _compile_cmd(tc, src, obj, includes, opt, quote, [header] if header else [])
+                jobs.append((src, obj, cmd, key))
+        count = sum(src.is_relative_to(stage) for src, *_ in jobs)
+        if log and count:
+            total = len(user_sources)
+            log(f"compiling {count} of {total} source file(s) with g++ {tc.version_text}")
+        parallel = workers or os.cpu_count() or 2
+        compiled = _compile_all(tc, [job[:3] for job in jobs], parallel, rewrite)
+        for _, obj, _, key in jobs:
+            obj.with_suffix(".flags").write_text(key)
+        compiled_user += count
+        result = BuildResult(
+            exe, compiled_user, len(user_sources), 0.0, kernel=kernel, notes=notes,
+            lemlib=lemlib_version, routines=[r.name for r in switched],
+        )  # fmt: skip
+        inputs = objs + libraries + runtime_objs + [runtime_lib]
+        if (
+            exe.exists()
+            and all(p.stat().st_mtime <= exe.stat().st_mtime for p in inputs)
+            and not compiled
+            and not left_out
+        ):
+            result.linked = False
+            result.seconds = time.perf_counter() - start
+            return result
+        if not left_out:
+            user_objs = [o for o in objs if "generated" not in o.parts]
+            notes += _cpp_linkage_notes(tc, user_objs, stage, project)
+            for note in notes if log else ():
+                log(f"note: {note}")
+        failed = _link(tc, exe, inputs, rewrite)
+        if failed is None:
+            break
+        why = _unswitchable(failed, switched)
+        if not why:
+            raise BuildError("link failed:\n" + failed)
+        for name, reason in why.items():
+            left_out[name] = reason
+            note = f"{name}() {reason}, so a run can't pick it"
+            notes.append(note)
+            if log:
+                log(f"note: {note}")
+    result.executable = _install(exe)
+    result.seconds = time.perf_counter() - start
+    return result
 
-    notes += _cpp_linkage_notes(tc, [o for o in objs if "generated" not in o.parts], stage, project)
-    for note in notes if log else ():
-        log(f"note: {note}")
-    tmp = exe.with_name("robot_host.tmp" + (".exe" if sys.platform == "win32" else ""))
-    link = [
-        tc.cxx,
-        "-o",
-        str(tmp),
-        *map(str, objs),
-        *map(str, libraries),
-        *map(str, runtime_objs),
-        str(runtime_lib),
-        "-pthread",
-    ]
+
+def _link(
+    tc: Toolchain, exe: Path, inputs: list[Path], rewrite: Callable[[str], str]
+) -> str | None:
+    """Link the robot host into a temporary file beside ``exe``; None if it linked, else
+    what went wrong."""
+    link = [tc.cxx, "-o", str(_linked(exe)), *map(str, inputs), "-pthread"]
     if tc.windows:
         link.append("-static")  # no MinGW DLLs needed at run time
     result = _run(link)
-    if result.returncode != 0:
-        message = rewrite((result.stdout + result.stderr).strip())
-        if "_binary_static_" in message:
-            message += (
-                "\n\nASSET(name) needs a file static/<name with . for _> in the project, "
-                "for example ASSET(example_txt) needs static/example.txt."
-            )
-        raise BuildError("link failed:\n" + message)
+    if result.returncode == 0:
+        return None
+    message = rewrite((result.stdout + result.stderr).strip())
+    if "_binary_static_" in message:
+        message += (
+            "\n\nASSET(name) needs a file static/<name with . for _> in the project, "
+            "for example ASSET(example_txt) needs static/example.txt."
+        )
+    return message
+
+
+def _linked(exe: Path) -> Path:
+    return exe.with_name("robot_host.tmp" + (".exe" if sys.platform == "win32" else ""))
+
+
+def _install(exe: Path) -> Path:
+    """Put the linked executable in place; where it went."""
+    linked = _linked(exe)
     try:
-        os.replace(tmp, exe)
+        os.replace(linked, exe)
     except PermissionError:  # Windows: the old executable is still running (open viewer)
         exe = exe.with_name(f"robot_host-{int(time.time())}.exe")
-        os.replace(tmp, exe)
-    compiled_user = sum(src.is_relative_to(stage) for src, _, _ in jobs)
-    return BuildResult(
-        exe, compiled_user, len(user_sources), time.perf_counter() - start, kernel=kernel,
-        notes=notes, lemlib=lemlib_version,
-    )  # fmt: skip
+        os.replace(linked, exe)
+    return exe
+
+
+def _routine_files(switched: list[Routine], generated: Path, stage: Path) -> dict[Path, Path]:
+    """Write the routine switch's sources (routines.py) for ``switched``: a header for each
+    file that defines some, and the switch itself. Returns {staged source: its header}."""
+    by_source: dict[str, list[Routine]] = {}
+    for routine in switched:
+        by_source.setdefault(routine.source, []).append(routine)
+    first = {}
+    for rel, defined in by_source.items():
+        header = generated / "routines" / f"{rel}.h"
+        _write_if_changed(header, routines.rename_header(defined))
+        first[stage / rel] = header
+    if switched:
+        _write_if_changed(generated / "vexsim_routines.cpp", routines.switch_source(switched))
+    return first
+
+
+def _unswitchable(message: str, switched: list[Routine]) -> dict[str, str]:
+    """Routines a failed link says the switch can't take: the definition vexsim found isn't
+    compiled (the name the switch calls it by is undefined), or another file defines it
+    too (two definitions of its own name)."""
+    why = {}
+    for routine in switched:
+        symbol, name = re.escape(routine.symbol), re.escape(routine.name)
+        twice = rf"(multiple definition of|duplicate symbol)[^\n]*({symbol}|{name}\(\))"
+        if re.search(rf"vexsim_routine_{symbol}\b", message):
+            why[routine.name] = "has no definition that vexsim's build compiles"
+        elif re.search(twice, message):
+            why[routine.name] = "is defined in more than one place"
+    return why

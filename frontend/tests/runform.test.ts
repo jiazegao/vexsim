@@ -28,6 +28,7 @@ describe("the run form", () => {
       spec: {
         robot: "robots/bot.yaml",
         program: "src/auton.py",
+        routine: null,
         field: null,
         mode: "driver",
         start: [-12, 3.5, 90],
@@ -42,6 +43,18 @@ describe("the run form", () => {
     if (!("spec" in result)) throw new Error("no spec");
     const again = specToForm(result.spec);
     expect(formToSpec(again)).toEqual(result);
+  });
+
+  it("picks a PROS project's routine, which goes with its program", () => {
+    const form = { ...emptyForm(), robot: "bot.yaml", program: "pros/1239e", routine: "right30" };
+    const result = formToSpec(form);
+    if (!("spec" in result)) throw new Error(result.error);
+    expect(result.spec.routine).toBe("right30");
+    expect(specToForm(result.spec).routine).toBe("right30");
+    expect(sameRun(form, result.spec)).toBe(true);
+    expect(sameRun({ ...form, routine: "" }, result.spec)).toBe(false); // as the project picks
+    const none = formToSpec({ ...form, program: "" }); // no program, no routine
+    expect("spec" in none && none.spec.routine).toBe(null);
   });
 
   it("follows a log, or any log a saved run is given", () => {

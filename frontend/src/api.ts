@@ -13,6 +13,7 @@ import type {
   ConfigPatched,
   JobInfo,
   MclLogTape,
+  ProjectRoutines,
   Preview,
   Replay,
   ResultAbout,
@@ -156,6 +157,8 @@ export const api = {
     request<Replay>("/api/replay", { method: "POST", body: JSON.stringify({ log, robot, field }) }),
   /** An MCL log from the workspace, to play on the field; a RunProblem if it doesn't read. */
   mclLog: (log: string) => orProblem<MclLogTape>(`/api/mcllog?path=${encodeURIComponent(log)}`, { method: "GET" }),
+  /** A PROS project's autonomous routines (include/custom/auton.hpp), to pick one to run. */
+  routines: (project: string) => orProblem<ProjectRoutines>(`/api/routines?project=${encodeURIComponent(project)}`, { method: "GET" }),
   saveConfigurations: (configurations: RunConfiguration[]) =>
     request<RunConfigurations>("/api/configurations", { method: "PUT", body: JSON.stringify({ configurations }) }),
   config: (path: string) => request<ConfigFile>(`/api/config?path=${encodeURIComponent(path)}`),

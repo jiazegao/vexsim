@@ -359,6 +359,7 @@ Without `--program`, you drive the robot from the keyboard or a gamepad. To star
 | Option | Meaning |
 |---|---|
 | `--program` | a Python program file, or a PROS 4 project folder (built automatically) |
+| `--routine NAME` | a PROS project's autonomous routine, from its `include/custom/auton.hpp`, to run in place of the one its `autonomous()` calls ([section 9](#picking-an-autonomous-routine)). Without `--start`, the robot starts where the routine's `setPose` puts it. |
 | `--mode` | `autonomous`, `driver`, `match` or `skills` (default: `autonomous` for PROS projects and for Python programs with an `autonomous` function, else `driver`) |
 | `--field FILE` | field YAML (default: an empty field) |
 | `--start x,y,heading` | the robot's true starting pose (in, deg CCW; default `0,0,0`). Write `--start=-12,12,0`, with `=`, when x is negative. |
@@ -444,7 +445,7 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 
 **Running something:**
 1. Pick a **saved run** from the first list to fill in everything at once, start pose and environment included. This repository comes with runs for its examples, every 1239E routine among them. Saved runs live in the folder's `.vexsim/launch.yaml`, so a team can commit them; *Save*, *Save as…* and *Delete* change them. (The app rewrites that file when it saves, so comments in it aren't kept.)
-2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs, telemetry logs, robot logs and MCL logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. (A scenario opens on the *Bench* page and a robot log on *Calibrate*; on those pages, and on *Analyze* and *Build*, a robot or project you click is for the page.) *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file or a robot's log to follow (with its program's sticks and drive curve, [see below](#7-the-browser-app-vexsim-ui)), environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
+2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs, telemetry logs, robot logs and MCL logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. (A scenario opens on the *Bench* page and a robot log on *Calibrate*; on those pages, and on *Analyze* and *Build*, a robot or project you click is for the page.) *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. For a PROS project with routines in `include/custom/auton.hpp`, **Routine** picks the one its `autonomous()` runs ([section 9](#picking-an-autonomous-routine)); picking one moves the start to where the routine's `setPose` puts the robot. *More* holds the noise preset, a scripted input file or a robot's log to follow (with its program's sticks and drive curve, [see below](#7-the-browser-app-vexsim-ui)), environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
 3. **Drag the robot to where it starts.** Before a run, the field shows the robot at its start: drag it to move it (to half inches), and drag the round handle ahead of it to turn it (to 15°; hold Shift for 0.1 in and 1°). It stays inside the walls, and turns red, with a note, if it would start on top of a field element (`vexsim run` warns about that too).
 4. **Run** checks the files first; if something is wrong, the console says what, with the same messages as `vexsim validate-config`. A PROS project is built first, with the build's output in the *Build* tab. Starting a run stops the one before it.
 
@@ -660,6 +661,22 @@ vexsim run ROBOT.yaml --program path/to/project --headless --record run.csv --sc
   vexsim: port 7: the code uses a motor here, but the robot config has nothing on this port (calls fail with errno ENODEV)
   ```
 - `VEXSIM` is defined (`-DVEXSIM=1`), so `#ifdef VEXSIM` marks simulator-only code.
+
+### Picking an autonomous routine
+```
+vexsim routines path/to/project                                       # list them, and where each starts
+vexsim run ROBOT.yaml --program path/to/project --routine right30    # run one
+```
+A project's **routines** are the functions its `include/custom/auton.hpp` declares that take no arguments and return nothing (`void left40();`, in any namespace), as team 1239E's are. On the robot, a selector on the brain's screen usually picks one; in vexsim you do: with `--routine NAME`, the **Routine** list in the app's run bar, or `routine:` in a saved run.
+
+The project's `autonomous()` runs as written, setup and all, and when it calls one of the routines, the one you picked runs instead (once). The console says so:
+```
+vexsim: autonomous() called left40(); running right30() instead
+```
+Nothing in your project changes. In vexsim's build (in its cache), the files that define the routines are compiled with each routine under another name, so calls among them stay as written, and a generated file takes the routines' own names: that file is the switch. Without a pick, the project runs exactly as before.
+- Without `--start`, the robot starts where the routine's `setPose(x, y, θ)` puts it, when that call's arguments are numbers; `vexsim routines` shows where.
+- `autonomous()` must call the routine from another file, as a selector's table does. A call from inside the file that defines the routine doesn't go through the switch, and the run says the routine you picked didn't run.
+- Every function in the header that takes no arguments counts as a routine; one that takes arguments or returns a value is listed as not a routine, with why.
 
 ### What's simulated
 | PROS 4 API | In the simulator |
@@ -963,7 +980,7 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
 ## 13. Porting a team's code
 [docs/porting_1239e.md](docs/porting_1239e.md) ports team 1239E's 2026-27 code step by step: LemLib with distance-sensor wall resets (RCL), a 2048-particle Monte Carlo localizer (MCL), a lift and end effector, an LVGL auton selector, and nine autonomous routines. It runs with four small marked edits:
 ```
-vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40"
+vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --routine left40
 python examples/scripts/evaluate_1239e.py --seeds 6 --tracking rcl+mcl,mcl,rcl,odom --plot errors.png
 ```
 `--env VEXSIM_TRACKING=odom|rcl|mcl|rcl+mcl` switches the team's localization layers (LemLib's odometry alone, RCL's start reset, MCL, or both; both by default), and the routine prints the `--start` that matches the pose it sets. The evaluation script runs every routine in each mode and measures LemLib's pose against the truth.
@@ -1189,7 +1206,8 @@ vexsim/
 | `build.py` | `vexsim build`: finds g++ (`find_toolchain`), stages the project without the PROS SDK, compiles incrementally with dependency tracking, embeds `static/` for `ASSET()`, builds the shared runtime, and links `robot_host`. Reads the templates in `project.pros`. |
 | `lemlib.py` | Finds the project's LemLib version, fetches and caches its source, and compiles it once per version; detects edited LemLib headers. |
 | `host.py` | `RobotHost`: starts `robot_host` and speaks its line protocol over pipes. Readings and `RUN <time>` go in; motor commands, console text, LCD lines, the reported pose and the next wake-up time come out. |
-| `program.py` | `CppProgram`: a built project as a simulation program. It sends readings, applies commands, maps competition modes to status bits, and sets `VEXSIM_SEED` and `--env` variables. |
+| `program.py` | `CppProgram`: a built project as a simulation program. It sends readings, applies commands, maps competition modes to status bits, and sets `VEXSIM_SEED`, `VEXSIM_START`, `VEXSIM_ROUTINE` and `--env` variables. |
+| `routines.py` | A project's autonomous routines (`find_routines`: the no-argument functions in `include/custom/auton.hpp`, read with a small C++ tokenizer, each with the file that defines it and its `setPose` start), and the switch that runs the one picked: `rename_header`, force-included in each file that defines routines, renames them with `asm` labels; `switch_source` takes their own names. |
 | `doctor.py` | `vexsim doctor`: toolchain checks, and a test build and run. |
 | `cpp/include/` | The PROS 4 shim headers robot code compiles against: `api.h`; `pros/*.h(pp)` (motors, IMU, rotation, distance, GPS, rtos, misc, llemu, screen, adi, and stubs for unsimulated devices); `liblvgl/` (LLEMU and the LVGL stand-in); `vexsim/sim.hpp` (`report_pose`, `benchmark_task`); `vexsim/newlib_compat.h` (newlib extras). |
 | `cpp/runtime/` | The C++ side, linked into every build: `host.cpp` (process setup, the protocol loop, console capture, crash reports), `scheduler.cpp` (the lockstep FreeRTOS-style scheduler: tasks, delays, mutexes, notifications), `devices.cpp` (the PROS device C API over a device table), `lvgl.cpp` (the LVGL stand-in), `defaults/` (empty competition functions, used only when the code has none, like PROS's weak defaults). |
