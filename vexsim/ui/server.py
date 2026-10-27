@@ -207,7 +207,8 @@ class UIServer:
 
     def check(self, spec: RunSpec):
         """``check`` the spec's files, which must be inside the workspace (raises RunError)."""
-        for path in (spec.robot, spec.program, spec.field, spec.input):
+        follow = spec.follow.log if spec.follow else None
+        for path in (spec.robot, spec.program, spec.field, spec.input, follow):
             if path:
                 try:
                     self.workspace.path(path)
@@ -680,6 +681,17 @@ def create_app(
         except (OSError, ValueError) as exc:
             return JSONResponse(RunProblem(error=str(exc), issues=[]).model_dump(), 422)
         return Response(dumps(result), media_type="application/json")
+
+    @app.get("/api/mcllog", responses={422: {"model": RunProblem}})
+    def mcl_log(path: str) -> Response:
+        """An MCL log from the workspace, to play on the field (``MclLogTape``)."""
+        from vexsim.mcllog import MclLogError
+
+        try:
+            tape = runs.mcl_tape(server.workspace.path(path), path)
+        except (MclLogError, ValueError) as exc:
+            return JSONResponse(RunProblem(error=f"{path}: {exc}", issues=[]).model_dump(), 422)
+        return Response(dumps(tape), media_type="application/json")
 
     @app.post("/api/sessions", responses={422: {"model": RunProblem}})
     def start_session(request: StartSession):

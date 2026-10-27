@@ -2,7 +2,9 @@ import { useState } from "react";
 import { lemlibTheta } from "../pose";
 import type { RunConfiguration, WorkspaceInfo } from "../protocol";
 import type { RunForm } from "../runform";
-import { MODES, NOISE, sameRun } from "../runform";
+import { MODES, NOISE, sameRun, STICKS } from "../runform";
+
+const ANY_LOG = "*"; // a saved run that follows whichever log it's given
 
 export function RunBar(props: {
   workspace: WorkspaceInfo | null;
@@ -24,6 +26,7 @@ export function RunBar(props: {
   const heading = Number(form.heading);
   const theta = Number.isFinite(heading) ? lemlibTheta(heading) : null;
   const project = of("project").some((item) => item.path === form.program);
+  const following = !!form.follow || form.following;
 
   const chosen = configurations.find((c) => c.name === form.config) ?? null;
   const changed = chosen !== null && !sameRun(form, chosen);
@@ -166,7 +169,7 @@ export function RunBar(props: {
             </label>
             <label className="field">
               <span>Recorded controller input</span>
-              <select value={form.input} onChange={(e) => set("input")(e.target.value)}>
+              <select value={form.input} onChange={(e) => set("input")(e.target.value)} disabled={following}>
                 <option value="">None</option>
                 {of("input").map((item) => (
                   <option key={item.path} value={item.path}>
@@ -175,6 +178,41 @@ export function RunBar(props: {
                 ))}
               </select>
             </label>
+            <label className="field" title="A virtual driver drives the robot along a real robot's path, from its MCL log, with the program's driver control; the run ends with the log">
+              <span>Follow a robot's log</span>
+              <select
+                value={form.follow || (following ? ANY_LOG : "")}
+                onChange={(e) => props.onChange({ ...form, follow: e.target.value === ANY_LOG ? "" : e.target.value, following: e.target.value !== "" })}
+                disabled={!!form.input}
+                data-testid="follow"
+              >
+                <option value="">None</option>
+                {following && !form.follow && <option value={ANY_LOG}>The one it replays (pick it on its log)</option>}
+                {of("mcllog").map((item) => (
+                  <option key={item.path} value={item.path}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {following && (
+              <>
+                <label className="field narrow-ish" title="How the program drives from the sticks: tank (both sticks' y) or arcade (left y forward, right x turning)">
+                  <span>Its sticks</span>
+                  <select value={form.sticks} onChange={(e) => set("sticks")(e.target.value as RunForm["sticks"])}>
+                    {STICKS.map((sticks) => (
+                      <option key={sticks} value={sticks}>
+                        {sticks}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field narrow-ish" title="The program's LemLib ExpoDriveCurve(deadband, min output, curve), if it shapes the sticks with one">
+                  <span>Its drive curve</span>
+                  <input value={form.curve} onChange={(e) => set("curve")(e.target.value)} placeholder="none" aria-label="Drive curve" spellCheck={false} />
+                </label>
+              </>
+            )}
             <label className="field narrow" title="PROS projects: stop the run if one task runs this many seconds of real time without waiting (0 = never)">
               <span>Busy timeout (s){project ? "" : " · PROS"}</span>
               <input inputMode="decimal" value={form.busy} onChange={(e) => set("busy")(e.target.value)} aria-label="Busy timeout (s)" />

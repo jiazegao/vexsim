@@ -390,6 +390,33 @@ def test_reported_pose_becomes_the_estimate(test_exe):
     assert error.final_in == pytest.approx(math.hypot(12, 24)) and error.max_deg == 0
 
 
+def test_robot_code_draws_on_the_field(test_exe):
+    program = CppProgram(test_exe, env={"VEXSIM_TEST": "draw"})
+    sim = Simulation(load_robot(ROBOT), program=program, echo=None)
+    sim.start("driver")
+    try:
+        sim.run_for(0.005)
+        assert sim.drawings.snapshot() == {
+            "mcl": [["point", 1, 2, "violet", 3], ["point", 3, 4, "aqua", 5]],
+            "rays": [["line", 0, 0, 10, 0, "yellow"]],
+        }
+        version = sim.drawings.version
+        sim.run_for(0.02)
+    finally:
+        sim.close()
+    assert sim.drawings.version > version
+    # angles as LemLib's in C++ (clockwise from +y), counter-clockwise from +x here
+    assert sim.drawings.snapshot() == {
+        "mcl": [
+            ["circle", 5, 6, 2.5, "violet"],
+            ["ellipse", 5, 6, 4, 2, -30, "blue"],
+            ["text", -1.5, 2, "spread 2.5 in max", "muted"],
+        ],
+        "rays": [["line", 0, 0, 10, 0, "yellow"]],
+        "my_layer": [["pose", 12, 24, 0, "orange"]],
+    }
+
+
 def test_example_autonomous_is_deterministic(example_exe, capsys):
     def run():
         start = Pose(0, 0, 90)

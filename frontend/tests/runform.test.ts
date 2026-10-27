@@ -34,6 +34,7 @@ describe("the run form", () => {
         seed: 4,
         noise: null,
         input: null,
+        follow: null,
         env: { VEXSIM_AUTON: "Left 40", X: " 1=2" },
         busy_timeout: 5,
       },
@@ -41,6 +42,29 @@ describe("the run form", () => {
     if (!("spec" in result)) throw new Error("no spec");
     const again = specToForm(result.spec);
     expect(formToSpec(again)).toEqual(result);
+  });
+
+  it("follows a log, or any log a saved run is given", () => {
+    const form = { ...emptyForm(), robot: "bot.yaml", program: "tank.py" };
+    const spec = (f: typeof form) => {
+      const result = formToSpec(f);
+      if (!("spec" in result)) throw new Error(result.error);
+      return result.spec;
+    };
+    expect(spec(form).follow).toBeNull();
+    expect(spec({ ...form, sticks: "arcade", curve: "15, 20, 1.05" }).follow).toBeNull(); // not following
+    const following = { ...form, follow: "logs/mcl_log1.1239e", following: true, sticks: "arcade" as const, curve: "15, 20, 1.05" };
+    expect(spec(following).follow).toEqual({ log: "logs/mcl_log1.1239e", sticks: "arcade", curve: [15, 20, 1.05] });
+    const template = { robot: "bot.yaml", program: "tank.py", follow: { curve: [15, 20, 1.05] as [number, number, number] } };
+    const filled = specToForm(template, "Replay");
+    expect([filled.following, filled.follow, filled.sticks, filled.curve]).toEqual([true, "", "tank", "15, 20, 1.05"]);
+    expect(spec(filled).follow).toEqual({ log: null, sticks: "tank", curve: [15, 20, 1.05] });
+    expect(sameRun(filled, template)).toBe(true);
+    expect(sameRun({ ...filled, follow: "logs/mcl_log1.1239e" }, template)).toBe(false);
+    expect(formToSpec({ ...following, curve: "15, 20" })).toEqual({ error: "The drive curve is three numbers: deadband, min output, curve (15, 20, 1.05)" });
+    // a log that's gone from the workspace is let go of
+    expect(reconcile(following, [item("robot", "bot.yaml"), item("program", "tank.py")]).follow).toBe("");
+    expect(reconcile(following, [item("robot", "bot.yaml"), item("mcllog", "logs/mcl_log1.1239e")]).follow).toBe("logs/mcl_log1.1239e");
   });
 
   it("says what's wrong with what was typed", () => {

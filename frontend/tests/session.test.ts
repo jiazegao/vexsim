@@ -84,8 +84,11 @@ describe("a session store", () => {
     store.apply(SCENE);
     store.apply({ type: "console", lines: ["hello"] });
     store.apply(frame(5, 10));
+    store.apply({ type: "drawings", layers: { mcl: [["pose", 1, 2, 90, "blue"]] } });
+    expect(store.drawings.mcl).toHaveLength(1);
     store.apply(SCENE); // restarted
     expect(store.frame).toBeNull();
+    expect(store.drawings).toEqual({});
     expect(store.truth.length).toBe(0);
     expect(store.lines).toEqual([{ kind: "build", text: "compiling" }]);
   });

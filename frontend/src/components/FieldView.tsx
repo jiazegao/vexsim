@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { Ghost, Layers, Picture, Shape, StartMarker } from "../draw";
+import type { Drawings, Ghost, Layers, Picture, Shape, StartMarker } from "../draw";
 import { draw, HANDLE_GAP_PX, HANDLE_RADIUS_PX } from "../draw";
 import type { Palette } from "../palette";
 import { readPalette } from "../palette";
+import type { LogPlayback } from "../mcllog";
 import type { Playback } from "../playback";
 import type { Playhead } from "../playhead";
 import type { FrameMessage, Preview } from "../protocol";
@@ -28,7 +29,10 @@ export interface StartEdit {
 export type FieldSource =
   | { kind: "live"; store: SessionStore }
   | { kind: "recording"; playback: Playback; playhead: Playhead }
-  | { kind: "preview" };
+  | { kind: "preview" }
+  // a real robot's log at `clock()` (its time; null: not begun), drawn with `shape`'s robot on
+  // its field (those of the run beside it)
+  | { kind: "log"; log: LogPlayback; clock: () => number | null; shape: Shape | null };
 
 /** A recorded run drawn over the shown one, at the same moment. */
 export interface Compared {
@@ -44,9 +48,17 @@ export interface FieldViewProps {
   start: StartEdit | null;
   onStart: (pose: Pose) => void;
   layers: Layers;
+  hiddenDrawings: readonly string[]; // layers of the robot code's drawings not to show
   follow: boolean;
   onFollow: (follow: boolean) => void;
   stamp?: string | null; // written in the corner with the time, as when exporting a video
+  name?: string; // tells two field views apart: their canvas is "<name>-canvas" ("field-canvas")
+}
+
+/** The robot code's drawings without the hidden layers. */
+export function shownDrawings(drawings: Drawings, hidden: readonly string[]): Drawings {
+  if (!hidden.length) return drawings;
+  return Object.fromEntries(Object.entries(drawings).filter(([name]) => !hidden.includes(name)));
 }
 
 /** The field and the run on it, drawn every animation frame. Wheel: zoom; drag: pan, or
@@ -78,6 +90,7 @@ export function FieldView(props: FieldViewProps) {
       const { source, preview } = live.current;
       if (source.kind === "live" && source.store.scene) return source.store.scene;
       if (source.kind === "recording") return source.playback.tape.scene;
+      if (source.kind === "log") return source.shape;
       return preview ? { robot: preview.robot, field: preview.field } : null;
     };
     /** The run's frame now, and its time (null before any run). */
@@ -88,6 +101,7 @@ export function FieldView(props: FieldViewProps) {
         const t = source.playhead.t;
         return { frame: source.playback.frameAt(t), t };
       }
+      if (source.kind === "log") return { frame: null, t: source.clock() };
       return { frame: null, t: null };
     };
     const fieldSize = (): [number, number] => shape()?.field.size ?? [144, 144];
@@ -126,12 +140,14 @@ export function FieldView(props: FieldViewProps) {
 
     const render = () => {
       frameId = requestAnimationFrame(render);
-      const { source, preview, layers, follow, compared, stamp } = live.current;
+      const { source, preview, layers, follow, compared, stamp, hiddenDrawings } = live.current;
       const [w, h] = fieldSize();
       if (!view || (fittedTo !== `${w}x${h}` && !adjusted)) fit();
       const { frame, t } = now();
-      if (follow && frame) {
-        view = { ...view!, cx: frame.pose[0], cy: frame.pose[1] };
+      const logged = source.kind === "log" && t !== null ? source.log.estimateAt(t) : null;
+      const followed = frame?.pose ?? logged;
+      if (follow && followed) {
+        view = { ...view!, cx: followed[0], cy: followed[1] };
         adjusted = true;
       }
       const ghosts: Ghost[] = [];
@@ -144,7 +160,8 @@ export function FieldView(props: FieldViewProps) {
       let picture: Picture;
       if (source.kind === "live" && source.store.scene) {
         const store = source.store;
-        picture = { scene: store.scene, frame, overlay: store.overlay, truth: store.truth, estimate: store.estimate, start: marker(), ghosts };
+        const drawings = shownDrawings(store.drawings, hiddenDrawings);
+        picture = { scene: store.scene, frame, overlay: store.overlay, truth: store.truth, estimate: store.estimate, start: marker(), ghosts, drawings };
       } else if (source.kind === "recording") {
         const { playback } = source;
         picture = {
@@ -155,6 +172,19 @@ export function FieldView(props: FieldViewProps) {
           estimate: playback.trail("estimate", t ?? 0),
           start: marker(),
           ghosts,
+          drawings: shownDrawings(playback.drawingsAt(t ?? 0), hiddenDrawings),
+        };
+      } else if (source.kind === "log") {
+        const at = t ?? -1;
+        picture = {
+          scene: source.shape,
+          frame: null,
+          overlay: null,
+          truth: NO_TRAIL,
+          estimate: source.log.trail(at),
+          pieces: [], // where the real robot left the pieces isn't known
+          drawings: shownDrawings(source.log.drawingsAt(at), hiddenDrawings),
+          logged,
         };
       } else {
         picture = { scene: shape(), frame: null, overlay: null, truth: NO_TRAIL, estimate: NO_TRAIL, pieces: preview?.pieces ?? [], start: marker() };
@@ -162,11 +192,12 @@ export function FieldView(props: FieldViewProps) {
       if (stamp && t !== null) picture.stamp = `${stamp} · ${t.toFixed(2)} s`;
       draw(ctx, view!, colors, picture, layers);
       // for tests and the curious: frames received, the time shown, the view (px per inch,
-      // center), and how many compared runs are drawn
+      // center), how many compared runs are drawn, and how many shapes the robot code drew
       element.dataset.frames = String(source.kind === "live" ? source.store.frames : 0);
       element.dataset.time = t === null ? "" : t.toFixed(3);
       element.dataset.view = `${view!.scale.toFixed(4)},${view!.cx.toFixed(3)},${view!.cy.toFixed(3)}`;
       element.dataset.ghosts = String(ghosts.length);
+      element.dataset.drawn = String(layers.drawings && picture.drawings ? Object.values(picture.drawings).reduce((n, shapes) => n + shapes.length, 0) : 0);
     };
 
     const observer = new ResizeObserver(sizeCanvas);
@@ -262,7 +293,7 @@ export function FieldView(props: FieldViewProps) {
 
   const { source, preview, start } = props;
   const store = source.kind === "live" ? source.store : null;
-  const shownFrame = store ? store.frame : source.kind === "recording" ? source.playback.samples.length > 0 : null;
+  const shownFrame = store ? store.frame : source.kind === "recording" ? source.playback.samples.length > 0 : source.kind === "log";
   let note: ReactNode = null;
   if (store && !store.scene) {
     note = store.state === "building" ? "Building the project…" : store.state === "error" ? "The run couldn't start: see the console below." : "Starting…";
@@ -276,8 +307,8 @@ export function FieldView(props: FieldViewProps) {
   const savePicture = () => {
     const element = canvas.current;
     if (!element) return;
-    const scene = store?.scene ?? (source.kind === "recording" ? source.playback.tape.scene : preview);
-    const robot = scene?.robot.name ?? "field";
+    const scene = store?.scene ?? (source.kind === "recording" ? source.playback.tape.scene : source.kind === "log" ? null : preview);
+    const robot = source.kind === "log" ? source.log.name : (scene?.robot.name ?? "field");
     const shownTime = element.dataset.time ? Number(element.dataset.time) : null;
     const t = shownTime !== null ? `-${shownTime.toFixed(2)}s` : "";
     element.toBlob((blob) => {
@@ -293,10 +324,14 @@ export function FieldView(props: FieldViewProps) {
     <div className="fieldview" ref={box}>
       <canvas
         ref={canvas}
-        id="field-canvas"
+        id={props.name ? `${props.name}-canvas` : "field-canvas"}
         tabIndex={0}
-        data-testid="field"
-        aria-label="The field, seen from above. Keys drive the robot while a run is live."
+        data-testid={props.name ? `${props.name}-field` : "field"}
+        aria-label={
+          source.kind === "log"
+            ? `The field, with what ${source.log.name} says the real robot thought and saw.`
+            : "The field, seen from above. Keys drive the robot while a run is live."
+        }
         role="img"
       />
       <div className="fieldtools">
@@ -365,8 +400,16 @@ export interface KeyedRun {
 /** What the marks on the field mean, with switches for the ones that can be hidden, and the
  * runs drawn over this one. It sits in the field's corner, beside the field itself when the
  * view is wider than tall. */
-export function FieldKey(props: { layers: Layers; onLayers: (layers: Layers) => void; compared: KeyedRun[]; onUncompare: (key: string) => void }) {
-  const { layers } = props;
+export function FieldKey(props: {
+  layers: Layers;
+  onLayers: (layers: Layers) => void;
+  drawn: readonly string[]; // the layers the robot code drew in
+  hidden: readonly string[];
+  onHidden: (hidden: string[]) => void;
+  compared: KeyedRun[];
+  onUncompare: (key: string) => void;
+}) {
+  const { layers, hidden } = props;
   const [open, setOpen] = useState(true);
   const row = (swatch: string, text: string, layer?: keyof Layers, title?: string) =>
     layer ? (
@@ -396,6 +439,18 @@ export function FieldKey(props: { layers: Layers; onLayers: (layers: Layers) => 
           {row("line beam", "Distance beams", "beams", "Show distance sensor beams (3)")}
           {row("line force", "Wheel side forces", "forces", "Show the sideways force on each wheel (4)")}
           {row("slip", "Wheel grip used")}
+          {row("drawn", "Drawn by the robot code", "drawings", "Show what the robot code draws (5)")}
+          {layers.drawings &&
+            props.drawn.map((name) => (
+              <label className="keyrow sublayer" key={name} title={`Show the layer ${name}`} data-testid="drawn-layer">
+                <input
+                  type="checkbox"
+                  checked={!hidden.includes(name)}
+                  onChange={() => props.onHidden(hidden.includes(name) ? hidden.filter((h) => h !== name) : [...hidden, name])}
+                />
+                <span className="keyname">{name}</span>
+              </label>
+            ))}
           {props.compared.length > 0 && <div className="keysub">Compared with</div>}
           {props.compared.map((run) => (
             <div className="keyrow" key={run.key} data-testid="compared-key">

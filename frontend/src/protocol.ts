@@ -1,14 +1,23 @@
 // Generated from vexsim/ui/protocol.py: python -m vexsim.ui.protocol frontend/src/protocol.ts
 // Don't edit by hand; a test fails when this file is stale.
 
-export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "input" | "log" | "robotlog" | "invalid";
+export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "input" | "log" | "robotlog" | "mcllog" | "invalid";
 export type SessionState = "building" | "starting" | "running" | "paused" | "finished" | "error" | "stopped";
 export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type ConfigKind = "robot" | "field";
 export type ResultKind = "bench" | "sweeps" | "calibrations";
+export type DrawColor = "violet" | "blue" | "orange" | "aqua" | "yellow" | "magenta" | "green" | "red" | "ink" | "muted";
+export type Shape = ["point", number, number, DrawColor, number] | ["line", number, number, number, number, DrawColor] | ["circle", number, number, number, DrawColor] | ["ellipse", number, number, number, number, number, DrawColor] | ["pose", number, number, number, DrawColor] | ["text", number, number, string, DrawColor];
 export type StartJob = BuildJob | DoctorJob | MotorCurvesJob | DriftJob | OdometryJob | BenchJob | CalibrateJob | SweepJob;
-export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
+export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | DrawingsMessage | FollowingMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
 export type ClientCommand = SimpleCommand | StepCommand | SpeedCommand | InputCommand;
+
+/** A virtual driver that drives the robot along a log's path (`vexsim.runtime.follow`): the program's driver control, through its own sticks and drive curve. */
+export interface Follow {
+  log?: string | null;
+  sticks?: "tank" | "arcade";
+  curve?: [number, number, number] | null;
+}
 
 /** Everything `vexsim run` takes that decides what is simulated. Paths are as given: relative to the working directory for the CLI, to the workspace for the UI (`resolved` makes them absolute). `start` is x, y (inches) and heading (degrees, counter-clockwise from +x). */
 export interface RunSpec {
@@ -20,6 +29,7 @@ export interface RunSpec {
   seed?: number;
   noise?: "ideal" | "default" | "harsh" | null;
   input?: string | null;
+  follow?: Follow | null;
   env?: Record<string, string>;
   busy_timeout?: number;
 }
@@ -197,6 +207,7 @@ export interface RunConfiguration {
   seed?: number;
   noise?: "ideal" | "default" | "harsh" | null;
   input?: string | null;
+  follow?: Follow | null;
   env?: Record<string, string>;
   busy_timeout?: number;
   name: string;
@@ -374,6 +385,18 @@ export interface OverlayMessage {
   type: "overlay";
 }
 
+/** What the robot code has drawn (`vexsim::draw_*`, `bot.draw`), by layer: sent when it changes. */
+export interface DrawingsMessage {
+  type: "drawings";
+  layers: Record<string, Shape[]>;
+}
+
+/** A run that follows a log (`RunSpec.follow`) began to: `start` is the moment of the run that goes with the log's first update. */
+export interface FollowingMessage {
+  type: "following";
+  start: number;
+}
+
 /** How far the robot code's pose was from the true one (see `Recorder.pose_error`). */
 export interface PoseErrorSummary {
   mean_in: number;
@@ -400,6 +423,7 @@ export interface RunRecord {
   pose_error: PoseErrorSummary | null;
   samples: number;
   kept?: boolean;
+  follow_start?: number | null;
 }
 
 /** A run ended (finished, stopped, restarted, failed) and was recorded. */
@@ -413,6 +437,7 @@ export interface TapeEvents {
   overlay: [number, Overlay][];
   lcd: [number, string[]][];
   controller_screen: [number, string[]][];
+  drawings?: [number, Record<string, Shape[]>][];
 }
 
 /** A recorded run to scrub: its scene, and a frame every 50 ms of simulated time. */
@@ -449,6 +474,28 @@ export interface Replay {
   name: string;
   tape: Tape;
   telemetry: Telemetry;
+}
+
+/** How a robot's MCL ran, by its log. */
+export interface MclLogSummary {
+  updates: number;
+  duration_s: number;
+  sensors: number;
+  particles: number;
+  start: [number, number, number];
+  interval_ms: [number, number, number] | null;
+  no_reading_pct: number | null;
+  spread_in: [number, number];
+}
+
+/** A robot's MCL log (`vexsim.mcllog`), to play on the field: where its code thought it was, update by update, and what it saw, drawn as the robot code's drawings are. There's no truth: only the real robot knew where it was. */
+export interface MclLogTape {
+  name: string;
+  path: string;
+  summary: MclLogSummary;
+  times: number[];
+  estimate: [number, number, number][];
+  drawings: [number, Record<string, Shape[]>][];
 }
 
 export interface RobotConfig {

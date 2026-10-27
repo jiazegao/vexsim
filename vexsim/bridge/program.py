@@ -133,8 +133,15 @@ class CppProgram:
                 devices.append((port, "distance", ""))
             elif isinstance(device, GpsDevice):
                 devices.append((port, "gps", ""))
-        # VEXSIM_SEED: the simulation's seed, for robot code that wants repeatable randomness
-        env = {"VEXSIM_SEED": str(sim.world.rng.seed), **(self.env or {})}
+        # VEXSIM_SEED: the simulation's seed, for robot code that wants repeatable randomness;
+        # VEXSIM_START: where the run put the robot, as LemLib has poses (theta clockwise from
+        # +y), for robot code that must be told where it starts (following a log, say)
+        start = sim.start_pose
+        env = {
+            "VEXSIM_SEED": str(sim.world.rng.seed),
+            "VEXSIM_START": f"{start.x:g},{start.y:g},{(90.0 - start.heading) % 360:g}",
+            **(self.env or {}),
+        }
         self.host = RobotHost(
             self.executable,
             devices,
@@ -263,4 +270,6 @@ class CppProgram:
         if reply.pose is not None:
             x, y, theta = reply.pose
             sim.reported_pose = Pose(x, y, 90.0 - theta)
+        for command in reply.drawings:
+            sim.drawings.apply(command)
         self.finished_serials.update(reply.finished)

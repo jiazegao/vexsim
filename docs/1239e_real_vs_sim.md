@@ -98,6 +98,13 @@ The simulated sensors then match the real ones, and the simulated MCL gets bette
 
 **More in the log would make replays closer.** The sensors' confidence (`get_confidence()`) would show when MCL discards readings. LemLib's pose (`chassis.getPose()`) would let a replay follow odometry, which doesn't wander while the robot is still, instead of MCL's estimate.
 
+## In the browser app
+`vexsim ui` plays a log on the field beside its replay ([README, section 7](../README.md#7-the-browser-app-vexsim-ui)): put the logs in the workspace folder, click one under *MCL logs*, and *Replay* it with *1239E: replay an MCL log*. Both robots' rays, particles and spread are drawn alike, on one timeline.
+
+![Log 1040 in the browser app (left) beside the simulated robot replaying it (right), 16 s into the run](img/ui_mcl_log.png)
+
+That replay differs from the script's in two ways. MCL starts where the log's first update says, with no RCL reset (`VEXSIM_AUTON=startMcl`, which takes the pose from `VEXSIM_START`), so the two start alike. And the simulated MCL draws its rays, every 16th of its 2048 particles, and its spread as it runs, in the layers the log's are drawn in; its log goes to the run's SD card folder as before.
+
 ## Reproducing this
 The real logs aren't in the repository. With the five logs in a folder:
 ```

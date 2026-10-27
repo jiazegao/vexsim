@@ -1,4 +1,7 @@
 #include <cstdlib>  // vexsim
+#if __has_include("vexsim/sim.hpp")  // vexsim
+#include "vexsim/sim.hpp"
+#endif
 #include "custom/MclTracking.hpp"
 #include "custom/Tracking_Util.hpp"
 #include "custom/configs.hpp"
@@ -12,6 +15,21 @@
 
 #include "pros/rtos.h"
 #include "custom/fast_trig.hpp"
+
+#ifdef VEXSIM
+// vexsim: MCL draws what it sees on the simulator's field, in the layers the browser app
+// draws a real MCL log in: each sensor's ray to its reading, every 16th particle, and the
+// particles' 2-sigma spread around the estimate.
+namespace {
+void drawRay(float mm, float x, float y, float angle) {
+    const bool seen = mm < 9000;
+    const float length = seen ? mm / 25.4f : 10.0f;
+    const float ex = x + length * std::cos(angle), ey = y + length * std::sin(angle);
+    vexsim::draw_line("rays", x, y, ex, ey, seen ? vexsim::Color::yellow : vexsim::Color::muted);
+    if (seen) vexsim::draw_point("rays", ex, ey, vexsim::Color::yellow, 5);
+}
+}  // namespace
+#endif
 
 // --- Async Logging Variables ---
 enum class LogType { PARTICLE, POSE, SENSOR };
@@ -274,6 +292,11 @@ void MclTracking::update_weights() {
 
         float scos = currTrig.cos_m * mountTrigs[i].cos_m - currTrig.sin_m  * mountTrigs[i].sin_m;
         float ssin = currTrig.sin_m * mountTrigs[i].cos_m + currTrig.cos_m  * mountTrigs[i].sin_m;
+
+#ifdef VEXSIM
+        if (i == 0) vexsim::draw_clear("rays");
+        drawRay(sensor_readings_mm[i], sx, sy, ray_ang);
+#endif
 
         if (mclLogType == SDCARD) {
             // Log
@@ -568,6 +591,23 @@ Pose MclTracking::updateMcl() {
     if (mclLogType == SDCARD) {
         logMcl();
     }
+
+#ifdef VEXSIM
+    {
+        auto& particles = *particles_ptr;
+        float sum_x = 0, sum_y = 0;
+        vexsim::draw_clear("particles");
+        for (int i = 0; i < PARTICLE_COUNT; i++) {
+            const auto& p = particles[i].pose;
+            sum_x += (p.x - estimate.first.x) * (p.x - estimate.first.x);
+            sum_y += (p.y - estimate.first.y) * (p.y - estimate.first.y);
+            if (i % 16 == 0) vexsim::draw_point("particles", p.x, p.y, vexsim::Color::violet, 4);
+        }
+        vexsim::draw_clear("spread");
+        vexsim::draw_ellipse("spread", estimate.first.x, estimate.first.y, 2 * std::sqrt(sum_x * INV_PARTICLE_COUNT),
+                             2 * std::sqrt(sum_y * INV_PARTICLE_COUNT), 0, vexsim::Color::blue);
+    }
+#endif
 
     // Prevent resampling during rotations at a single point
     float distSinceResample = std::hypotf(estimate.first.x - lastResamplePose.x, estimate.first.y - lastResamplePose.y);

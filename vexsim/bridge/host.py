@@ -36,6 +36,7 @@ class Reply:
     lcd: dict[int, str] = field(default_factory=dict)
     controller_screen: dict[int, str] = field(default_factory=dict)
     pose: tuple[float, float, float] | None = None  # last vexsim::report_pose (LemLib convention)
+    drawings: list[str] = field(default_factory=list)  # vexsim::draw_* commands, in order
     finished: list[int] = field(
         default_factory=list
     )  # serials of competition functions that returned
@@ -137,6 +138,8 @@ class RobotHost:
             elif verb == "P":
                 x, y, theta = (float(v) for v in rest.split())
                 reply.pose = (x, y, theta)
+            elif verb == "D":
+                reply.drawings.append(rest)
             elif verb == "F":
                 reply.finished.append(int(rest))
             elif verb in ("LCD", "CTRL"):

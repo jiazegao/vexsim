@@ -225,7 +225,7 @@ Ideas to try, in the simulator first: skip MCL updates (or LemLib syncing) while
 The port is a copy of commit `fb5a42a`. To bring in newer code, copy the team's `src/` and `include/custom/` again, then reapply the `// vexsim:` edits (the four above, and the three for replays in [step 11](#11-compare-with-the-real-robot)). Or apply them in the team's own repository: each is inert on the robot (`#ifdef VEXSIM`, or `pros::micros()`), so the team's code would then run in vexsim unchanged.
 
 ## 11. Compare with the real robot
-The team's code logs MCL to the SD card, and the simulated robot can do the same: `--env VEXSIM_SD_DIR=folder` stands in for the card. [1239e_real_vs_sim.md](1239e_real_vs_sim.md) replays five of the real robot's logs in the simulator and compares the two, with `examples/scripts/replay_1239e_mcl_log.py`. Three more `#ifdef VEXSIM` hooks make that possible (the port's [README](../examples/pros_projects/1239e_2026-27/README.md)).
+The team's code logs MCL to the SD card, and the simulated robot can do the same: `--env VEXSIM_SD_DIR=folder` stands in for the card. [1239e_real_vs_sim.md](1239e_real_vs_sim.md) replays five of the real robot's logs in the simulator and compares the two, with `examples/scripts/replay_1239e_mcl_log.py`. Three more `#ifdef VEXSIM` hooks make that possible, and a fourth draws MCL's rays, particles and spread on the field in the browser app (the port's [README](../examples/pros_projects/1239e_2026-27/README.md)). `vexsim ui` plays a real log beside the simulated robot replaying it ([README, section 7](../README.md#7-the-browser-app-vexsim-ui)).
 
 ## Porting your own team's code
 The same steps apply:

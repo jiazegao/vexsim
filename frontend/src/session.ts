@@ -15,6 +15,7 @@ import type {
   ServerMessage,
   SessionInfo,
   SessionState,
+  Shape,
 } from "./protocol";
 import type { Problem } from "./problems";
 import { compilerProblems, tracebackProblem } from "./problems";
@@ -37,6 +38,9 @@ export class SessionStore {
   message: string | null = null;
   scene: SceneMessage | null = null;
   overlay: OverlayMessage | null = null;
+  drawings: Record<string, Shape[]> = {}; // what the robot code has drawn, by layer
+  following: number | null = null; // when a run that follows a log began to (its log's start)
+  programStart: number | null = null; // when the first period after initialize began
   frame: FrameMessage | null = null;
   error: ErrorMessage | null = null;
   lines: Line[] = [];
@@ -82,6 +86,9 @@ export class SessionStore {
       case "scene":
         this.scene = message;
         this.overlay = null;
+        this.drawings = {};
+        this.following = null;
+        this.programStart = null;
         this.frame = null;
         this.error = null;
         this.truth.clear();
@@ -97,6 +104,7 @@ export class SessionStore {
         }
         this.frame = message;
         this.frames += 1;
+        if (this.programStart === null && message.phase !== "initialize" && message.phase !== "disabled") this.programStart = message.t;
         this.truth.add(message.pose[0], message.pose[1]);
         if (message.estimate) this.estimate.add(message.estimate[0], message.estimate[1]);
         this.notifySoon();
@@ -104,6 +112,12 @@ export class SessionStore {
       }
       case "overlay":
         this.overlay = message;
+        break;
+      case "drawings":
+        this.drawings = message.layers;
+        break;
+      case "following":
+        this.following = message.start;
         break;
       case "console":
         this.addLines("console", message.lines);

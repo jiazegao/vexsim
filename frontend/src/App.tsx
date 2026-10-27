@@ -15,6 +15,7 @@ import { fileName } from "./configdoc";
 import type { ControllerInput } from "./controller";
 import { NEUTRAL } from "./controller";
 import type { Layers } from "./draw";
+import { LogPlayback, logSummary } from "./mcllog";
 import { Playhead, usePlayheadClock } from "./playhead";
 import type { Editor } from "./problems";
 import { EDITORS } from "./problems";
@@ -82,7 +83,11 @@ export function App() {
   const [problem, setProblem] = useState<RunProblem | null>(null);
   const [starting, setStarting] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [layers, setLayers] = useState<Layers>({ trails: true, estimate: true, beams: true, forces: true });
+  const [layers, setLayers] = useState<Layers>({ trails: true, estimate: true, beams: true, forces: true, drawings: true });
+  const [hiddenDrawings, setHiddenDrawings] = useState<string[]>([]); // layers of the robot code's drawings
+  const [mcl, setMcl] = useState<LogPlayback | null>(null); // a real robot's MCL log, beside the simulator
+  const [logShift, setLogShift] = useState(0); // s: the log nudged later against the run beside it
+  const [replayWith, setReplayWith] = useState<string | null>(null); // the saved run to replay it with ("": the form)
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [rescans, setRescans] = useState(0);
@@ -237,7 +242,7 @@ export function App() {
   const live = state !== null && isLive(state);
   const busy = BUSY.includes(state ?? "");
   const spec = store?.scene?.spec ?? store?.info?.spec ?? null;
-  const scripted = !!spec?.input;
+  const scripted = !!spec?.input || !!spec?.follow; // nobody drives: a recording, or a log's path
   const driving = live && !scripted;
   const gamepad = useController(store, driving, onScreen);
 
@@ -273,6 +278,36 @@ export function App() {
   else if (shown && formNames(shown.robot, shown.field)) source = { kind: "recording", playback: shown.playback, playhead };
   else if (store && !closedRun && spec && formNames(spec.robot, spec.field ?? "")) source = { kind: "live", store };
   const recording = source.kind === "recording" ? shown : null;
+  const recordedLayers = useMemo(() => recording?.playback.drawnLayers() ?? [], [recording]);
+  const runLayers = source.kind === "live" ? Object.keys(source.store.drawings) : recordedLayers;
+  const drawnLayers = mcl ? [...new Set([...mcl.layers(), ...runLayers])] : runLayers;
+  const recordingPhases = useMemo(() => recording?.playback.phases() ?? [], [recording]);
+
+  // An MCL log beside the simulator: it plays on its own timeline, or with the run beside it
+  // (live or recorded), its first update at the moment that run began following it (a replay
+  // of it), else where the run's program began (after initialize), nudged by logShift.
+  const follows = (run: RunSpec | null | undefined) => !!mcl && !!run?.follow?.log && run.follow.log === mcl.tape.path;
+  let logAt: number | null = null; // the run's time of the log's first update; null: not yet
+  if (mcl && recording) {
+    const run = recording.run;
+    const began = recordingPhases.find((phase) => phase.name !== "initialize" && phase.name !== "disabled");
+    logAt = (follows(run?.spec) ? run?.follow_start : null) ?? began?.start ?? 0;
+  } else if (mcl && source.kind === "live") {
+    logAt = follows(source.store.scene?.spec ?? spec) ? source.store.following : source.store.programStart;
+  }
+  if (logAt !== null) logAt += logShift;
+  const logAlone = !!mcl && source.kind === "preview"; // nothing beside it: its own timeline
+  const liveStore = source.kind === "live" ? source.store : null;
+  const logClock = (): number | null => {
+    if (logAlone) return playhead.t;
+    if (logAt === null) return null;
+    if (recording) return playhead.t - logAt;
+    const t = liveStore?.frame?.t;
+    return t === undefined ? null : t - logAt;
+  };
+  useEffect(() => {
+    if (mcl && logAlone) playhead.load(mcl.start, mcl.end, mcl.start);
+  }, [mcl, logAlone, playhead]);
   const onField: Compared[] = compared.map((r, i) => ({ playback: r.playback, label: shortName(r.label), dash: COMPARE_DASHES[i] }));
   const startPose = useMemo(() => startOf(form), [form]);
   const start = startPose ? { pose: startPose, editable: !busy } : null;
@@ -377,6 +412,62 @@ export function App() {
     } finally {
       setOpening(null);
     }
+  };
+
+  /** A real robot's MCL log, beside the simulator. */
+  const openMclLog = async (path: string) => {
+    setOpening(`mcl:${path}`);
+    try {
+      const result = await api.mclLog(path);
+      if ("problem" in result) setProblem(result.problem);
+      else {
+        setMcl(new LogPlayback(result.ok));
+        setLogShift(0);
+        setReplayWith(null);
+        setProblem(null);
+      }
+    } catch (error) {
+      setProblem({ error: `Couldn't open ${path}: ${(error as Error).message}`, issues: [] });
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  const closeMclLog = () => {
+    setMcl(null);
+    if (!recording) playhead.pause();
+  };
+
+  // A replay of the open log: a saved run (or the run form) with a virtual driver following the
+  // log's path from where it starts. Saved runs that follow logs come first.
+  const replayRuns = configurations.filter((c) => c.program);
+  replayRuns.sort((a, b) => Number(!!b.follow) - Number(!!a.follow));
+  const followers = replayRuns.filter((c) => c.follow); // saved runs made to replay logs
+  const replayChoice = replayWith ?? (followers.find((c) => c.name === form.config) ?? followers.find((c) => c.program === form.program) ?? followers[0])?.name ?? "";
+  const replayLog = async () => {
+    if (!mcl) return;
+    const chosen = configurations.find((c) => c.name === replayChoice) ?? null;
+    let base: RunSpec;
+    if (chosen) base = chosen;
+    else {
+      const result = formToSpec(form);
+      if ("error" in result) {
+        setProblem({ error: result.error, issues: [] });
+        return;
+      }
+      base = result.spec;
+    }
+    const { name: _, ...rest } = base as RunConfiguration;
+    const replay: RunSpec = {
+      ...rest,
+      start: mcl.tape.summary.start,
+      input: null,
+      follow: { log: mcl.tape.path, sticks: base.follow?.sticks ?? "tank", curve: base.follow?.curve ?? null },
+    };
+    setShown(null);
+    setLogShift(0);
+    setForm(specToForm(replay, chosen?.name ?? ""));
+    await startRun(replay, `${chosen ? chosen.name : "Replay"} · ${mcl.name}`);
   };
 
   /** A benchmark's worst case on the field, with its scenario's robot and field. */
@@ -513,6 +604,11 @@ export function App() {
       setPage("calibrate");
       return;
     }
+    if (item.kind === "mcllog") {
+      setPage("simulate");
+      openMclLog(item.path);
+      return;
+    }
     if (page === "analyze" && item.kind === "robot") return setAnalyzeRobot(item.path);
     if (page === "calibrate" && item.kind === "robot") return setCalibration((c) => ({ ...c, robot: item.path }));
     if (page === "calibrate" && item.kind === "project") return setCalibration((c) => ({ ...c, project: item.path }));
@@ -572,10 +668,10 @@ export function App() {
     return error;
   };
 
-  // Keys, as in the pygame viewer: Space pause, . step, R restart, +/- speed; 1-4 what the
+  // Keys, as in the pygame viewer: Space pause, . step, R restart, +/- speed; 1-5 what the
   // field shows; ? the list of keys. Driving keys are useController's. A recorded run: Space
   // play, arrows (Shift: farther), Home/End and , . move through it.
-  const scrubbing = recording !== null;
+  const scrubbing = recording !== null || logAlone;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -642,6 +738,9 @@ export function App() {
         case "4":
           toggle("forces");
           break;
+        case "5":
+          toggle("drawings");
+          break;
         case "?":
           setHelp((open) => !open);
           break;
@@ -685,6 +784,7 @@ export function App() {
           loading={scanning}
           onRefresh={() => info && scan(info, false)}
           shownLog={recording?.key.startsWith("log:") ? recording.key.slice(4) : null}
+          mclLog={mcl?.tape.path ?? null}
           runCount={runs.length}
           onRunsTab={loadRuns}
           runs={
@@ -748,28 +848,111 @@ export function App() {
               onStop={stop}
               command={store?.info?.command ?? store?.scene?.command ?? recording?.run?.command ?? null}
             />
-            <div className="stage">
-              <div className="fieldcol">
-                <FieldView
-                  source={source}
-                  compared={onField}
-                  preview={preview}
-                  start={start}
-                  onStart={moveStart}
-                  layers={layers}
-                  follow={follow}
-                  onFollow={setFollow}
-                  stamp={video && recording ? recording.name : null}
-                />
+            {mcl && (
+              <div className="logbar" data-testid="logbar">
+                <div className="logrow">
+                  <span className="logname" title={mcl.tape.path}>
+                    {mcl.name}
+                  </span>
+                  <span className="muted small">{logSummary(mcl.tape)}</span>
+                  <span className="spacer" />
+                  <button type="button" className="ghost small" onClick={closeMclLog} title="Put the log away" aria-label={`Close ${mcl.name}`} data-testid="close-log">
+                    ×
+                  </button>
+                </div>
+                <div className="logrow">
+                  {!logAlone && (
+                    <label title="The moment of the run beside it when the log's first update comes: when the run began following it, or else where its program began. Nudge it to line them up.">
+                      <span className="small">The log starts at</span>
+                      <input
+                        type="number"
+                        step={0.1}
+                        value={logAt === null ? "" : +logAt.toFixed(2)}
+                        placeholder="…"
+                        disabled={logAt === null}
+                        onChange={(event) => logAt !== null && event.target.value !== "" && setLogShift(logShift + Number(event.target.value) - logAt)}
+                        aria-label="Moment of the run the log starts at (s)"
+                        data-testid="log-start"
+                      />
+                      <span className="small">s of the run</span>
+                    </label>
+                  )}
+                  <span className="spacer" />
+                  <label title="Replay the log in the simulator: a virtual driver drives the run's robot along the real robot's path, through its program's driver control">
+                    <span className="small">Replay it with</span>
+                    <select value={replayChoice} onChange={(event) => setReplayWith(event.target.value)} data-testid="replay-with">
+                      <option value="">The run set up above</option>
+                      {replayRuns.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="button" className="small" onClick={replayLog} disabled={starting} data-testid="replay-log">
+                    Replay
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className={`stage${mcl ? " paired" : ""}`}>
+              <div className={`fieldcol${mcl ? " paired" : ""}`}>
+                <div className={mcl ? "fieldpair" : "fieldsingle"}>
+                  {mcl && (
+                    <div className="fieldhalf">
+                      <div className="fieldlabel">
+                        <b>Real robot</b> <span className="muted">its log: what its code thought and saw</span>
+                      </div>
+                      <FieldView
+                        name="log"
+                        source={{ kind: "log", log: mcl, clock: logClock, shape: source.kind === "live" ? source.store.scene : recording ? recording.playback.tape.scene : preview }}
+                        compared={[]}
+                        preview={null}
+                        start={null}
+                        onStart={moveStart}
+                        layers={layers}
+                        hiddenDrawings={hiddenDrawings}
+                        follow={follow}
+                        onFollow={setFollow}
+                      />
+                    </div>
+                  )}
+                  <div className="fieldhalf">
+                    {mcl && (
+                      <div className="fieldlabel">
+                        <b>vexsim</b>{" "}
+                        <span className="muted">
+                          {recording ? recording.name : source.kind === "live" ? "the run" : "the robot as set up above"}
+                          {logAt === null && !logAlone && (source.kind === "live" ? " · the log starts when the run follows it" : "")}
+                        </span>
+                      </div>
+                    )}
+                    <FieldView
+                      source={source}
+                      compared={onField}
+                      preview={preview}
+                      start={start}
+                      onStart={moveStart}
+                      layers={layers}
+                      hiddenDrawings={hiddenDrawings}
+                      follow={follow}
+                      onFollow={setFollow}
+                      stamp={video && recording ? recording.name : null}
+                    />
+                  </div>
+                </div>
                 <FieldKey
                   layers={layers}
                   onLayers={setLayers}
+                  drawn={drawnLayers}
+                  hidden={hiddenDrawings}
+                  onHidden={setHiddenDrawings}
                   compared={compared.map((r, i) => ({ key: r.key, name: r.label, dash: COMPARE_DASHES[i] }))}
                   onUncompare={(key) => setCompared((list) => list.filter((r) => r.key !== key))}
                 />
                 {recording && (
                   <Timeline
-                    playback={recording.playback}
+                    phases={recordingPhases}
                     playhead={playhead}
                     name={recording.name}
                     run={recording.run}
@@ -777,6 +960,20 @@ export function App() {
                     video={video ? "recording" : canRecordVideo() ? "off" : "unsupported"}
                     onVideo={toggleVideo}
                     onClose={closeRecording}
+                  />
+                )}
+                {mcl && logAlone && (
+                  <Timeline
+                    phases={[]}
+                    playhead={playhead}
+                    name={mcl.name}
+                    run={null}
+                    summary="the real robot's log, played alone: replay it, or open a run, to see it beside one"
+                    csv={null}
+                    video={null}
+                    onVideo={() => {}}
+                    onClose={closeMclLog}
+                    closeTitle="Put the log away"
                   />
                 )}
               </div>

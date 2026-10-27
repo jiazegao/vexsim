@@ -12,6 +12,10 @@ from vexsim.api import delay
 def autonomous(bot):
     chassis = bot.chassis
     bot.print("autonomous start")
+    # Where the tour stops, numbered on the field (the browser app draws bot.draw's layers)
+    for i, (x, y) in enumerate([(30, 0), (30, 24), (0, 40), (-20, -20), (0, 0)], 1):
+        bot.draw.point("stops", x, y, size=6)
+        bot.draw.text("stops", x + 2.5, y + 2.5, str(i))
 
     yield from chassis.move_to_point(30, 0)  # PID drive to a point
     yield from chassis.turn_to_heading(90)  # PID turn in place

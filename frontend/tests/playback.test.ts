@@ -47,6 +47,10 @@ const TAPE: Tape = {
     ],
     lcd: [[0, ["hello"]]],
     controller_screen: [],
+    drawings: [
+      [0.05, { mcl: [["point", 1, 2, "violet", 3]] }],
+      [0.1, { mcl: [["point", 1, 2, "violet", 3]], plan: [["line", 0, 0, 5, 5, "orange"]] }],
+    ],
   },
 };
 
@@ -79,6 +83,15 @@ describe("playing a recorded run back", () => {
     expect(playback.trail("estimate", 0.15).length).toBe(2);
     expect(playback.overlayAt(0.05)).toEqual({ type: "overlay", path: null, target: null });
     expect(playback.overlayAt(0.12)?.target).toEqual([10, 0, null]);
+  });
+
+  it("has what the robot code had drawn at each moment", () => {
+    expect(playback.drawingsAt(0)).toEqual({});
+    expect(Object.keys(playback.drawingsAt(0.07))).toEqual(["mcl"]);
+    expect(Object.keys(playback.drawingsAt(0.15))).toEqual(["mcl", "plan"]);
+    expect(playback.drawnLayers()).toEqual(["mcl", "plan"]);
+    const older = new Playback({ ...TAPE, events: { ...TAPE.events, drawings: undefined } }); // from before drawings
+    expect([older.drawingsAt(0.1), older.drawnLayers()]).toEqual([{}, []]);
   });
 
   it("lists the phases for the timeline", () => {

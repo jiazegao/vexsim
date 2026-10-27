@@ -3,7 +3,7 @@
 
 import type { Palette } from "./palette";
 import { mix, withAlpha } from "./palette";
-import type { FieldScene, FrameMessage, OverlayMessage, RobotScene } from "./protocol";
+import type { Shape as DrawnShape, FieldScene, FrameMessage, OverlayMessage, RobotScene } from "./protocol";
 import { handlePoint } from "./startpose";
 import type { View } from "./view";
 import { toScreen } from "./view";
@@ -13,7 +13,11 @@ export interface Layers {
   estimate: boolean;
   beams: boolean;
   forces: boolean; // each wheel's sideways force
+  drawings: boolean; // what the robot code draws (vexsim::draw_*, bot.draw)
 }
+
+/** What the robot code has drawn, by layer (only the layers to show). */
+export type Drawings = Record<string, DrawnShape[]>;
 
 /** A robot and a field: a run's scene, or a preview before any run. */
 export interface Shape {
@@ -57,6 +61,8 @@ export interface Picture {
   pieces?: [number, number][]; // with no frame: where the field config puts the pieces
   start?: StartMarker | null;
   ghosts?: Ghost[];
+  drawings?: Drawings | null;
+  logged?: readonly [number, number, number] | null; // a real robot's estimate, from its log
   stamp?: string | null; // written in the corner (a video's run and time)
 }
 
@@ -68,6 +74,8 @@ const MM_PER_IN = 25.4;
 const NO_READING_IN = 10; // how long a beam that sees nothing is drawn
 const WHEEL_WIDTH_IN = 1.1;
 const DEFAULT_FIELD: [number, number] = [144, 144];
+const POSE_TICK_PX = 14; // a drawn pose's heading tick
+const LABEL_FONT = "12px system-ui, -apple-system, 'Segoe UI', sans-serif";
 
 export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette, picture: Picture, layers: Layers): void {
   const { scene, frame } = picture;
@@ -82,6 +90,8 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
     if (layers.estimate) drawTrail(ctx, view, picture.estimate, colors.estimate);
   }
   if (picture.overlay) drawOverlay(ctx, view, colors, picture.overlay);
+  const drawings = layers.drawings ? picture.drawings : null;
+  if (drawings) drawShapes(ctx, view, colors, drawings, false);
   for (const ghost of picture.ghosts ?? []) drawGhostRun(ctx, view, colors, ghost);
   const start = picture.start;
   if (start && !start.outline) drawRobot(ctx, view, colors, start.robot, start.pose, mounted(start.robot, start.pose), false);
@@ -91,7 +101,13 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
     if (layers.estimate && frame.estimate) drawGhost(ctx, view, colors, scene.robot, frame.estimate);
     for (const [x, y] of frame.contacts) dot(ctx, view, x, y, 4, colors.slip);
   }
+  if (layers.estimate && picture.logged) {
+    // a log's estimate: the robot's outline where its code thought it was (a mark without a robot)
+    if (scene) drawGhost(ctx, view, colors, scene.robot, picture.logged);
+    else drawShapes(ctx, view, colors, { estimate: [["pose", ...picture.logged, "blue"]] }, false);
+  }
   if (start) drawStart(ctx, view, colors, start);
+  if (drawings) drawShapes(ctx, view, colors, drawings, true); // text over everything but labels
   for (const ghost of picture.ghosts ?? []) drawLabel(ctx, view, colors, ghost);
   if (picture.stamp) drawStamp(ctx, view, colors, picture.stamp);
   ctx.restore();
@@ -204,6 +220,93 @@ function drawOverlay(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
       ctx.moveTo(sx, sy);
       ctx.lineTo(sx + 14 * Math.cos(heading * DEG), sy - 14 * Math.sin(heading * DEG));
       ctx.stroke();
+    }
+  }
+}
+
+/** What the robot code drew: its marks (under the robot), or its text (over it). Text is in
+ * ink, with a dot of its color before it when it has one. */
+export function drawShapes(ctx: CanvasRenderingContext2D, view: View, colors: Palette, drawings: Drawings, text: boolean): void {
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = "round";
+  for (const shapes of Object.values(drawings)) {
+    for (const shape of shapes) {
+      if ((shape[0] === "text") !== text) continue;
+      switch (shape[0]) {
+        case "point": {
+          const [, x, y, color, size] = shape;
+          const [sx, sy] = toScreen(view, x, y);
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(0.75, size / 2), 0, 2 * Math.PI);
+          ctx.fillStyle = colors.hues[color];
+          ctx.fill();
+          break;
+        }
+        case "line": {
+          const [, x1, y1, x2, y2, color] = shape;
+          const [ax, ay] = toScreen(view, x1, y1);
+          const [bx, by] = toScreen(view, x2, y2);
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(bx, by);
+          ctx.strokeStyle = colors.hues[color];
+          ctx.stroke();
+          break;
+        }
+        case "circle": {
+          const [, x, y, radius, color] = shape;
+          const [sx, sy] = toScreen(view, x, y);
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(0.5, radius * view.scale), 0, 2 * Math.PI);
+          ctx.strokeStyle = colors.hues[color];
+          ctx.stroke();
+          break;
+        }
+        case "ellipse": {
+          const [, x, y, rx, ry, rotation, color] = shape;
+          const [sx, sy] = toScreen(view, x, y);
+          ctx.beginPath();
+          // the screen's y points down: a counter-clockwise turn on the field is clockwise here
+          ctx.ellipse(sx, sy, Math.max(0.5, Math.abs(rx) * view.scale), Math.max(0.5, Math.abs(ry) * view.scale), -rotation * DEG, 0, 2 * Math.PI);
+          ctx.fillStyle = withAlpha(colors.hues[color], 0.12);
+          ctx.fill();
+          ctx.strokeStyle = colors.hues[color];
+          ctx.stroke();
+          break;
+        }
+        case "pose": {
+          const [, x, y, heading, color] = shape;
+          const [sx, sy] = toScreen(view, x, y);
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(sx + POSE_TICK_PX * Math.cos(heading * DEG), sy - POSE_TICK_PX * Math.sin(heading * DEG));
+          ctx.strokeStyle = colors.hues[color];
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.lineWidth = 1.5;
+          dot(ctx, view, x, y, 4, colors.hues[color], colors.surface);
+          break;
+        }
+        case "text": {
+          const [, x, y, label, color] = shape;
+          const [px, sy] = toScreen(view, x, y);
+          let sx = px;
+          if (color !== "ink" && color !== "muted") {
+            dot(ctx, view, x, y, 3.5, colors.hues[color], colors.surface);
+            sx += 7;
+          }
+          ctx.font = LABEL_FONT;
+          ctx.textBaseline = "middle";
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = colors.surface;
+          ctx.strokeText(label, sx, sy);
+          ctx.fillStyle = color === "muted" ? colors.muted : colors.ink;
+          ctx.fillText(label, sx, sy);
+          ctx.textBaseline = "alphabetic";
+          ctx.lineWidth = 1.5;
+          break;
+        }
+      }
     }
   }
 }

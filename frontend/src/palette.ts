@@ -1,6 +1,8 @@
 // Colors for the canvas, read from the page's CSS tokens (styles.css), so the field
 // follows the light and dark themes like the rest of the page.
 
+import type { DrawColor } from "./protocol";
+
 export interface Palette {
   page: string;
   surface: string;
@@ -20,9 +22,10 @@ export interface Palette {
   focus: string; // what's selected
   critical: string; // something with an error
   warning: string;
+  hues: Record<DrawColor, string>; // what robot code draws in (vexsim::Color)
 }
 
-const TOKENS: Record<keyof Palette, string> = {
+const TOKENS: Record<Exclude<keyof Palette, "hues">, string> = {
   page: "--page",
   surface: "--surface-1",
   ink: "--text-primary",
@@ -43,12 +46,26 @@ const TOKENS: Record<keyof Palette, string> = {
   warning: "--warning",
 };
 
+// The palette's hues by the names robot code draws with, in its slots' order
+const HUES: Record<DrawColor, string> = {
+  blue: "--series-1",
+  orange: "--series-2",
+  aqua: "--series-3",
+  yellow: "--series-4",
+  magenta: "--series-5",
+  green: "--series-6",
+  violet: "--series-7",
+  red: "--series-8",
+  ink: "--text-primary",
+  muted: "--text-muted",
+};
+
 export function readPalette(element: Element = document.documentElement): Palette {
   const style = getComputedStyle(element);
-  const palette = {} as Palette;
-  for (const [name, token] of Object.entries(TOKENS) as [keyof Palette, string][]) {
-    palette[name] = style.getPropertyValue(token).trim() || "#888888";
-  }
+  const read = (token: string) => style.getPropertyValue(token).trim() || "#888888";
+  const palette = { hues: {} } as Palette;
+  for (const [name, token] of Object.entries(TOKENS) as [Exclude<keyof Palette, "hues">, string][]) palette[name] = read(token);
+  for (const [name, token] of Object.entries(HUES) as [DrawColor, string][]) palette.hues[name] = read(token);
   return palette;
 }
 

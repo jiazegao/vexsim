@@ -11,6 +11,7 @@ const GROUPS: { kinds: ItemKind[]; title: string; hint: string }[] = [
   { kinds: ["input"], title: "Controller inputs", hint: "Click to drive with this recorded input" },
   { kinds: ["log"], title: "Telemetry logs", hint: "Click to play this log back, drawn with the robot and field picked above" },
   { kinds: ["robotlog"], title: "Robot logs", hint: "Click to calibrate the simulated robot with this log" },
+  { kinds: ["mcllog"], title: "MCL logs", hint: "Click to play this real robot's log on the field, beside the simulator" },
   { kinds: ["scenario"], title: "Benchmark scenarios", hint: "Click to benchmark it" },
   { kinds: ["invalid"], title: "Unreadable configs", hint: "Click to open it and fix the YAML" },
 ];
@@ -22,7 +23,7 @@ const PAGE_HINTS: Record<string, Partial<Record<ItemKind, string>>> = {
   build: { project: "Click to pick this project" },
 };
 
-function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null): boolean {
+function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null, mclLog: string | null): boolean {
   switch (item.kind) {
     case "robot":
       return form.robot === item.path;
@@ -35,6 +36,8 @@ function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null): boo
       return form.input === item.path;
     case "log":
       return shownLog === item.path;
+    case "mcllog":
+      return mclLog === item.path;
     default:
       return false;
   }
@@ -53,6 +56,7 @@ export function Sidebar(props: {
   onRefresh: () => void;
   loading: boolean;
   shownLog: string | null; // the telemetry log being played back
+  mclLog: string | null; // the MCL log open beside the simulator
   runs: ReactNode; // the Runs tab
   runCount: number;
   onRunsTab: () => void; // the Runs tab was opened: time to look for new runs
@@ -98,7 +102,7 @@ export function Sidebar(props: {
                 </h2>
                 <ul>
                   {items.map((item) => {
-                    const selected = props.picked ? props.picked.includes(item.path) : inUse(item, form, props.shownLog);
+                    const selected = props.picked ? props.picked.includes(item.path) : inUse(item, form, props.shownLog, props.mclLog);
                     return (
                       <li key={item.kind + item.path} className={editable ? "editable" : undefined}>
                         <button

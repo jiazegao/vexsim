@@ -13,6 +13,7 @@ from vexsim.algorithms.localization.base import Pose
 from vexsim.bridge.program import CppProgram
 from vexsim.cli import main
 from vexsim.config import load_field, load_robot, validate_field, validate_robot
+from vexsim.runtime.follow import ExpoCurve
 from vexsim.runtime.simulation import Simulation
 
 PROJECT = ROOT / "examples" / "pros_projects" / "1239e_2026-27"
@@ -122,8 +123,8 @@ def test_mcl_logs_parse(tmp_path):
     write_mcl_log(log, [(62.8, 0.0, math.pi), (62.5, 0.0, math.pi)])
     updates = replay.parse_log(log)
     assert len(updates) == 2  # the cut-off third is left out
-    assert updates[1].t == pytest.approx(1.03) and updates[1].est == (62.5, 0.0, 3.14159)
-    assert updates[0].sensors[3][0] == 1003 and updates[0].std == (1.2, 1.2)
+    assert updates[1].t == pytest.approx(1.03) and updates[1].estimate == (62.5, 0.0, 3.14159)
+    assert updates[0].sensors[3][0] == 1003 and updates[0].spread == (1.2, 1.2)
     routine, start = replay.start_routine(updates)
     assert routine == "startMcl 60,0,270,0,0,1,0" and start == pytest.approx((62.8, 0, 180))
 
@@ -138,10 +139,10 @@ def test_mcl_map_and_throttle_curve():
     assert pole.what == "pole" and pole.distance_in == pytest.approx(10 - 1.5937075)
     base = replay.map_hit(10.0, 0.0, math.pi, high=False)  # ...low ones the base under it
     assert base.what == "base" and base.distance_in == pytest.approx(10 - 2.8056165)
-    curve = replay.ThrottleCurve()
-    assert curve.joystick(0) == 0 and curve.joystick(127) == 127 and curve.joystick(-200) == -127
-    output = dict(curve.table)[abs(curve.joystick(-60))]
-    assert curve.joystick(-60) < 0 and abs(output - 60) < 1.5
+    curve = ExpoCurve(*replay.CURVE)  # the team's throttle curve, inverted
+    assert curve.stick(0) == 0 and curve.stick(127) == 127 and curve.stick(-200) == -127
+    output = dict(curve.table)[abs(curve.stick(-60))]
+    assert curve.stick(-60) < 0 and abs(output - 60) < 1.5
 
 
 def test_replay_drives_a_logged_path(port_exe, in_cache, tmp_path):
@@ -154,7 +155,7 @@ def test_replay_drives_a_logged_path(port_exe, in_cache, tmp_path):
         result = replay.replay((str(log), str(tmp_path / "out"), 1, port_exe, "hold"))
     assert result.sim_log.parent == tmp_path / "out" / "mcl_log7_s1"
     sim = replay.parse_log(result.sim_log)
-    assert len(sim) > 90 and sim[-1].est[0] == pytest.approx(38.8, abs=3)
+    assert len(sim) > 90 and sim[-1].estimate[0] == pytest.approx(38.8, abs=3)
     following = sorted(result.following_in)  # the drive lags the reference a little
     assert following[len(following) // 2] < 1.5 and following[-1] < 6
     numbers = replay.measure(sim, result.truth_csv)

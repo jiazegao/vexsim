@@ -1,5 +1,4 @@
-import { useMemo } from "react";
-import type { Playback } from "../playback";
+import type { Phase } from "../playback";
 import type { Playhead } from "../playhead";
 import { usePlayhead } from "../playhead";
 import { fixed, formatTime } from "../pose";
@@ -21,20 +20,22 @@ export function runSummary(run: RunRecord): string {
   return parts.join(" · ");
 }
 
-/** Play, pause and scrub a recorded run; its phases under the scrubber, its exports beside. */
+/** Play, pause and scrub a recorded run (or a robot's log); its phases under the scrubber,
+ * its exports beside. */
 export function Timeline(props: {
-  playback: Playback;
+  phases: Phase[];
   playhead: Playhead;
   name: string;
   run: RunRecord | null;
+  summary?: string; // about it, when it isn't a run
   csv: string | null; // the telemetry as CSV, to download
-  video: "off" | "recording" | "unsupported";
+  video: "off" | "recording" | "unsupported" | null; // null: no video of it
   onVideo: () => void; // start recording a video, or cancel it
   onClose: () => void;
+  closeTitle?: string;
 }) {
-  const { playback, playhead } = props;
+  const { phases, playhead } = props;
   usePlayhead(playhead);
-  const phases = useMemo(() => playback.phases(), [playback]);
   const { start, end, t, playing } = playhead;
   const span = Math.max(1e-9, end - start);
   const share = (seconds: number) => `${(seconds / span) * 100}%`;
@@ -100,30 +101,32 @@ export function Timeline(props: {
         <span className="run-name" title={props.name} data-testid="shown-run">
           {props.name}
         </span>
-        {props.run && <span className="muted small">{runSummary(props.run)}</span>}
+        {props.run ? <span className="muted small">{runSummary(props.run)}</span> : props.summary && <span className="muted small">{props.summary}</span>}
         <span className="spacer" />
         {props.csv && (
           <a className="button ghost small" href={props.csv} download title="The run's telemetry, every 10 ms, as a spreadsheet">
             CSV
           </a>
         )}
-        <button
-          type="button"
-          className={`ghost small${props.video === "recording" ? " on" : ""}`}
-          onClick={props.onVideo}
-          disabled={props.video === "unsupported"}
-          data-testid="video"
-          title={
-            props.video === "unsupported"
-              ? "This browser can't record video"
-              : props.video === "recording"
-                ? "Stop without saving"
-                : "Play the run from the start and save the field as a WebM video, at this speed"
-          }
-        >
-          {props.video === "recording" ? "Cancel video" : "Video"}
-        </button>
-        <button type="button" className="ghost small" onClick={props.onClose} title="Back to the robot as the run form sets it up" data-testid="close-run">
+        {props.video !== null && (
+          <button
+            type="button"
+            className={`ghost small${props.video === "recording" ? " on" : ""}`}
+            onClick={props.onVideo}
+            disabled={props.video === "unsupported"}
+            data-testid="video"
+            title={
+              props.video === "unsupported"
+                ? "This browser can't record video"
+                : props.video === "recording"
+                  ? "Stop without saving"
+                  : "Play the run from the start and save the field as a WebM video, at this speed"
+            }
+          >
+            {props.video === "recording" ? "Cancel video" : "Video"}
+          </button>
+        )}
+        <button type="button" className="ghost small" onClick={props.onClose} title={props.closeTitle ?? "Back to the robot as the run form sets it up"} data-testid="close-run">
           Close
         </button>
       </div>

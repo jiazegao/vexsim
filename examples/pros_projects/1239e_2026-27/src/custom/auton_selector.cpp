@@ -2,6 +2,7 @@
 #include "custom/auton_selector.hpp"
 #include <cstdio>  // vexsim
 #include <cstdlib>  // vexsim
+#include <string>  // vexsim
 #include "liblvgl/widgets/image/lv_image.h"
 #include "custom/auton.hpp"
 
@@ -73,11 +74,18 @@ void runAuton() {
     // VEXSIM_AUTON environment variable (vexsim run --env VEXSIM_AUTON="Left 40").
     if (const char* name = std::getenv("VEXSIM_AUTON")) {
         // "startMcl x,y,theta,front,left,back,right" only starts MCL, as a routine would,
-        // for replaying a real MCL log (examples/scripts/replay_1239e_mcl_log.py).
+        // for replaying a real MCL log (examples/scripts/replay_1239e_mcl_log.py). Plain
+        // "startMcl" starts it, with no resets, where the run put the robot (VEXSIM_START),
+        // for following a log (vexsim run --follow).
         float x, y, theta;
         int f, l, b, r;
         if (std::sscanf(name, "startMcl %f,%f,%f,%d,%d,%d,%d", &x, &y, &theta, &f, &l, &b, &r) == 7) {
             startMcl(x, y, theta, f, l, b, r);
+            return;
+        }
+        const char* start = std::getenv("VEXSIM_START");
+        if (std::string(name) == "startMcl" && start && std::sscanf(start, "%f,%f,%f", &x, &y, &theta) == 3) {
+            startMcl(x, y, theta, false, false, false, false);
             return;
         }
         bool found = false;

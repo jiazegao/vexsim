@@ -9,6 +9,8 @@ dicts with a ``type``:
 - ``scene``: the robot and field (``vexsim.app.frames.scene_of``), after every (re)start
 - ``frame``: where everything is (``frame_of``)
 - ``overlay``: a Python chassis motion's path and target, when they change
+- ``drawings``: what the robot code has drawn on the field, by layer, when it changes
+- ``following``: a run that follows a log began to, at ``start`` (simulated seconds)
 - ``console``: new lines of program output
 - ``error``: ``message``, config ``issues``, ``traceback``
 - ``recorded``: a run ended and was written to the workspace's .vexsim/runs (``run``, its
@@ -100,6 +102,8 @@ class Worker:
         self.stopping = False
         self.console_sent = 0
         self.overlay_key: Any = None
+        self.drawn = -1  # the version of the robot code's drawings last sent
+        self.following: float | None = None  # when the run began following its log, as sent
         self.warnings: list[str] = []  # about the start, for the console
         self.debt = 0.0  # simulated seconds owed to real time
         self.rate_samples: deque[tuple[float, float]] = deque(maxlen=90)
@@ -183,6 +187,8 @@ class Worker:
         self.close_sim()
         self.console_sent = 0
         self.overlay_key = None
+        self.drawn = -1
+        self.following = None
         self.debt = 0.0
         self.rate_samples.clear()
         self.console_log = []
@@ -240,7 +246,8 @@ class Worker:
 
         sim = self.sim
         if self.tape is not None and sim is not None:
-            self.tape.sample(frame_of(sim, state=self.state, speed=None, rate=0.0), overlay_of(sim))
+            frame = frame_of(sim, state=self.state, speed=None, rate=0.0)
+            self.tape.sample(frame, overlay_of(sim), sim.drawings)
 
     def finish_run(self, ended: str, message: str | None = None) -> None:
         """Write the current run's record (once), and tell the server."""
@@ -259,6 +266,7 @@ class Worker:
                 duration=sim.world.time,
                 recorder=sim.recorder,
                 console=self.console_log,
+                follow_start=getattr(sim.input_source, "start_s", None),
             )
             prune(self.runs)
         except (OSError, ValueError) as exc:
@@ -376,6 +384,13 @@ class Worker:
         if key != self.overlay_key:
             self.overlay_key = key
             self.send(overlay)
+        if sim.drawings.version != self.drawn:
+            self.drawn = sim.drawings.version
+            self.send({"type": "drawings", "layers": sim.drawings.snapshot()})
+        start = getattr(sim.input_source, "start_s", None)
+        if start is not None and start != self.following:
+            self.following = start
+            self.send({"type": "following", "start": round(start, 4)})
 
     # --- commands --------------------------------------------------------------------------
 

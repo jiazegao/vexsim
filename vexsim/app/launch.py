@@ -12,6 +12,9 @@ everything a run takes, its start pose and environment variables included::
         start: [60, 0, 0]
         env: {VEXSIM_AUTON: Left 40}
 
+A run can follow a real robot's MCL log (``follow``, see ``vexsim.runtime.follow``); a saved
+one without a ``log`` replays whichever log the app is given.
+
 The browser app reads and writes the file, and people can edit it too; the app writes
 it afresh, so comments in it don't survive a save from the app.
 """
@@ -131,7 +134,16 @@ def _plain(configuration: RunConfiguration) -> dict:
     data = configuration.model_dump(exclude_defaults=True)
     data = {"name": data.pop("name"), **data}
     if "start" in data:
-        data["start"] = Inline(int(v) if float(v).is_integer() else v for v in data["start"])
+        data["start"] = _numbers(data["start"])
     if "env" in data:
         data["env"] = InlineMap(data["env"])
+    if "follow" in data:  # written as {sticks: tank, curve: [15, 20, 1.05]}
+        follow = data["follow"]
+        if "curve" in follow:
+            follow["curve"] = _numbers(follow["curve"])
+        data["follow"] = InlineMap(follow)
     return data
+
+
+def _numbers(values) -> Inline:
+    return Inline(int(v) if float(v).is_integer() else v for v in values)

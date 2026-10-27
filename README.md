@@ -150,13 +150,13 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 |---|---|
 | `examples/robots/` | `full_omni_6m` (6-motor full-omni tank with tracking wheels, IMU and a distance sensor: the main example), `traction_6m` (traction wheels in the middle), `xdrive_4m`, `mecanum_4m`, `hdrive_5m`, `lemlib_example` (the robot LemLib's example program configures), `1239e_2026-27` (a real team's robot, with mechanisms) |
 | `examples/fields/` | `v5rc_empty` (walls only), `practice_elements` (a barrier, two goals, six balls), `1239e_2026-27` (the 2026-27 field as team 1239E models it) |
-| `examples/programs/` | `tour.py`: a Python program that runs every chassis motion |
+| `examples/programs/` | `tour.py`: a Python program that runs every chassis motion, and numbers its stops on the field; `tank_drive.py`: tank driver control only, to drive or to follow a log |
 | `examples/inputs/` | `strafe_square.csv`: scripted controller input |
 | `examples/pros_projects/` | `minimal_pros4` (its own tracking-wheel odometry, driving a square), `lemlib_template` (LemLib's own example program), `lemlib_bench` (LemLib motions as benchmark controllers), `calibration` (the calibration routine for `full_omni_6m`), `1239e_2026-27` (a real team's code) |
 | `examples/scenarios/` | benchmark scenarios: `s_curve`, `pose_approach`, `lemlib_vs_python` |
 | `examples/scripts/` | `evaluate_1239e.py`: runs every 1239E routine and measures its localization; `replay_1239e_mcl_log.py`: drives a real 1239E MCL log's path in the simulator and compares the two robots' MCL |
-| `examples/logs/` | `full_omni_routine.csv`: the calibration routine as a robot logs it, recorded in the simulator by `full_omni_6m` with its wheels' friction and its battery changed, to fit the parameters back ([section 12](#12-calibrating-to-your-robot)) |
-| `.vexsim/` | for `vexsim ui` ([section 7](#7-the-browser-app-vexsim-ui)): `launch.yaml`, the saved runs (every example and 1239E routine), and `sweeps.yaml`, the 1239E evaluation as sweeps |
+| `examples/logs/` | `full_omni_routine.csv`: the calibration routine as a robot logs it, recorded in the simulator by `full_omni_6m` with its wheels' friction and its battery changed, to fit the parameters back ([section 12](#12-calibrating-to-your-robot)); `left40_simulated.1239e`: an MCL log in 1239E's format, written by the simulated 1239E robot running Left 40, to play and replay ([section 7](#7-the-browser-app-vexsim-ui)) |
+| `.vexsim/` | for `vexsim ui` ([section 7](#7-the-browser-app-vexsim-ui)): `launch.yaml`, the saved runs (every example and 1239E routine, and two that replay MCL logs), and `sweeps.yaml`, the 1239E evaluation as sweeps |
 
 ---
 
@@ -365,12 +365,13 @@ Without `--program`, you drive the robot from the keyboard or a gamepad. To star
 | `--noise ideal\|default\|harsh` | one noise preset for every sensor |
 | `--speed X` | viewer speed, 0.1 to 8 (0 = as fast as possible) |
 | `--input FILE.csv` | scripted controller input |
+| `--follow LOG` | drive along a real robot's path, from its MCL log ([below](#following-a-real-robots-log)); `--sticks tank\|arcade` and `--curve DEADBAND,MIN,CURVE` say how the program drives from the sticks. Without `--start`, the robot starts where the log does. |
 | `--record FILE.csv` | telemetry log |
 | `--robot-log FILE.csv` | a robot log: what the robot's own sensors read, as on a real robot (for calibration) |
 | `--headless` | no window: run, print a summary, save files |
 | `--seconds S` / `--max-seconds S` | headless: run exactly S seconds / give up after S (default 180) |
 | `--screenshot FILE.png` | headless: save the final frame |
-| `--env KEY=VALUE` | an environment variable for the robot program (repeatable). `VEXSIM_SEED` is always set to the seed. |
+| `--env KEY=VALUE` | an environment variable for the robot program (repeatable). `VEXSIM_SEED` is always set to the seed, and for C++ programs `VEXSIM_START` to the start pose, as LemLib has it (`x,y,theta`). |
 | `--busy-timeout S` | PROS projects: stop if a task runs S seconds of real time without blocking (default 5; 0 = never) |
 
 **Competition modes** behave as under field control:
@@ -411,6 +412,14 @@ A connected gamepad works too, through SDL's mapping. The sticks match. The Xbox
 ### Scripted input
 `--input inputs.csv` replays controller input. Its columns are `time_s, LEFT_X, LEFT_Y, RIGHT_X, RIGHT_Y, buttons` (sticks -127..127, buttons space-separated, like `R1 A`). Each row holds until the next. See `examples/inputs/strafe_square.csv`.
 
+### Following a real robot's log
+`--follow mcl_log1040.1239e` drives the simulated robot along the path a real robot took, as its MCL log records it ([what such a log holds](#7-the-browser-app-vexsim-ui)). Once the program's driver control (`opcontrol`) starts, a virtual driver holds the sticks: it sees where the simulated robot really is and steers it along the logged estimate, in time, through the program's own stick mapping (`--sticks tank`, the default: both sticks' y; `arcade`: left y forward, right x turning) and drive curve (`--curve 15,20,1.05` for LemLib's `ExpoDriveCurve(15, 20, 1.05)`, if the program shapes the sticks with one). The run ends with the log. The logged estimate is the only record of where the real robot went, so where the real robot's localization was wrong, the simulated robot drives the wrong path; where the estimate wanders sideways while the robot sits still, the virtual driver stays put.
+```
+vexsim run examples/robots/traction_6m.yaml --program examples/programs/tank_drive.py \
+    --follow examples/logs/left40_simulated.1239e --headless
+```
+The robot starts where the log's first estimate puts it, unless `--start` says otherwise; C++ programs can read that pose from `VEXSIM_START` to start their own localization there (the 1239E port does, with `VEXSIM_AUTON=startMcl`). In `match` mode, an `autonomous()` that returns early hands over to `opcontrol` at once.
+
 ### Telemetry, plots and replays
 - `--record run.csv` logs a row every 10 ms: `time_s, phase`; the true pose (`x_in, y_in, heading_deg`); the estimated pose (`est_x_in, est_y_in, est_heading_deg`); `speed_in_s, yaw_rate_deg_s, battery_v, battery_soc`; each motor's `motor<p>_current_a, motor<p>_temp_c, motor<p>_volts`; and each mechanism's `<name>_deg`.
 - `vexsim plot run.csv --out run.png [--title T]` plots the path, speed, motor currents and temperatures, and the battery. Motors geared together are drawn as one line.
@@ -432,14 +441,15 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 
 **Running something:**
 1. Pick a **saved run** from the first list to fill in everything at once, start pose and environment included. This repository comes with runs for its examples, every 1239E routine among them. Saved runs live in the folder's `.vexsim/launch.yaml`, so a team can commit them; *Save*, *Save as…* and *Delete* change them. (The app rewrites that file when it saves, so comments in it aren't kept.)
-2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs, telemetry logs and robot logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. (A scenario opens on the *Bench* page and a robot log on *Calibrate*; on those pages, and on *Analyze* and *Build*, a robot or project you click is for the page.) *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file, environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
+2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs, telemetry logs, robot logs and MCL logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. (A scenario opens on the *Bench* page and a robot log on *Calibrate*; on those pages, and on *Analyze* and *Build*, a robot or project you click is for the page.) *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file or a robot's log to follow (with its program's sticks and drive curve, [see below](#7-the-browser-app-vexsim-ui)), environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
 3. **Drag the robot to where it starts.** Before a run, the field shows the robot at its start: drag it to move it (to half inches), and drag the round handle ahead of it to turn it (to 15°; hold Shift for 0.1 in and 1°). It stays inside the walls, and turns red, with a note, if it would start on top of a field element (`vexsim run` warns about that too).
 4. **Run** checks the files first; if something is wrong, the console says what, with the same messages as `vexsim validate-config`. A PROS project is built first, with the build's output in the *Build* tab. Starting a run stops the one before it.
 
 **While it runs:**
 - **Controls:** pause, step 10 ms, restart from the start with the same seed, stop, and a speed from 0.1× to 8× real time, or *Max*. *Copy command* copies the run as the equivalent `vexsim run` command. In `match` and `skills` modes, the time left in the period counts down beside the clock.
 - **Driving:** with no program, or in `driver` and `match` modes, you drive: the keyboard as in the pygame viewer (below), any gamepad (its face buttons map to the V5's by position), or the on-screen controller in the readings, whose sticks you can drag and buttons press. The controller there shows what the robot reads, whatever drives it.
-- **The field:** the robot where it really is (front edge thicker), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, each wheel's sideways force (orange), mecanum rollers, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate, the beams and the forces, and *Key* folds it away. The wheel zooms, dragging pans, and a double-click (or *Fit*) shows the whole field again; *Follow* keeps the robot in the middle; *Save picture* saves the field as a PNG. The pointer's field coordinates are shown in the bottom corner.
+- **The field:** the robot where it really is (front edge thicker), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, each wheel's sideways force (orange), mecanum rollers, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate, the beams, the forces and what the robot code draws (each of its layers, too), and *Key* folds it away. The wheel zooms, dragging pans, and a double-click (or *Fit*) shows the whole field again; *Follow* keeps the robot in the middle; *Save picture* saves the field as a PNG. The pointer's field coordinates are shown in the bottom corner.
+- **What the robot code draws:** robot code can draw on the field to show what it's thinking: a localizer's particles, a planned path, a target. C++ code draws with `vexsim::draw_*` ([section 9](#vexsim-extras-for-c-vexsimsimhpp)), Python programs with `bot.draw` ([section 8](#drawing-on-the-field-botdraw)); `tour.py` numbers its stops, and the 1239E port draws its MCL. Each layer of drawings can be shown or hidden in the key, and recorded runs keep them.
 - **Readings** (right): true and estimated pose and how far apart they are, speed, battery, the controller, each motor's current and temperature, mechanisms' angles, IMU and GPS readings, distance sensor readings, and the brain and controller screens.
 - **Console** (bottom): the program's output, the build's output, and errors with their traceback. **Problems** lists the compiler's errors and warnings and where a Python program failed, as `file:line` links that open the place in VS Code (or Cursor; *Open files in* picks); places in the console and build output are links too.
 
@@ -449,7 +459,7 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 | `.` | one step while paused | A / D | right stick left / right (arcade turn) |
 | R | restart | Up / Down | right stick up / down (tank) |
 | + / - | speed | Left / Right | left stick left / right (strafe) |
-| 1 2 3 4 | show or hide the paths, estimate, beams, forces | Shift | half stick |
+| 1 2 3 4 5 | show or hide the paths, estimate, beams, forces, drawings | Shift | half stick |
 | ? | every key | Q / Z, E / C | L1 / L2, R1 / R2 |
 | | | I / L / K / J | X / A / B / Y |
 | | | T / F / G / H | the arrows (up, left, down, right) |
@@ -465,6 +475,17 @@ Each run executes in a process of its own, so a program that crashes or hangs ne
 - **Runs** (the left panel's second tab) lists the recorded runs, newest first: when, how long, how each ended, and how far its code's pose was off on average. Click one to open it. That fills in the run bar as the run was set up, so *Run* repeats it, and it stops a run in progress first. *Compare* draws a run over the one on the field, in grey with its own dashes and its name, and adds it to the plots of a single quantity, up to three at once. (Grey because the field already uses as many colors as everyone, color blind or not, can tell apart.) *Keep* saves a run from the cleanup: the newest 50 stay, plus every kept one. *Rename* and *Delete* do what they say.
 - **Telemetry logs** in the workspace list (files from `vexsim run --record`) open the same way, drawn with the robot and field picked in the run bar, like `vexsim replay`.
 - **Exports:** *CSV* downloads the run's telemetry, in the `--record` format. *Video* plays the run from its start and saves the field as a WebM video, at the playback speed. *Save picture* saves the field as a PNG.
+
+**A real robot's MCL log, beside its replay**
+
+![Team 1239E's real robot's MCL log 1040 (left) beside the simulated robot replaying its path (right), 16 s into the run: the rays to what each distance sensor read, the particles, the 2-sigma spread, and the estimate's path](docs/img/ui_mcl_log.png)
+
+A robot that localizes with Monte Carlo localization can log every update to its SD card. vexsim reads the logs of team 1239E's code and visualizer: a block of lines per update with each distance sensor's reading and the ray MCL cast for it, the particles it logged, the time, the estimate and the particles' spread (`vexsim/mcllog.py` has the format; any number of sensors and particles reads). Copy them from the SD card into the folder: they're listed under *MCL logs* (`examples/logs/left40_simulated.1239e` is one, written by the simulated robot).
+- **Click one** to play it on the field, drawn as the team's visualizer draws it: each sensor's ray to its reading (grey: it read nothing), the logged particles, the 2-sigma ellipse of their spread, and where the robot's code thought it was, as the robot's outline (dashed) and its path. There's no truth: only the real robot knew where it was. The bar above the field says how many updates over how long, how often they came (the median and the 95th percentile), the particles' typical spread, and how many readings saw nothing. Alone, the log has its own timeline.
+- **Replay it:** pick a saved run to replay it with, and *Replay*. The run starts where the log does, and a virtual driver drives it along the log's path through the program's driver control (`--follow`, [section 6](#following-a-real-robots-log)): a saved run says how the program drives from the sticks under `follow`. This repository has two: *1239E: replay an MCL log* (the team's own code, with its MCL started where the log's starts, drawing what it sees) and *Replay an MCL log (Python tank drive)* (any robot, with `tank_drive.py`). The run fills in the run bar, where *More* shows the log it follows, so *Run* repeats it.
+- **Side by side:** the real robot's log on the left, the simulator on the right, on one timeline. The log's first update comes at the moment the replay began following it (or, beside another run, where its program began), shown as *The log starts at … s of the run*: change it to line the two up differently. Live, the log plays along as the replay runs; afterwards, scrub both together. Hide the true distance beams (3) to compare the two robots' MCL rays, layer for layer.
+
+[docs/1239e_real_vs_sim.md](docs/1239e_real_vs_sim.md) compares five of 1239E's logs with their replays, number by number.
 
 **Editing robots and fields**
 
@@ -502,7 +523,7 @@ The recordings live in the folder's `.vexsim/runs/`, one folder per run: `run.js
 
 **Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie. Keep the terminal open while you use the app; Ctrl+C stops it. The browser only reaches files inside the folder.
 
-Every command has a page in the app now. Next come real robots' logs played beside their replay, and robot code that draws on the field ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). The commands and the pygame viewer work as before.
+Every command has a page in the app, and the commands and the pygame viewer work as before. What's left is optional: a desktop window of its own, and a VS Code panel ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)).
 
 ---
 
@@ -537,6 +558,20 @@ def opcontrol(bot):  # optional; the default is arcade drive (plus strafing, if 
 - The IMU calibrates for about 2 s when the simulation starts. The default `initialize` waits for it; if you write your own, wait too, or the robot drives with no heading.
 - A plain (non-generator) function runs once and returns.
 - `bot.millis()`, `bot.battery_voltage_mv()`, `bot.print(...)` (to the console panel and the terminal) and `bot.pose` (the estimated pose) are always available.
+
+### Drawing on the field: `bot.draw`
+A program can draw on the field in the browser app ([section 7](#7-the-browser-app-vexsim-ui)), to show what it's thinking. Shapes go into named layers, each shown or hidden on its own; a layer keeps what was drawn into it until it's cleared, so clear it and draw it again whenever it changes:
+```python
+bot.draw.clear("plan")
+for x, y in waypoints:
+    bot.draw.point("plan", x, y, size=5)        # a dot, 5 pixels across at any zoom
+bot.draw.line("plan", 0, 0, 24, 24, color="orange")
+bot.draw.circle("plan", 24, 24, 3)               # inches
+bot.draw.ellipse("plan", 24, 24, 4, 2, 30)       # half-widths along x and y, then turned 30 degrees
+bot.draw.pose("plan", 24, 24, 90, color="blue")  # a dot with a heading tick
+bot.draw.text("plan", 26, 26, "target")
+```
+Inches and degrees counter-clockwise from +x, as `bot.pose` has them. Colors are the field's palette, by name: `violet` (the default), `blue`, `orange`, `aqua`, `yellow`, `magenta`, `green`, `red`, `ink` and `muted`, so drawings show in light and dark themes alike; text is drawn in ink, with a dot of its color. A layer holds up to 2000 shapes, and a program up to 32 layers.
 
 ### Devices (PROS 4 style)
 The constructors live on `bot`. Names and units follow PROS 4, so a Python prototype maps line for line onto C++. A negative port reverses the device.
@@ -656,6 +691,19 @@ vexsim::report_pose(pose.x, pose.y, pose.theta);   // inches, theta clockwise fr
 ```
 - `vexsim::report_pose(x, y, theta)` shows your own odometry as the estimated pose (in the viewer, telemetry and the headless summary). LemLib's pose is read automatically.
 - `vexsim::benchmark_task()` returns the task of a benchmark trial (see [C++ controllers](#c-controllers-your-pros-project)).
+- `vexsim::draw_*` draws on the field in the browser app, in named layers, like `bot.draw` in Python ([section 8](#drawing-on-the-field-botdraw)): a layer keeps what was drawn into it until `draw_clear`. Points take LemLib's x and y, and angles are LemLib's too, degrees clockwise from +y:
+```cpp
+#ifdef VEXSIM
+vexsim::draw_clear("mcl");
+for (int i = 0; i < PARTICLES; i += 16) vexsim::draw_point("mcl", p[i].x, p[i].y);  // violet, 3 px
+vexsim::draw_ellipse("mcl", x, y, 2 * std_x, 2 * std_y, 0, vexsim::Color::blue);     // half-widths, turn
+vexsim::draw_line("rays", x0, y0, x1, y1, vexsim::Color::yellow);
+vexsim::draw_circle("goal", 24, 24, 3);
+vexsim::draw_pose("goal", 24, 24, 90, vexsim::Color::orange);                        // theta as LemLib's
+vexsim::draw_text("goal", 26, 26, "goal");
+#endif
+```
+  `draw_point` takes an optional size in pixels after the color. A layer is drawn as it stands whenever simulated time moves on, so clearing and redrawing it without a `pros::delay()` in between never shows it half drawn. The 1239E port draws its MCL this way (`src/custom/MclTracking.cpp`).
 
 **Environment variables** reach your code through `getenv()`: `vexsim run --env KEY=VALUE`, or `CppProgram(..., env={...})` from Python. Nobody taps the simulated brain screen, so this is how to choose an autonomous routine:
 ```cpp
@@ -663,7 +711,7 @@ vexsim::report_pose(pose.x, pose.y, pose.theta);   // inches, theta clockwise fr
 if (const char* name = std::getenv("AUTON")) selected = find_routine(name);
 #endif
 ```
-`VEXSIM_SEED` is always set to the simulation's seed: seed your own random numbers with it to repeat a run exactly.
+`VEXSIM_SEED` is always set to the simulation's seed: seed your own random numbers with it to repeat a run exactly. `VEXSIM_START` is where the run put the robot (`--start`), as LemLib has poses (`x,y,theta`), for code that must be told where it starts, such as localization started for a [replay of a log](#following-a-real-robots-log).
 
 ### LemLib
 - **Built from source.** The LemLib template installs LemLib precompiled for the V5's ARM CPU, which can't run on a PC. vexsim reads LemLib's version from `project.pros`, fetches that release's source from GitHub (with git, or as a zip), and compiles it once per version and compiler. Offline, set `VEXSIM_LEMLIB_SOURCE` to a checkout. LemLib 0.5.x (for PROS 4) is tested.
@@ -1046,6 +1094,7 @@ vexsim/
 | `__main__.py` | Makes `python -m vexsim` work. |
 | `units.py` | Conversions between VEX units and SI (`in_to_m`, `rpm_to_rad_s`, `mv_to_v`, ...). The simulator computes in SI and converts only at its boundaries. |
 | `v5.py` | V5 constants: 21 smart ports, cartridge speeds (100/200/600 rpm), ±12000 mV, 11 W per motor, the 88 W motor budget, the 18 in starting size. |
+| `mcllog.py` | MCL logs as 1239E's code writes them: `parse` reads the updates (each sensor's reading and ray, the particles, the time, the estimate and its spread), `MclLog` gives a log's path to follow, its summary, and each update as drawings. |
 | `workers.py` | `process_pool`: worker processes for the benchmark, the calibration fit and sweeps, each of which exits when the process that made the pool ends (a cancelled job's workers don't go on simulating for nobody). |
 
 ### `config/`: robot and field configs
@@ -1120,6 +1169,8 @@ vexsim/
 | `simulation.py` | `Simulation`: the world, robot, arena, sensors, a localizer, a program, inputs and telemetry, with the competition phases (`MODES`). `Bot` (what programs receive), `ScriptedInput` (`--input`), and the default `initialize` and `opcontrol`. |
 | `program.py` | `load_program`, and the coroutine runner that turns generator functions into competition phases. |
 | `recorder.py` | `Recorder`: the 10 ms telemetry log, and `pose_error` (the estimate against the truth). `Log` reads a CSV back for plots and replays. |
+| `drawing.py` | What robot code draws on the field: `Drawings` (layers of shapes, from `vexsim::draw_*` commands or `bot.draw`, a `Pen`). |
+| `follow.py` | `PathFollower`: the virtual driver of `--follow`, which drives along a logged path through the program's sticks and drive curve (`ExpoCurve`, LemLib's, inverted). |
 
 ### `bridge/`: PROS 4 C++ code in the loop
 | Module | What it does |
@@ -1160,17 +1211,17 @@ vexsim/
 ### `app/`: the services behind the browser app
 | Module | What it does |
 |---|---|
-| `runspec.py` | `RunSpec`: everything `vexsim run` takes, converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files (and warns, through `start_blocked`, when the robot would start on top of a field element), `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
+| `runspec.py` | `RunSpec`: everything `vexsim run` takes (a log to follow, `Follow`, included), converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files (and warns, through `start_blocked`, when the robot would start on top of a field element), `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
 | `launch.py` | Saved runs: the workspace's `.vexsim/launch.yaml`, named run specs the app's *Saved run* list reads and writes (`read_configurations`, `write_configurations`). |
-| `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects, inputs, telemetry logs, robot logs), and refuses paths outside it. |
+| `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects, inputs, telemetry logs, robot logs, MCL logs), and refuses paths outside it. |
 | `jobs.py` | `JobManager`: long tasks (builds, analyses, benchmarks, fits, sweeps; `JOB_KINDS` names each kind's function), each in a process of its own, with their output, progress and the parts of their result that come early (a sweep's finished trials), cancel, and one job at a time per key (a second build of a project joins the first). |
 | `results.py` | What the long jobs found, kept in the workspace's `.vexsim/bench/`, `sweeps/` and `calibrations/`: a folder per result with its `result.json` and files; the newest 20 of each kind stay. |
 | `sweeps.py` | Sweeps: `.vexsim/sweeps.yaml` (`read_sweeps`, `write_sweeps`), a sweep's trials (`expand`: saved runs × variations × seeds, with placement errors drawn as `evaluate_1239e.py` draws them), one trial run headless and measured (`run_trial`, `measure`), and the sweep as a job (`run_sweep`). |
 | `benchmarks.py`, `calibrate.py`, `analyze.py` | The *Bench*, *Calibrate* and *Analyze* pages' jobs: `vexsim bench`, `calibration-routine`, `calibrate`, `motor-curves`, `drift` and `odometry`, returning what their charts draw (and saving their results), with `describe_scenario` and `routine_plan` for what the pages show before a run. |
 | `chartdata.py`, `jsonsafe.py` | Series thinned and rounded for the browser's charts; data made JSON-safe (no NaN, no numpy values). |
 | `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
-| `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay and the console. |
-| `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape. |
+| `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay, what the robot code draws, when a replay began following its log, and the console. |
+| `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape with the robot code's drawings, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape, and `mcl_tape` an MCL log into one to play beside a run. |
 | `configs.py` | Robot and field configs for the editors: `check_text` validates YAML text as `validate-config` does and places each issue at its line and column; `patch_text` rewrites numbers in place (or adds a missing key in its mapping's style) using PyYAML's node positions, and refuses values that come through anchors, aliases or merges; `set_overrides` writes a calibration's fitted values under `overrides` the same way; `read_config` and `write_config` keep a file's line endings and byte order mark. |
 | `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels and their forces, the controller, sensors, motors, mechanisms, pieces, screens, the period's time left) and the active motion's path and target. `preview_of` gives the robot and field before any run, to drag the robot to its start. |
 

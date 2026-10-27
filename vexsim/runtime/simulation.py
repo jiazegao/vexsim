@@ -41,6 +41,7 @@ from vexsim.physics.field import Walls
 from vexsim.physics.params import resolve_params
 from vexsim.physics.robot import Robot
 from vexsim.physics.world import PRIORITY_CONTROL, PRIORITY_RECORD, World
+from vexsim.runtime.drawing import Drawings, Pen
 from vexsim.runtime.program import Coroutine, as_generator
 from vexsim.runtime.recorder import Recorder
 from vexsim.units import in_to_m
@@ -90,11 +91,13 @@ class Bot:
 
     ``bot.drive`` drives any drivetrain from stick-style inputs. ``bot.chassis`` adds
     LemLib-style motions on the left and right sides (differential drives and H-drives).
+    ``bot.draw`` draws on the field, to debug with (``vexsim.runtime.drawing``).
     """
 
     def __init__(self, sim: Simulation):
         self._sim = sim
         self.controller = sim.controller
+        self.draw = Pen(sim.drawings)
         drive = sim.robot.config.drivetrain
         self.drive = Drive(sim)
         self.chassis: Chassis | None = None
@@ -231,6 +234,7 @@ class Simulation:
         self.controller_screen: dict[int, str] = {}
         self.reported_pose: Pose | None = None  # the robot code's own estimate, if it reports one
         self._echo = echo
+        self.drawings = Drawings(warn=self.log)  # what the robot code drew on the field
         self.bot = Bot(self)
         self.phase = "disabled"
         self._phases: list[tuple[str, float | None]] = []
@@ -265,6 +269,9 @@ class Simulation:
 
     @property
     def finished(self) -> bool:
+        """The program's last period ended, or its input did (a log it followed)."""
+        if getattr(self.input_source, "done", False):
+            return True
         return not self._phases and self._current is None and self.phase != "disabled"
 
     @property

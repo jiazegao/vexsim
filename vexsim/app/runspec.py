@@ -1,8 +1,8 @@
 """A run of the simulator, as ``vexsim run`` takes it, and how to get it ready to start.
 
 ``RunSpec`` holds what decides what is simulated: the robot, program, field, start pose,
-mode, seed, noise, scripted input and the program's environment. It converts to and from
-``vexsim run``'s arguments, so the UI can show any run as a command.
+mode, seed, noise, scripted input or a log to follow, and the program's environment. It
+converts to and from ``vexsim run``'s arguments, so the UI can show any run as a command.
 
 Getting a run ready takes three steps, which the CLI runs one after another and the UI
 spreads over its server, a build job and a worker process:
@@ -29,6 +29,7 @@ from vexsim.config.robot import RobotConfig
 
 Mode = Literal["autonomous", "driver", "match", "skills"]
 Noise = Literal["ideal", "default", "harsh"]
+Sticks = Literal["tank", "arcade"]
 MODES: tuple[str, ...] = ("autonomous", "driver", "match", "skills")
 NOISE_PRESETS: tuple[str, ...] = ("ideal", "default", "harsh")
 DEFAULT_BUSY_TIMEOUT_S = 5.0
@@ -46,6 +47,18 @@ class RunError(Exception):
         self.issues = list(issues or [])
         self.source = source
         super().__init__(message)
+
+
+class Follow(BaseModel):
+    """A virtual driver that drives the robot along a log's path (``vexsim.runtime.follow``):
+    the program's driver control, through its own sticks and drive curve."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    log: str | None = None  # an MCL log; a saved run leaves it out, for any log to follow
+    sticks: Sticks = "tank"  # tank: both sticks' y; arcade: left y forward, right x turning
+    # the program's LemLib ExpoDriveCurve(deadband, min output, curve), if it has one
+    curve: tuple[float, float, float] | None = None
 
 
 class RunSpec(BaseModel):
@@ -66,22 +79,36 @@ class RunSpec(BaseModel):
     seed: int = 0
     noise: Noise | None = None
     input: str | None = None
+    follow: Follow | None = None
     env: dict[str, str] = Field(default_factory=dict)
     busy_timeout: float = DEFAULT_BUSY_TIMEOUT_S
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunSpec:
-        """The spec of a parsed ``vexsim run`` command line."""
-        start = args.start
+        """The spec of a parsed ``vexsim run`` command line. A run that follows a log
+        starts where the log does, unless ``--start`` says otherwise."""
+        follow = None
+        if getattr(args, "follow", None):
+            curve = parse_curve(args.curve) if args.curve else None
+            follow = Follow(log=args.follow, sticks=args.sticks or "tank", curve=curve)
+        elif getattr(args, "sticks", None) or getattr(args, "curve", None):
+            raise RunError("--sticks and --curve go with --follow")
+        if args.start is not None:
+            start = (args.start.x, args.start.y, args.start.heading)
+        elif follow is not None:
+            start = log_start(follow.log)
+        else:
+            start = (0.0, 0.0, 0.0)
         return cls(
             robot=args.robot,
             program=args.program,
             field=args.field,
             mode=args.mode,
-            start=(start.x, start.y, start.heading),
+            start=start,
             seed=args.seed,
             noise=args.noise,
             input=args.input,
+            follow=follow,
             env=parse_env(args.env or ()),
             busy_timeout=args.busy_timeout,
         )
@@ -102,6 +129,13 @@ class RunSpec(BaseModel):
             args += ["--noise", self.noise]
         if self.input:
             args += ["--input", self.input]
+        if self.follow is not None:
+            if self.follow.log:
+                args += ["--follow", self.follow.log]
+            if self.follow.sticks != "tank":
+                args += ["--sticks", self.follow.sticks]
+            if self.follow.curve:
+                args.append("--curve=" + ",".join(_number(v) for v in self.follow.curve))
         for key, value in self.env.items():
             args += ["--env", f"{key}={value}"]
         if self.busy_timeout != DEFAULT_BUSY_TIMEOUT_S:
@@ -123,14 +157,43 @@ class RunSpec(BaseModel):
                 return path
             return str(root / path)
 
+        follow = self.follow
+        if follow is not None and follow.log:
+            follow = follow.model_copy(update={"log": absolute(follow.log)})
         return self.model_copy(
             update={
                 "robot": absolute(self.robot),
                 "program": absolute(self.program),
                 "field": absolute(self.field),
                 "input": absolute(self.input),
+                "follow": follow,
             }
         )
+
+
+def parse_curve(text: str) -> tuple[float, float, float]:
+    """``--curve DEADBAND,MIN_OUTPUT,CURVE`` (LemLib's ExpoDriveCurve) as numbers."""
+    import math
+
+    try:
+        values = tuple(float(v) for v in text.split(","))
+    except ValueError:
+        values = ()
+    if len(values) != 3 or not all(math.isfinite(v) for v in values):
+        raise RunError(f"--curve needs DEADBAND,MIN_OUTPUT,CURVE (e.g. 15,20,1.05), got {text!r}")
+    return values  # type: ignore[return-value]
+
+
+def log_start(path: str | os.PathLike[str]) -> tuple[float, float, float]:
+    """Where a log to follow starts: x, y (in) and heading (degrees counter-clockwise
+    from +x), rounded as a start pose is typed. Raises RunError if it doesn't read."""
+    from vexsim.mcllog import MclLog, MclLogError
+
+    try:
+        x, y, heading = MclLog.read(path).start
+    except MclLogError as exc:
+        raise RunError(f"{path}: {exc}") from None
+    return (round(x, 2), round(y, 2), round(heading % 360, 2))
 
 
 def parse_env(items) -> dict[str, str]:
@@ -173,6 +236,7 @@ class Prepared:
     field: FieldConfig | None
     project: Path | None = None  # the PROS project folder, if the program is one
     program_file: Path | None = None  # the Python program, if the program is one
+    follow: Any = None  # the path to follow (vexsim.runtime.follow.LoggedPath), if any
     warnings: list[ConfigIssue] = field(default_factory=list)
 
 
@@ -207,6 +271,8 @@ def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared
             raise RunError(f"program not found: {named.program}")
     if spec.input and not Path(spec.input).is_file():
         raise RunError(f"input not found: {named.input}")
+    if spec.follow is not None:
+        prepared.follow = _path_to_follow(spec, named)
     for where in start_blocked(robot.config, field_config, spec.start):
         message = (
             "the robot starts partly outside the walls; move its start in"
@@ -215,6 +281,23 @@ def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared
         )
         prepared.warnings.append(ConfigIssue("warning", "start", message))
     return prepared
+
+
+def _path_to_follow(spec: RunSpec, named: RunSpec):
+    from vexsim.mcllog import MclLog, MclLogError
+    from vexsim.runtime.follow import LoggedPath
+
+    if spec.input:
+        raise RunError("a run follows a log or takes scripted input, not both")
+    if not spec.follow.log:
+        raise RunError("pick the log to follow")
+    shown = named.follow.log
+    if not Path(spec.follow.log).is_file():
+        raise RunError(f"log not found: {shown}")
+    try:
+        return LoggedPath(*MclLog.read(spec.follow.log).path())
+    except MclLogError as exc:
+        raise RunError(f"{shown}: {exc}") from None
 
 
 WALLS = "the walls"
@@ -331,14 +414,26 @@ def simulation_factory(
 ) -> Callable[[], Any]:
     """A function that makes a fresh Simulation of the run, started in ``mode``.
 
-    ``on_create(sim)`` runs before the mode starts (e.g. to attach a logger).
+    ``on_create(sim)`` runs before the mode starts (e.g. to attach a logger). A run that
+    follows a log gets a new ``PathFollower`` each time, as its input, not ``input_source``.
     """
     from vexsim.algorithms.localization.base import Pose
+    from vexsim.runtime.follow import PathFollower, drive_geometry
     from vexsim.runtime.simulation import Simulation
 
     spec = prepared.spec
 
     def factory():
+        source = input_source
+        if prepared.follow is not None:
+            track, top_speed = drive_geometry(prepared.config)
+            source = PathFollower(
+                prepared.follow,
+                track_in=track,
+                top_speed_in_s=top_speed,
+                sticks=spec.follow.sticks,
+                curve=spec.follow.curve,
+            )
         sim = Simulation(
             prepared.config,
             program=make_program(),
@@ -346,9 +441,11 @@ def simulation_factory(
             seed=spec.seed,
             noise=spec.noise,
             start=Pose(*spec.start),
-            input_source=input_source,
+            input_source=source,
             echo=echo,
         )
+        if prepared.follow is not None:
+            source.attach(sim)
         if on_create is not None:
             on_create(sim)
         sim.start(mode)

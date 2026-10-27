@@ -22,19 +22,41 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from vexsim.app.launch import RunConfiguration
 from vexsim.app.runs import PoseErrorSummary, RunRecord
-from vexsim.app.runspec import RunSpec
+from vexsim.app.runspec import Follow, RunSpec
 from vexsim.app.sweeps import Sweep
 from vexsim.config.field import FIELD_MODELS, FieldConfig
 from vexsim.config.robot import ROBOT_MODELS, RobotConfig
 
 ItemKind = Literal[
-    "robot", "field", "scenario", "program", "project", "input", "log", "robotlog", "invalid"
+    "robot",
+    "field",
+    "scenario",
+    "program",
+    "project",
+    "input",
+    "log",
+    "robotlog",
+    "mcllog",
+    "invalid",
 ]
 SessionState = Literal["building", "starting", "running", "paused", "finished", "error", "stopped"]
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 ConfigKind = Literal["robot", "field"]
 ResultKind = Literal["bench", "sweeps", "calibrations"]
 Workers = Annotated[int, Field(ge=1, le=64)]
+# What robot code draws on the field (vexsim.runtime.drawing), by layer: colors from the
+# field's palette, then shapes in inches and degrees, as lists that start with their kind
+DrawColor = Literal[
+    "violet", "blue", "orange", "aqua", "yellow", "magenta", "green", "red", "ink", "muted"
+]
+Shape = Union[  # noqa: UP007 - a named union, for the TypeScript generator
+    tuple[Literal["point"], float, float, DrawColor, float],  # x, y, color, size (pixels)
+    tuple[Literal["line"], float, float, float, float, DrawColor],  # x1, y1, x2, y2
+    tuple[Literal["circle"], float, float, float, DrawColor],  # x, y, radius
+    tuple[Literal["ellipse"], float, float, float, float, float, DrawColor],  # x, y, rx, ry, turn
+    tuple[Literal["pose"], float, float, float, DrawColor],  # x, y, heading
+    tuple[Literal["text"], float, float, str, DrawColor],  # x, y, text
+]
 
 
 class _Message(BaseModel):
@@ -382,6 +404,22 @@ class OverlayMessage(Overlay):
     type: Literal["overlay"]
 
 
+class DrawingsMessage(_Message):
+    """What the robot code has drawn (``vexsim::draw_*``, ``bot.draw``), by layer: sent
+    when it changes."""
+
+    type: Literal["drawings"]
+    layers: dict[str, list[Shape]]
+
+
+class FollowingMessage(_Message):
+    """A run that follows a log (``RunSpec.follow``) began to: ``start`` is the moment of
+    the run that goes with the log's first update."""
+
+    type: Literal["following"]
+    start: float
+
+
 class RecordedMessage(_Message):
     """A run ended (finished, stopped, restarted, failed) and was recorded."""
 
@@ -398,6 +436,7 @@ class TapeEvents(_Message):
     overlay: list[tuple[float, Overlay]]
     lcd: list[tuple[float, list[str]]]
     controller_screen: list[tuple[float, list[str]]]
+    drawings: list[tuple[float, dict[str, list[Shape]]]] = Field(default_factory=list)
 
 
 class Tape(_Message):
@@ -439,6 +478,32 @@ class Replay(_Message):
     name: str
     tape: Tape
     telemetry: Telemetry
+
+
+class MclLogSummary(_Message):
+    """How a robot's MCL ran, by its log."""
+
+    updates: int
+    duration_s: float
+    sensors: int
+    particles: int  # logged with each update
+    start: tuple[float, float, float]  # where MCL started: x, y, heading
+    interval_ms: tuple[float, float, float] | None  # between updates: median, 95%, longest
+    no_reading_pct: float | None  # of the distance sensors' readings
+    spread_in: tuple[float, float]  # the particles' spread: median, 95%
+
+
+class MclLogTape(_Message):
+    """A robot's MCL log (``vexsim.mcllog``), to play on the field: where its code thought
+    it was, update by update, and what it saw, drawn as the robot code's drawings are. There's
+    no truth: only the real robot knew where it was."""
+
+    name: str
+    path: str
+    summary: MclLogSummary
+    times: list[float]  # each update's, from the first (s)
+    estimate: list[tuple[float, float, float]]  # each update's: x, y, heading
+    drawings: list[tuple[float, dict[str, list[Shape]]]]  # each update's: rays, particles, spread
 
 
 # --- config editors ---------------------------------------------------------------------------
@@ -854,6 +919,8 @@ ServerMessage = Annotated[
         SceneMessage,
         FrameMessage,
         OverlayMessage,
+        DrawingsMessage,
+        FollowingMessage,
         ConsoleMessage,
         BuildMessage,
         ErrorMessage,
@@ -897,6 +964,7 @@ ClientCommand = Annotated[
 # --- TypeScript -------------------------------------------------------------------------------
 
 MODELS: list[type[BaseModel]] = [
+    Follow,
     RunSpec,
     Issue,
     AppInfo,
@@ -937,6 +1005,8 @@ MODELS: list[type[BaseModel]] = [
     FrameMessage,
     Overlay,
     OverlayMessage,
+    DrawingsMessage,
+    FollowingMessage,
     PoseErrorSummary,
     RunRecord,
     RecordedMessage,
@@ -947,6 +1017,8 @@ MODELS: list[type[BaseModel]] = [
     RunUpdate,
     ReplayRequest,
     Replay,
+    MclLogSummary,
+    MclLogTape,
     *ROBOT_MODELS,
     *FIELD_MODELS,
     TextSpan,
@@ -1008,6 +1080,8 @@ ALIASES: dict[str, Any] = {
     "JobState": JobState,
     "ConfigKind": ConfigKind,
     "ResultKind": ResultKind,
+    "DrawColor": DrawColor,
+    "Shape": Shape,
     "StartJob": StartJob,
     "ServerMessage": ServerMessage,
     "ClientCommand": ClientCommand,
@@ -1065,8 +1139,10 @@ def typescript() -> str:
         "// Don't edit by hand; a test fails when this file is stale.",
         "",
     ]
+    declared: dict[int, str] = {}  # an alias can use the ones before it
     for name, value in ALIASES.items():
-        lines.append(f"export type {name} = {_ts(value, {})};")
+        lines.append(f"export type {name} = {_ts(value, declared)};")
+        declared[id(value)] = name
     lines.append("")
     for model in MODELS:
         doc = (model.__doc__ or "").strip()

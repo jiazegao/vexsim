@@ -1,7 +1,7 @@
 // A recorded run, played back: the frame at any moment of its tape (interpolated between
 // samples), its paths up to that moment, and its phases, for the timeline.
 
-import type { FrameMessage, FrameState, OverlayMessage, Tape } from "./protocol";
+import type { FrameMessage, FrameState, OverlayMessage, Shape, Tape } from "./protocol";
 
 export interface TrailView {
   xs: number[];
@@ -16,6 +16,8 @@ export interface Phase {
 }
 
 type Pose = [number, number, number];
+
+const NOTHING_DRAWN: Record<string, Shape[]> = {};
 
 export class Playback {
   readonly samples: FrameState[];
@@ -95,6 +97,18 @@ export class Playback {
     return overlay ? { type: "overlay", path: overlay.path, target: overlay.target } : null;
   }
 
+  /** What the robot code had drawn at `t`, by layer. */
+  drawingsAt(t: number): Record<string, Shape[]> {
+    return this.eventAt("drawings", t) ?? NOTHING_DRAWN;
+  }
+
+  /** Every layer the robot code drew in, in the order they first appear. */
+  drawnLayers(): string[] {
+    const names = new Set<string>();
+    for (const [, layers] of this.tape.events.drawings ?? []) for (const name of Object.keys(layers)) names.add(name);
+    return [...names];
+  }
+
   /** The true path (or the estimate's) up to `t`. */
   trail(kind: "truth" | "estimate", t: number): TrailView {
     const i = this.index(t);
@@ -116,14 +130,17 @@ export class Playback {
     return phases;
   }
 
-  private eventAt<K extends keyof Tape["events"]>(name: K, t: number): Tape["events"][K][number][1] | null {
-    const events = this.tape.events[name];
-    let found: Tape["events"][K][number][1] | null = null;
-    for (const [time, value] of events) {
-      if (time > t + 1e-9) break;
-      found = value;
+  private eventAt<K extends keyof Tape["events"]>(name: K, t: number): NonNullable<Tape["events"][K]>[number][1] | null {
+    const events: NonNullable<Tape["events"][K]> = this.tape.events[name] ?? []; // older tapes have no drawings
+    // the last event at or before t
+    let low = 0;
+    let high = events.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (events[middle][0] <= t + 1e-9) low = middle + 1;
+      else high = middle;
     }
-    return found;
+    return low > 0 ? events[low - 1][1] : null;
   }
 }
 

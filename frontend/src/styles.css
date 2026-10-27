@@ -563,6 +563,100 @@ textarea {
   min-height: 0;
 }
 
+/* the field alone, or beside a real robot's log (each with a label) */
+.fieldsingle,
+.fieldpair {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.fieldpair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.fieldhalf {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.fieldlabel {
+  flex: none;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fieldlabel b {
+  color: var(--text-primary);
+}
+
+/* beside a log, the fields are narrow: the key goes under them, in a row, and the stage
+   makes room for it */
+.stage.paired {
+  flex-basis: 470px;
+  min-height: 470px;
+}
+
+.fieldcol.paired .fieldview {
+  min-height: 270px;
+}
+
+.fieldcol.paired .fieldkey {
+  position: static;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 14px;
+}
+
+.fieldcol.paired .keyrow.sublayer {
+  margin-left: 0;
+}
+
+/* a real robot's MCL log: its name and numbers, its alignment, a replay of it */
+.logbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+
+.logrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.logbar .logname {
+  font-weight: 600;
+}
+
+.logbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.logbar input[type="number"] {
+  width: 76px;
+}
+
 .fieldview {
   position: relative;
   flex: 1;
@@ -697,6 +791,16 @@ label.keyrow {
 .swatch.slip {
   border-radius: 2px;
   background: linear-gradient(90deg, var(--wheel), var(--series-8));
+}
+
+/* what the robot code draws: its own colors, so the key shows a few of its dots */
+.swatch.drawn {
+  background: radial-gradient(circle, var(--series-7) 2px, transparent 2.5px) 0 50% / 6px 6px repeat-x;
+}
+
+.keyrow.sublayer {
+  grid-template-columns: 14px auto;
+  margin-left: 20px;
 }
 
 .readout {
@@ -2157,6 +2261,10 @@ ol.steps {
   }
 
   .stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fieldpair {
     grid-template-columns: minmax(0, 1fr);
   }
 

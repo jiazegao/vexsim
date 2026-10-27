@@ -101,3 +101,17 @@ configurations:
     field: examples/fields/1239e_2026-27.yaml
     mode: driver
     start: [0, -48, 90]
+
+  - name: Replay an MCL log (Python tank drive)
+    robot: examples/robots/traction_6m.yaml
+    program: examples/programs/tank_drive.py
+    field: examples/fields/v5rc_empty.yaml
+    follow: {}
+
+  - name: '1239E: replay an MCL log'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    mode: match
+    follow: {curve: [15, 20, 1.05]}
+    env: {VEXSIM_AUTON: startMcl, VEXSIM_BRAKE: hold}

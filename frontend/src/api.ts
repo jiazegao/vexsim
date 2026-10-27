@@ -10,6 +10,7 @@ import type {
   ConfigKind,
   ConfigPatched,
   JobInfo,
+  MclLogTape,
   Preview,
   Replay,
   ResultAbout,
@@ -121,6 +122,8 @@ export const api = {
   csvUrl: (id: string) => `/api/runs/${encodeURIComponent(id)}/telemetry.csv`,
   replay: (log: string, robot: string, field: string | null) =>
     request<Replay>("/api/replay", { method: "POST", body: JSON.stringify({ log, robot, field }) }),
+  /** An MCL log from the workspace, to play on the field; a RunProblem if it doesn't read. */
+  mclLog: (log: string) => orProblem<MclLogTape>(`/api/mcllog?path=${encodeURIComponent(log)}`, { method: "GET" }),
   saveConfigurations: (configurations: RunConfiguration[]) =>
     request<RunConfigurations>("/api/configurations", { method: "PUT", body: JSON.stringify({ configurations }) }),
   config: (path: string) => request<ConfigFile>(`/api/config?path=${encodeURIComponent(path)}`),

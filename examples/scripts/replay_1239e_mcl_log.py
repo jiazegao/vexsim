@@ -33,6 +33,9 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from vexsim.mcllog import MclLog, Update
+from vexsim.runtime.follow import LoggedPath, PathFollower
+
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT = ROOT / "examples" / "pros_projects" / "1239e_2026-27"
 ROBOT = ROOT / "examples" / "robots" / "1239e_2026-27.yaml"
@@ -50,37 +53,11 @@ GAINS = (4.0, 0.03, 10.0, 0.1)  # virtual driver: kx, ky, ktheta, feedforward le
 # --- the log --------------------------------------------------------------------------------
 
 
-@dataclass
-class Update:
-    """One MCL update, as MclTracking::updateMcl() logs it (9 lines)."""
-
-    t: float  # s since initLog()
-    sensors: list[tuple[float, float, float, float]]  # mm, ray origin x, y (in), angle (rad)
-    particle: tuple[float, float]  # one particle's x, y
-    est: tuple[float, float, float]  # x, y (in), theta (rad, CCW from +x): the update before's
-    std: tuple[float, float]  # particle spread in x and y (in)
-
-
 def parse_log(path: str | Path) -> list[Update]:
-    """Every complete update in an MCL log; a cut-off last one is left out."""
-    lines = [line.strip() for line in Path(path).read_text().splitlines() if line.strip()]
-
-    def numbers(line: str) -> tuple[float, ...]:
-        return tuple(float(v) for v in line.split(",") if v)
-
-    updates = []
-    for i in range(0, len(lines) - 8, 9):
-        try:
-            sensors = [numbers(lines[i + k]) for k in range(5)]
-            particle, t = numbers(lines[i + 5]), float(lines[i + 6])
-            est, std = numbers(lines[i + 7]), numbers(lines[i + 8])
-        except ValueError:
-            break
-        shapes = [len(s) for s in sensors] + [len(particle), len(est), len(std)]
-        if shapes != [4, 4, 4, 4, 4, 2, 3, 2]:
-            break
-        updates.append(Update(t, sensors, particle, est, std))  # type: ignore[arg-type]
-    return updates
+    """Every complete update in an MCL log (``vexsim.mcllog``: each sensor's reading and ray,
+    the particles, the time, the estimate, as it stood before the update, and the spread); a
+    cut-off last one is left out."""
+    return MclLog.read(path).updates
 
 
 # --- the field as MCL models it (MclTracking.hpp) --------------------------------------------
@@ -153,106 +130,24 @@ def map_hit(ox: float, oy: float, angle: float, high: bool) -> Hit | None:
 
 # --- driving the logged path ------------------------------------------------------------------
 
-
-class ThrottleCurve:
-    """The team's throttle curve (LemLib ExpoDriveCurve(15, 20, 1.05)), and its inverse."""
-
-    def __init__(self, deadband: int = 15, min_output: float = 20, gain: float = 1.05):
-        g127 = 127 - deadband
-        i127 = gain ** (g127 - 127) * g127
-        self.table = [(0, 0.0)] + [
-            (j, (127 - min_output) / i127 * gain ** (j - deadband - 127) * (j - deadband)
-             + min_output)
-            for j in range(deadband + 1, 128)
-        ]  # fmt: skip
-
-    def joystick(self, output: float) -> int:
-        """The joystick position whose curved output is nearest ``output`` (-127 to 127)."""
-        position, _ = min(self.table, key=lambda e: abs(e[1] - min(abs(output), 127)))
-        return int(math.copysign(position, output))
+CURVE = (15, 20, 1.05)  # the team's throttle curve: LemLib ExpoDriveCurve(15, 20, 1.05)
 
 
-class Reference:
-    """The logged MCL path, lightly smoothed, against time since MCL started."""
+class VirtualDriver(PathFollower):
+    """The tank-drive driver of ``vexsim run --follow`` (``vexsim.runtime.follow``): it holds
+    the joysticks of the team's opcontrol(), through the inverse of their throttle curve, to
+    drive along the logged MCL path, and notes where the robot really was."""
 
-    def __init__(self, updates: list[Update], smooth: int = 5):
-        # An update logs the estimate from the update before it.
-        self.t = [u.t - updates[0].t for u in updates[:-1]]
-        theta = [updates[1].est[2]]
-        for u in updates[2:]:
-            theta.append(theta[-1] + math.remainder(u.est[2] - theta[-1], math.tau))
-        h = smooth // 2
-
-        def smoothed(values: list[float]) -> list[float]:
-            return [st.fmean(values[max(0, i - h) : i + h + 1]) for i in range(len(values))]
-
-        self.x = smoothed([u.est[0] for u in updates[1:]])
-        self.y = smoothed([u.est[1] for u in updates[1:]])
-        self.theta = smoothed(theta)
-        self.end = self.t[-1]
-
-    def at(self, tau: float) -> tuple[float, float, float, float, float, float]:
-        """x, y, theta and their rates at ``tau`` s."""
-        i = min(max(bisect.bisect_right(self.t, tau) - 1, 0), len(self.t) - 2)
-        f = min(max((tau - self.t[i]) / (self.t[i + 1] - self.t[i]), 0.0), 1.0)
-        j0, j1 = max(i - 2, 0), min(i + 3, len(self.t) - 1)  # rates over about 0.15 s
-        dt = self.t[j1] - self.t[j0]
-        return (
-            self.x[i] + f * (self.x[i + 1] - self.x[i]),
-            self.y[i] + f * (self.y[i + 1] - self.y[i]),
-            self.theta[i] + f * (self.theta[i + 1] - self.theta[i]),
-            (self.x[j1] - self.x[j0]) / dt,
-            (self.y[j1] - self.y[j0]) / dt,
-            (self.theta[j1] - self.theta[j0]) / dt,
-        )
-
-
-class VirtualDriver:
-    """Controller input (a vexsim InputSource) that tracks a Reference with the true pose.
-
-    Kanayama's tracking law on the reference's speed, a little ahead of time to make up
-    for the drive's lag, turned into tank-drive joystick positions through the inverse of
-    the team's throttle curve. It drives once opcontrol() starts.
-
-    Where the logged estimate drifts sideways while the robot is still (MCL wandering, or
-    correcting itself), it stays put: a tank drive can't slide, the heading (from the IMU)
-    is reliable, and a still robot most likely stayed where it stopped. Until the path
-    moves on, the distance from it then measures the real MCL's drift, not the replay's.
-    """
-
-    def __init__(self, reference: Reference, gains: tuple[float, ...] = GAINS):
-        self.reference = reference
-        self.kx, self.ky, self.ktheta, self.lead = gains
-        self.curve = ThrottleCurve()
-        self.sim = None  # set once the simulation exists
-        self.t0: float | None = None
+    def __init__(self, path: LoggedPath, gains: tuple[float, float, float, float] = GAINS):
+        super().__init__(path, track_in=TRACK_IN, top_speed_in_s=MAX_IN_S, curve=CURVE, gains=gains)
         self.truth: list[tuple[float, float, float, float]] = []  # s, x in, y in, theta rad
-        self.following: list[float] = []  # distance from the reference (in)
 
     def poll(self, time_s: float) -> tuple[dict[str, float], set[str]]:
         sim = self.sim
-        if sim is None or sim.phase != "opcontrol":
-            return {}, set()
-        if self.t0 is None:
-            self.t0 = time_s
-        x, y, theta = sim.robot.pose
-        x, y = x / 0.0254, y / 0.0254
-        self.truth.append((time_s, x, y, theta))
-        tau = time_s - self.t0
-        if tau > self.reference.end:
-            return {}, set()
-        xr, yr, thr, *_ = self.reference.at(tau)
-        _, _, th_lead, vx, vy, w_ref = self.reference.at(tau + self.lead)
-        c, s = math.cos(theta), math.sin(theta)
-        ex, ey = c * (xr - x) + s * (yr - y), -s * (xr - x) + c * (yr - y)
-        e_theta = math.remainder(thr - theta, math.tau)
-        self.following.append(math.hypot(ex, ey))
-        v_ref = vx * math.cos(th_lead) + vy * math.sin(th_lead)  # signed: forward or back
-        v = v_ref * math.cos(e_theta) + self.kx * ex
-        w = w_ref + self.ky * v_ref * ey + self.ktheta * math.sin(e_theta)
-        scale = 127 / MAX_IN_S
-        left, right = (v - w * TRACK_IN / 2) * scale, (v + w * TRACK_IN / 2) * scale
-        return {"LEFT_Y": self.curve.joystick(left), "RIGHT_Y": self.curve.joystick(right)}, set()
+        if sim is not None and sim.phase == "opcontrol":
+            x, y, theta = sim.robot.pose
+            self.truth.append((time_s, x / 0.0254, y / 0.0254, theta))
+        return super().poll(time_s)
 
 
 def start_routine(updates: list[Update]) -> tuple[str, tuple[float, float, float]]:
@@ -261,7 +156,7 @@ def start_routine(updates: list[Update]) -> tuple[str, tuple[float, float, float
     startMcl() logs the pose RCL reset it to. The back sensor sets x; y, when it isn't 0,
     came from whichever side sensor was nearer its wall.
     """
-    x, y, theta = updates[0].est
+    x, y, theta = updates[0].estimate
     vex = (90 - math.degrees(theta)) % 360
     side = abs(y) > 1e-4
     left = side and updates[0].sensors[2][0] <= updates[0].sensors[4][0]
@@ -287,14 +182,14 @@ def replay(job: tuple[str, str, int, str, str]) -> Replay:
     from vexsim.runtime.simulation import Simulation
 
     real, out, seed, executable, brake = job
-    updates = parse_log(real)
-    reference = Reference(updates)
-    routine, start = start_routine(updates)
+    log = MclLog.read(real)
+    path = LoggedPath(*log.path())
+    routine, start = start_routine(log.updates)
     folder = Path(out) / f"{Path(real).stem}_s{seed}"
     folder.mkdir(parents=True, exist_ok=True)
     env = {"VEXSIM_AUTON": routine, "VEXSIM_SD_DIR": str(folder.resolve()),
            "VEXSIM_SEED": str(seed), "VEXSIM_BRAKE": brake}  # fmt: skip
-    driver = VirtualDriver(reference)
+    driver = VirtualDriver(path)
     sim = Simulation(
         load_robot(ROBOT),
         program=CppProgram(executable, env=env),
@@ -304,11 +199,11 @@ def replay(job: tuple[str, str, int, str, str]) -> Replay:
         input_source=driver,
         echo=None,
     )
-    driver.sim = sim
+    driver.attach(sim)
     try:
         sim.start("match")  # autonomous starts MCL and returns; opcontrol drives
-        limit = reference.end + 30.0
-        while (driver.t0 is None or sim.world.time < driver.t0 + reference.end + 0.3) and (
+        limit = path.end + 30.0
+        while (driver.start_s is None or sim.world.time < driver.start_s + path.end + 0.3) and (
             sim.world.time < limit
         ):
             sim.run_for(1.0)
@@ -318,7 +213,7 @@ def replay(job: tuple[str, str, int, str, str]) -> Replay:
         re.search(r"initLog: logging MCL to (.*) from (\d+) ms", line) for line in sim.console
     ]
     started = [m for m in started if m]
-    if not started or driver.t0 is None:
+    if not started or driver.start_s is None:
         raise RuntimeError(
             f"{real}: the simulated robot didn't log MCL:\n" + "\n".join(sim.console[-10:])
         )
@@ -400,7 +295,7 @@ def measure(updates: list[Update], truth_csv: Path | None = None) -> dict[str, f
     )  # fmt: skip
 
     if truth_csv is None:
-        points = [(u.t, *u.est) for u in updates]
+        points = [(u.t, *u.estimate) for u in updates]
         still_at = [_still(points, i) for i in range(len(updates))]
     else:
         truth = [tuple(map(float, r)) for r in list(csv.reader(truth_csv.open()))[1:]]
@@ -424,7 +319,7 @@ def measure(updates: list[Update], truth_csv: Path | None = None) -> dict[str, f
         i = max(j, i + 1)
     m["reading noise, still, mm"] = st.median(spreads) if spreads else math.nan
 
-    spread = [math.hypot(*u.std) for u in updates]
+    spread = [math.hypot(*u.spread) for u in updates]
     m["MCL spread median in"], m["MCL spread p95 in"] = st.median(spread), _quantile(spread, 0.95)
     m["map misfit > 3 in, % of updates"] = 100 * st.fmean(e > 3 for e in misfits)
     if truth_csv is not None:
@@ -434,7 +329,7 @@ def measure(updates: list[Update], truth_csv: Path | None = None) -> dict[str, f
         for a, b in zip(updates, updates[1:], strict=False):  # b logs a's estimate
             k = bisect.bisect_left(times, a.t)
             if 0 < k < len(truth):
-                errors.append(math.hypot(b.est[0] - truth[k][1], b.est[1] - truth[k][2]))
+                errors.append(math.hypot(b.estimate[0] - truth[k][1], b.estimate[1] - truth[k][2]))
         m["MCL error median in"], m["MCL error p95 in"] = st.median(errors), _quantile(errors, 0.95)
         m["MCL error max in"] = max(errors)
     return m

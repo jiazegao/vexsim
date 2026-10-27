@@ -5,8 +5,10 @@ import type { RunSpec, WorkspaceItem } from "./protocol";
 
 export const MODES = ["autonomous", "driver", "match", "skills"] as const;
 export const NOISE = ["ideal", "default", "harsh"] as const;
+export const STICKS = ["tank", "arcade"] as const;
 export type Mode = (typeof MODES)[number];
 export type Noise = (typeof NOISE)[number];
+export type Sticks = (typeof STICKS)[number];
 
 export interface RunForm {
   config: string; // the saved run configuration it was filled from; "" = none
@@ -20,6 +22,10 @@ export interface RunForm {
   seed: string;
   noise: "" | Noise; // "" = as each sensor is configured
   input: string; // "" = none
+  follow: string; // a log whose path a virtual driver follows; "" = none
+  sticks: Sticks; // how the program drives from the sticks (when following)
+  curve: string; // its LemLib drive curve "deadband, min output, curve"; "" = none
+  following: boolean; // a saved run that follows any log it's given (follow, sticks, curve)
   env: string; // KEY=VALUE, one per line
   busy: string; // PROS projects: seconds a task may run without blocking (0 = no limit)
 }
@@ -37,6 +43,10 @@ export function emptyForm(): RunForm {
     seed: "0",
     noise: "",
     input: "",
+    follow: "",
+    sticks: "tank",
+    curve: "",
+    following: false,
     env: "",
     busy: "5",
   };
@@ -64,6 +74,13 @@ export function formToSpec(form: RunForm): { spec: RunSpec } | { error: string }
     if (!Number.isInteger(seed)) throw new Error("Seed must be a whole number");
     const busy = number(form.busy, "Busy timeout");
     if (busy < 0) throw new Error("Busy timeout can't be negative");
+    let curve: [number, number, number] | null = null;
+    if (form.curve.trim()) {
+      const values = form.curve.split(",").map((v) => (v.trim() === "" ? NaN : Number(v)));
+      if (values.length !== 3 || !values.every(Number.isFinite)) throw new Error("The drive curve is three numbers: deadband, min output, curve (15, 20, 1.05)");
+      curve = values as [number, number, number];
+    }
+    const following = !!form.follow || form.following;
     const spec: RunSpec = {
       robot: form.robot,
       program: form.program || null,
@@ -73,6 +90,7 @@ export function formToSpec(form: RunForm): { spec: RunSpec } | { error: string }
       seed,
       noise: form.noise || null,
       input: form.input || null,
+      follow: following ? { log: form.follow || null, sticks: form.sticks, curve } : null,
       env,
       busy_timeout: busy,
     };
@@ -96,6 +114,10 @@ export function specToForm(spec: RunSpec, config = ""): RunForm {
     seed: String(spec.seed ?? 0),
     noise: (spec.noise ?? "") as RunForm["noise"],
     input: spec.input ?? "",
+    follow: spec.follow?.log ?? "",
+    sticks: spec.follow?.sticks ?? "tank",
+    curve: spec.follow?.curve ? spec.follow.curve.join(", ") : "",
+    following: !!spec.follow,
     env: Object.entries(spec.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
@@ -114,6 +136,7 @@ function canonical(spec: RunSpec): string {
     seed: spec.seed ?? 0,
     noise: spec.noise || null,
     input: spec.input || null,
+    follow: spec.follow ? [spec.follow.log || null, spec.follow.sticks ?? "tank", spec.follow.curve?.map(Number) ?? null] : null,
     env: Object.entries(spec.env ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     busy_timeout: spec.busy_timeout ?? 5,
   });
@@ -134,6 +157,7 @@ export function reconcile(form: RunForm, items: WorkspaceItem[]): RunForm {
   if (next.field && !has(["field"], next.field)) next.field = "";
   if (next.program && !has(["program", "project"], next.program)) next.program = "";
   if (next.input && !has(["input"], next.input)) next.input = "";
+  if (next.follow && !has(["mcllog"], next.follow)) next.follow = "";
   if (!next.robot) {
     const robot = items.find((item) => item.kind === "robot" && !item.problem);
     if (robot) next.robot = robot.path;

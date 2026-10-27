@@ -238,6 +238,17 @@ static void device_scenarios() {
 	} else if (is("report_pose")) {
 		vexsim::report_pose(12, 24, 90);
 		pros::delay(10);
+	} else if (is("draw")) {
+		vexsim::draw_point("mcl", 1, 2);
+		vexsim::draw_point("mcl", 3, 4, vexsim::Color::aqua, 5);
+		vexsim::draw_line("rays", 0, 0, 10, 0, vexsim::Color::yellow);
+		pros::delay(10);
+		vexsim::draw_clear("mcl");  // drawn again: only what comes after the clear stays
+		vexsim::draw_circle("mcl", 5, 6, 2.5);
+		vexsim::draw_ellipse("mcl", 5, 6, 4, 2, 30, vexsim::Color::blue);
+		vexsim::draw_pose("my layer", 12, 24, 90, vexsim::Color::orange);
+		vexsim::draw_text("mcl", -1.5, 2, "spread 2.5 in\nmax", vexsim::Color::muted);
+		pros::delay(10);
 	}
 }
 

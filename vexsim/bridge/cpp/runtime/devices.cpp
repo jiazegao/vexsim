@@ -444,6 +444,15 @@ void vexsim_report_pose(double x_in, double y_in, double theta_deg) {
 	host_emit("P " + fmt(x_in) + " " + fmt(y_in) + " " + fmt(theta_deg));
 }
 
+// vexsim::draw_* (sim.hpp): a drawing command, one line, for the simulator's drawing layers.
+// Not a PROS call: drawing never costs the robot code simulated time.
+void vexsim_draw(const char* command) {
+	std::string line(command ? command : "");
+	for (char& c : line)
+		if (c == '\n' || c == '\r') c = ' ';
+	host_emit("D " + line);
+}
+
 void vexsim_set_pose_source(int (*source)(double*, double*, double*)) { g_pose_source = source; }
 
 namespace pros {

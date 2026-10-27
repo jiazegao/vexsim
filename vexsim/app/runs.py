@@ -5,8 +5,8 @@ A run's folder holds:
 - ``run.json``: what ran (the spec, the command, robot and field), how it ended, how far
   the robot code's pose was from the truth (``RunRecord``)
 - ``tape.json.gz``: the field as the browser draws it, every ``TAPE_PERIOD_S`` of simulated
-  time, for scrubbing back and forth (the scene, frames, and when the motion overlay and
-  the screens changed)
+  time, for scrubbing back and forth (the scene, frames, and when the motion overlay, the
+  screens and the robot code's drawings changed)
 - ``telemetry.csv.gz``: the 10 ms telemetry log of ``vexsim run --record`` (for plots;
   ``vexsim plot`` and ``vexsim replay`` read it too)
 - ``console.txt``: what the program printed
@@ -38,6 +38,7 @@ RUNS_DIR = ".vexsim/runs"
 KEEP = 50
 TAPE_PERIOD_S = 0.05
 MAX_SAMPLES = 36_000  # 30 min at TAPE_PERIOD_S; past that, every other sample goes
+MAX_DRAWN = 2_000_000  # shapes the robot code drew, kept; past that, every other drawing goes
 PLOT_POINTS = 5_000  # telemetry rows sent for plots, at most
 _ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 
@@ -76,6 +77,8 @@ class RunRecord(BaseModel):
     pose_error: PoseErrorSummary | None
     samples: int
     kept: bool = False
+    # a run that follows a log (spec.follow): when it began to, the log's first moment
+    follow_start: float | None = None
 
 
 def runs_root(workspace: str | Path) -> Path:
@@ -117,16 +120,26 @@ class TapeRecorder:
         self.record = record  # RunRecord fields known at the start
         self.scene = {k: v for k, v in scene.items() if k != "type"}
         self.samples: list[dict] = []
-        self.events: dict[str, list] = {"overlay": [], "lcd": [], "controller_screen": []}
+        self.events: dict[str, list] = {
+            "overlay": [],
+            "lcd": [],
+            "controller_screen": [],
+            "drawings": [],
+        }
         self.next_t = 0.0
         self.period = TAPE_PERIOD_S
+        self.drawn = -1  # the version of the drawings last kept
+        self.drawn_shapes = 0
+        self.next_drawing_t = 0.0
+        self.drawing_period = TAPE_PERIOD_S
         self.finished = False
 
     def due(self, t: float) -> bool:
         return not self.finished and t >= self.next_t - 1e-9
 
-    def sample(self, frame: dict, overlay: dict) -> None:
-        """Keep a frame (``frames.frame_of``) and anything that changed since the last."""
+    def sample(self, frame: dict, overlay: dict, drawings=None) -> None:
+        """Keep a frame (``frames.frame_of``) and anything that changed since the last,
+        the robot code's drawings (``vexsim.runtime.drawing.Drawings``) included."""
         t = frame["t"]
         sample = {
             k: v
@@ -137,10 +150,28 @@ class TapeRecorder:
         self._event("overlay", t, {"path": overlay["path"], "target": overlay["target"]})
         self._event("lcd", t, frame["lcd"])
         self._event("controller_screen", t, frame["controller_screen"])
+        if drawings is not None:
+            self._drawings(t, drawings)
         self.next_t = t + self.period
         if len(self.samples) > MAX_SAMPLES:  # a long session: keep all of it, more coarsely
             self.samples = self.samples[::2]
             self.period *= 2
+
+    def _drawings(self, t: float, drawings) -> None:
+        if drawings.version == self.drawn or t < self.next_drawing_t - 1e-9:
+            return
+        self.drawn = drawings.version
+        layers = drawings.snapshot()
+        events = self.events["drawings"]
+        if (events[-1][1] if events else {}) == layers:  # nothing drawn is how a tape starts
+            return
+        events.append([t, layers])
+        self.drawn_shapes += sum(len(shapes) for shapes in layers.values())
+        self.next_drawing_t = t + self.drawing_period
+        if self.drawn_shapes > MAX_DRAWN:  # robot code that draws a lot: keep it more coarsely
+            events[:] = events[::2]
+            self.drawn_shapes = sum(len(s) for _, layers in events for s in layers.values())
+            self.drawing_period *= 2
 
     def _event(self, name: str, t: float, value) -> None:
         events = self.events[name]
@@ -155,6 +186,7 @@ class TapeRecorder:
         duration: float,
         recorder=None,
         console: list[str] = (),
+        follow_start: float | None = None,
     ) -> RunRecord:
         """Write the run's folder (once) and return its record."""
         self.finished = True
@@ -167,6 +199,7 @@ class TapeRecorder:
             message=message,
             pose_error=None if error is None else PoseErrorSummary(**_rounded(vars(error))),
             samples=len(self.samples),
+            follow_start=None if follow_start is None else round(follow_start, 4),
         )
         tape = {"scene": self.scene, "samples": self.samples, "events": self.events}
         with gzip.open(self.folder / "tape.json.gz", "wt", encoding="utf-8") as f:
@@ -356,3 +389,26 @@ def replay_of(log_path: Path, config, field, robot_path: str, log_name: str | No
         "tape": finite({"scene": scene, "samples": samples, "events": events}),
         "telemetry": telemetry_columns(log_path),
     }
+
+
+# --- an MCL log as a tape --------------------------------------------------------------------
+
+
+def mcl_tape(path: Path, shown: str) -> dict:
+    """A robot's MCL log (``vexsim.mcllog``) to play on the field (``MclLogTape``): its
+    estimate and, as drawings, each update's rays, particles and spread. ``shown``: the log's
+    path as the user names it. Raises MclLogError if it doesn't read."""
+    from vexsim.mcllog import MclLog
+
+    log = MclLog.read(path)
+    times = [round(t, 4) for t in log.times()]
+    return finite(
+        {
+            "name": log.name,
+            "path": shown,
+            "summary": log.summary(),
+            "times": times,
+            "estimate": [[round(x, 3), round(y, 3), round(h, 2)] for x, y, h in log.estimates()],
+            "drawings": [[t, log.drawings(u)] for t, u in zip(times, log.updates, strict=True)],
+        }
+    )

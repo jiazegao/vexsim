@@ -1,5 +1,5 @@
 """What's in a folder: robots, fields, scenarios, Python programs, PROS projects, inputs,
-telemetry logs and robot logs.
+telemetry logs, robot logs and MCL logs.
 
 The UI works on one folder, its workspace. ``Workspace.scan`` finds what vexsim can use
 in it by reading the files, never running them, and ``Workspace.path`` turns the paths the
@@ -15,7 +15,16 @@ from pathlib import Path
 from typing import Literal
 
 ItemKind = Literal[
-    "robot", "field", "scenario", "program", "project", "input", "log", "robotlog", "invalid"
+    "robot",
+    "field",
+    "scenario",
+    "program",
+    "project",
+    "input",
+    "log",
+    "robotlog",
+    "mcllog",
+    "invalid",
 ]
 KIND_ORDER: tuple[str, ...] = (
     "robot",
@@ -26,6 +35,7 @@ KIND_ORDER: tuple[str, ...] = (
     "input",
     "log",
     "robotlog",
+    "mcllog",
     "invalid",
 )
 SKIP_DIRS = {"node_modules", "__pycache__", "build", "dist", "bin", "venv", "env", "site-packages"}
@@ -40,6 +50,13 @@ _ROBOT_LOG_BEGIN = "#vexsim-log begin"  # a robot log in a terminal capture
 _CAPTURES = (".txt", ".log")
 MAX_CAPTURE = 20 * 1024 * 1024  # bytes: bigger text files aren't looked into
 _INPUT_COLUMNS = {"LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y", "buttons"}
+# files that are never MCL logs (vexsim.mcllog), so aren't looked into for one
+_NOT_LOGS = {
+    ".md", ".json", ".toml", ".cfg", ".ini", ".js", ".ts", ".tsx", ".css", ".html",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".s", ".o", ".a", ".so", ".dll", ".exe", ".bin",
+    ".elf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webm", ".mp4", ".pdf", ".zip",
+    ".gz", ".tar", ".pyc", ".lock", ".sh", ".bat", ".ps1", ".pros",
+}  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -138,7 +155,23 @@ class Workspace:
         ):
             detail = "robot log, in terminal output"
             return WorkspaceItem("robotlog", self.relative(path), path.name, detail)
+        if suffix not in _NOT_LOGS and suffix != ".py":
+            return self._mcl_log(path)
         return None
+
+    def _mcl_log(self, path: Path) -> WorkspaceItem | None:
+        from vexsim.mcllog import parse
+
+        text = _read(path, 8192)
+        if not text or "\0" in text:
+            return None
+        try:
+            first = parse(text)[0]
+        except ValueError:
+            return None
+        x, y, _ = first.estimate
+        detail = f"MCL log: {len(first.sensors)} sensors, starts at ({x:.1f}, {y:.1f})"
+        return WorkspaceItem("mcllog", self.relative(path), path.name, detail)
 
     def _config(self, path: Path) -> WorkspaceItem | None:
         from vexsim.config.issues import ConfigError

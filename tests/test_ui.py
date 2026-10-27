@@ -21,11 +21,11 @@ from vexsim.app.launch import (
     read_configurations,
     write_configurations,
 )
-from vexsim.app.runspec import RunError, RunSpec, check, quote_arg
+from vexsim.app.runspec import RunError, RunSpec, check, log_start, quote_arg
 from vexsim.app.session import Session
 from vexsim.app.workspace import Workspace
 from vexsim.cli import build_parser, main
-from vexsim.ui.protocol import ServerMessage, Tape, Telemetry, typescript
+from vexsim.ui.protocol import MclLogTape, ServerMessage, Tape, Telemetry, typescript
 
 ROBOT = "examples/robots/full_omni_6m.yaml"
 TOUR = "examples/programs/tour.py"
@@ -144,7 +144,18 @@ def test_the_example_run_configurations_check_out():
     configurations = read_configurations(ROOT)
     names = {c.name for c in configurations}
     assert {"Drive: full omni", "Tour (Python)", "1239E: Left 40", "1239E: driver"} <= names
+    replays = [c for c in configurations if c.follow is not None]
+    assert {c.name for c in replays} == {
+        "Replay an MCL log (Python tank drive)",
+        "1239E: replay an MCL log",
+    }
+    log = "examples/logs/left40_simulated.1239e"
     for configuration in configurations:
+        if configuration.follow is not None:  # it replays whichever log it's given: give it one
+            follow = configuration.follow.model_copy(update={"log": log})
+            configuration = configuration.model_copy(
+                update={"follow": follow, "start": log_start(ROOT / log)}
+            )
         prepared = check(configuration, ROOT)  # its files are there and its configs load
         assert not [w for w in prepared.warnings if w.location == "start"], configuration.name
 
@@ -393,6 +404,13 @@ def test_every_run_is_recorded(tmp_path):
     assert times[0] == 0 and times[-1] == record.duration and len(times) == record.samples
     assert all(0.04 < b - a < 0.06 for a, b in zip(times[:-2], times[1:-1], strict=True))
     assert tape.scene.run_id == first["id"] and tape.events.overlay  # the tour's motions
+    # what the tour draws (bot.draw): its stops, numbered, sent and recorded when drawn (each
+    # run starts with nothing drawn: the browser forgets the run before's drawings)
+    drawn = [message["layers"] for message in heard.of("drawings")]
+    assert drawn[:2] == [{}, {"stops": drawn[1]["stops"]}] and drawn[2] == {}
+    events = runs.read_tape(root, first["id"])["events"]["drawings"]
+    assert [layers for _, layers in events] == [drawn[1]]
+    assert drawn[1]["stops"][:2] == [["point", 30, 0, "violet", 6], ["text", 32.5, 2.5, "1", "ink"]]
     assert "autonomous start" in (folder / "console.txt").read_text(encoding="utf-8")
     plots = Telemetry.model_validate(runs.telemetry_columns(folder / "telemetry.csv.gz"))
     assert len(plots.columns["time_s"]) == len(plots.columns["error_in"]) > 1000
@@ -496,6 +514,22 @@ def test_the_server_says_why_a_run_cant_start(client):
     }
     response = client.post("/api/sessions", json={"spec": {"robot": "../outside.yaml"}})
     assert response.status_code == 422 and "outside the workspace" in response.json()["error"]
+    follow = {"robot": ROBOT, "program": TOUR, "follow": {"log": "../mcl_log1.1239e"}}
+    response = client.post("/api/sessions", json={"spec": follow})
+    assert response.status_code == 422 and "outside the workspace" in response.json()["error"]
+
+
+def test_the_server_plays_mcl_logs(client):
+    authorized(client)
+    tape = MclLogTape.model_validate(
+        client.get("/api/mcllog", params={"path": "examples/logs/left40_simulated.1239e"}).json()
+    )
+    assert tape.name == "left40_simulated.1239e" and tape.summary.updates == len(tape.times) == 502
+    assert tape.summary.start == (59.87, 0.0, 0.0) and tape.times[0] == 0
+    assert set(tape.drawings[0][1]) == {"rays", "particles", "spread"}
+    for path, message in (("../x.1239e", "outside the workspace"), (TOUR, "not an MCL log")):
+        response = client.get("/api/mcllog", params={"path": path})
+        assert response.status_code == 422 and message in response.json()["error"]
 
 
 def test_the_server_previews_a_robot_and_field(client):

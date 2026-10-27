@@ -8,7 +8,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
       [".", "one 10 ms step while paused"],
       ["R", "restart from the start, same seed"],
       ["+ / −", "faster / slower (0.1× to 8×, then max)"],
-      ["1 2 3 4", "show or hide the paths, the estimate, the beams, the wheel forces"],
+      ["1 2 3 4 5", "show or hide the paths, the estimate, the beams, the wheel forces, what the robot code draws"],
       ["?", "this list"],
     ],
   },

@@ -500,11 +500,32 @@ def build_parser() -> argparse.ArgumentParser:
         "with an autonomous function, else driver)",
     )
     p.add_argument("--field", help="field YAML file")
-    p.add_argument("--start", type=_parse_start, default="0,0,0", help="x,y,heading (in, deg)")
+    p.add_argument(
+        "--start",
+        type=_parse_start,
+        help="x,y,heading (in, deg; default 0,0,0, or where --follow's log starts)",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--noise", choices=["ideal", "default", "harsh"], help="sensor noise preset")
     p.add_argument("--speed", type=float, default=1.0, help="viewer speed (0.1 to 8; 0 = max)")
     p.add_argument("--input", help="scripted controller input CSV (time_s, LEFT_Y, ..., buttons)")
+    p.add_argument(
+        "--follow",
+        metavar="LOG",
+        help="drive along a real robot's path, from its MCL log: a virtual driver holds the "
+        "sticks of the program's driver control (opcontrol) and the run ends with the log",
+    )
+    p.add_argument(
+        "--sticks",
+        choices=["tank", "arcade"],
+        help="--follow: how the program drives from the sticks (default tank: both sticks' y; "
+        "arcade: left y forward, right x turning)",
+    )
+    p.add_argument(
+        "--curve",
+        metavar="DEADBAND,MIN,CURVE",
+        help="--follow: the program's LemLib ExpoDriveCurve, if it shapes the sticks with one",
+    )
     p.add_argument("--record", help="write a telemetry CSV log")
     p.add_argument(
         "--robot-log",
