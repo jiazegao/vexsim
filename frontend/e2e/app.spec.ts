@@ -240,6 +240,8 @@ test("records every run: scrub one, reopen an older one, overlay two", async ({ 
   await page.keyboard.press("Space");
   await expect.poll(async () => Number(await field.getAttribute("data-time"))).toBeGreaterThan(2.3);
   await page.keyboard.press("Space");
+  // the field draws a frame later, where it paused (the time it shows until then is older)
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   const paused = await field.getAttribute("data-time");
   await page.waitForTimeout(300);
   await expect(field).toHaveAttribute("data-time", paused!);

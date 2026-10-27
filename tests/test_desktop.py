@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 import pytest
@@ -246,9 +246,8 @@ def test_a_shortcut_is_named_for_its_folder():
 
 def test_a_desktop_entry_quotes_what_it_runs(monkeypatch):
     monkeypatch.setattr(shortcut, "python", lambda: "/usr/bin/python3")
-    entry = shortcut.desktop_entry(
-        shortcut.Shortcut(Path("/home/me/robots/$100 bot")), Path("/icons/vexsim.png")
-    )
+    folder, icon = PurePosixPath("/home/me/robots/$100 bot"), PurePosixPath("/icons/vexsim.png")
+    entry = shortcut.desktop_entry(shortcut.Shortcut(folder), icon)  # Linux's paths, anywhere
     lines = entry.splitlines()
     assert lines[0] == "[Desktop Entry]" and "Name=vexsim ($100 bot)" in lines
     # quoted, its $ escaped for the quotes, and that backslash escaped for the file
@@ -261,7 +260,7 @@ def test_a_desktop_entry_quotes_what_it_runs(monkeypatch):
 def test_a_macos_shortcut_is_an_app(tmp_path, monkeypatch):
     monkeypatch.setattr(shortcut, "python", lambda: "/usr/local/bin/python3")
     monkeypatch.setenv("PATH", "/opt/homebrew/bin:/usr/bin")
-    one = shortcut.Shortcut(Path("/Users/me/my robot"))
+    one = shortcut.Shortcut(PurePosixPath("/Users/me/my robot"))  # macOS's paths, anywhere
     app = tmp_path / "vexsim (my robot).app"
     shortcut.write_app(app, one, shortcut.ICONS / "vexsim.icns")
     import plistlib
