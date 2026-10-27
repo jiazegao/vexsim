@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections.abc import Sequence
 
@@ -22,6 +21,14 @@ def _print_issues(issues: list[ConfigIssue]) -> None:
     ]
     for issue in ordered:
         print(f"  {issue.severity:<8} {issue.location or '(document)'}: {issue.message}")
+
+
+def _print_run_error(exc) -> None:
+    """A RunError as ``vexsim run`` reports it: config issues one per line, else the message."""
+    if exc.issues:
+        _print_issues(exc.issues)
+    else:
+        print(f"error: {exc.message}")
 
 
 def cmd_validate_config(args: argparse.Namespace) -> int:
@@ -165,13 +172,6 @@ def _load_config(path: str):
     return report.config
 
 
-def _is_pros_project(path: str) -> bool:
-    from pathlib import Path
-
-    p = Path(path)
-    return p.is_dir() or p.name == "project.pros"
-
-
 def cmd_build(args: argparse.Namespace) -> int:
     from vexsim.bridge.build import BuildError, build_project, find_toolchain
 
@@ -199,78 +199,40 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from pathlib import Path
-
     from vexsim.algorithms.localization.base import Pose
+    from vexsim.app.runspec import (
+        RunError,
+        RunSpec,
+        build,
+        check,
+        program_factory,
+        simulation_factory,
+    )
     from vexsim.bridge.host import HostError
-    from vexsim.runtime.program import load_program
-    from vexsim.runtime.simulation import ScriptedInput, Simulation
+    from vexsim.runtime.simulation import ScriptedInput
 
-    config = _load_config(args.robot)
-    if config is None:
+    try:
+        prepared = check(RunSpec.from_args(args))
+        executable = build(prepared, log=print) if prepared.project is not None else None
+    except RunError as exc:
+        _print_run_error(exc)
         return EXIT_INVALID
-    field = None
-    if args.field:
-        report = validate_field(args.field)
-        if not report.ok:
-            _print_issues(report.issues)
-            return EXIT_INVALID
-        field = report.config
-    env = {}
-    for item in args.env or ():
-        key, sep, value = item.partition("=")
-        if not sep or not key:
-            print(f"error: --env needs KEY=VALUE, got {item!r}")
-            return EXIT_INVALID
-        env[key] = value
-    if args.program and _is_pros_project(args.program):
-        from vexsim.bridge.build import BuildError, build_project
-        from vexsim.bridge.program import CppProgram
-
-        project = Path(args.program)
-        project = project if project.is_dir() else project.parent
-        try:
-            build = build_project(project, log=print)
-        except BuildError as exc:
-            print(f"error: {exc}")
-            return EXIT_INVALID
-
-        def make_program():
-            return CppProgram(
-                build.executable,
-                name=project.resolve().name,
-                busy_timeout_s=args.busy_timeout,
-                env=env,
-            )
-
-        mode = args.mode or "autonomous"
-    else:
-        os.environ.update(env)  # a Python program runs in this process
-        module = load_program(args.program) if args.program else None
-
-        def make_program():
-            return module
-
-        mode = args.mode or ("autonomous" if hasattr(module, "autonomous") else "driver")
+    make_program, mode = program_factory(prepared, executable)
     inputs = ScriptedInput.from_csv(args.input) if args.input else None
     robot_logs = []  # the latest run's, when --robot-log asks for one
 
-    def factory() -> Simulation:
-        sim = Simulation(
-            config,
-            program=make_program(),
-            field=field,
-            seed=args.seed,
-            noise=args.noise,
-            start=args.start,
-            input_source=inputs,
-        )
-        if args.robot_log:
-            from vexsim.calibration.record import RobotLogger
+    def attach_robot_log(sim) -> None:
+        from vexsim.calibration.record import RobotLogger
 
-            robot_logs.append(RobotLogger(sim.robot, sim.sensors).attach(sim.world))
-        sim.start(mode)
-        return sim
+        robot_logs.append(RobotLogger(sim.robot, sim.sensors).attach(sim.world))
+
+    factory = simulation_factory(
+        prepared,
+        make_program,
+        mode,
+        input_source=inputs,
+        on_create=attach_robot_log if args.robot_log else None,
+    )
 
     if args.headless:
         try:
@@ -656,6 +618,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="folder for overrides.yaml, calibration.png and simulated.csv")
     p.set_defaults(func=cmd_calibrate)
 
+    p = sub.add_parser(
+        "ui",
+        help="open the vexsim app in your browser",
+        description=(
+            "Start the vexsim app for a folder (its workspace) and open it in your browser. "
+            "It finds the robots, fields, programs and PROS projects in the folder; run "
+            "and watch simulations from there. It listens on this computer only."
+        ),
+    )
+    p.add_argument("folder", nargs="?", default=".", help="workspace folder (default: here)")
+    p.add_argument("--port", type=int, help="port (default: 8642, or any free one)")
+    p.add_argument("--no-browser", action="store_true", help="don't open a browser")
+    p.add_argument("--token", help=argparse.SUPPRESS)  # fixed token, for tests
+    p.add_argument("--dev", action="store_true", help=argparse.SUPPRESS)  # Vite dev server
+    p.set_defaults(func=cmd_ui)
+
     return parser
 
 
@@ -770,6 +748,34 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
         except ModuleNotFoundError:
             print('note: plots need matplotlib; install it with: pip install -e ".[viz]"')
         print(f"wrote {out}")
+    return EXIT_OK
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    folder = Path(args.folder)
+    if not folder.is_dir():
+        print(f"error: {args.folder} is not a folder")
+        return EXIT_INVALID
+    try:
+        from vexsim.ui.server import serve
+    except ModuleNotFoundError as exc:
+        print(f'error: the UI needs {exc.name}; install it with: pip install -e ".[ui]"')
+        return EXIT_INVALID
+    try:
+        serve(
+            folder,
+            port=args.port,
+            open_browser=not args.no_browser,
+            token=args.token,
+            dev=args.dev,
+        )
+    except OSError as exc:
+        print(f"error: {exc}")
+        return EXIT_INVALID
+    except KeyboardInterrupt:
+        pass
     return EXIT_OK
 
 

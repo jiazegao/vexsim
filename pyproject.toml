@@ -18,10 +18,21 @@ dependencies = [
 dev = [
     "pytest>=8",
     "ruff>=0.5",
+    # the UI's server, for its tests (Starlette's TestClient runs on httpx2)
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "websockets>=13",
+    "httpx2>=2",
 ]
 viz = [
     "matplotlib>=3.8",
     "pygame>=2.5",
+]
+# `vexsim ui`: the browser app (its page is prebuilt into vexsim/ui/static)
+ui = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "websockets>=13",
 ]
 
 [project.scripts]
@@ -40,6 +51,8 @@ include = ["vexsim*"]
     "cpp/runtime/*.hpp",
     "cpp/runtime/defaults/*.cpp",
 ]
+# The browser app, built from frontend/ by `npm run build`
+"vexsim.ui" = ["static/*", "static/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,10 @@
+{
+  // The files that run in Node rather than the browser: the build and test configs and
+  // the end-to-end tests, which drive a browser from Node.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "playwright.config.ts", "e2e"]
+}

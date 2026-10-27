@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** Final v1.1 (2026-10-26). All phases (1-10) complete.
+**Status:** v1.2 (2026-10-27). Phases 1-10 complete; phase 11, a browser UI, in progress ([section 13](#13-browser-ui-phase-11)): 11.1 is done.
 
 **v1.1:** Phase 7 runs robot code in a separate host process over pipes instead of a DLL loaded with `ctypes`, and compiles with g++ directly instead of CMake and Ninja. Sections 0, 2, 3 and 7 are updated.
 
@@ -16,6 +16,7 @@
 | C++ toolchain on Windows | **MinGW-w64 GCC (MSYS2 UCRT64)**, chosen to match PROS's GCC family and `gnu++20` dialect. Clang is a secondary option |
 | Python ⇄ C++ boundary | **A separate robot host process** (the compiled project plus vexsim's runtime) driven over pipes with a line protocol. Nothing has to match Python's compiler or ABI, and a crash in robot code can't take the simulator down |
 | Algorithm testing | First-class: pluggable localization and control in Python or C++, seeded Monte-Carlo benchmarks |
+| User interface | **A local browser app** (`vexsim ui`) with its own field renderer, replacing the terminal for everyday use. The CLI stays for scripts and CI; the pygame viewer stays too, for now. It listens on this computer only (no network viewing) |
 
 ## 1. Goals
 1. Realistic drive physics: wheel slip, drift, turning scrub, weight transfer, omni vs. traction behavior.
@@ -64,7 +65,10 @@ vexsim/
   bench/           scenarios, metrics, Monte-Carlo runner (multiprocessing), HTML/CSV reports
   viz/             live top-down view, telemetry plots, replay, log export
   calibration/     fit model params from real robot logs (Phase 10)
-  cli.py           vexsim run | build | doctor | bench | replay | validate-config
+  app/             services shared by the CLI and the UI: run specs, sessions, jobs, workspace
+  ui/              the UI's server (FastAPI) and its built browser app (static/)
+  cli.py           vexsim run | build | doctor | bench | replay | validate-config | ui
+frontend/          the browser app's source (React + TypeScript, built with Vite)
 examples/
   robots/          full_omni_6m.yaml, ...
   scenarios/       straight_48in.yaml, s_curve.yaml, fast_turn_drift.yaml, ...
@@ -307,6 +311,13 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 9 | **[done]** Field wall collisions; traction, mecanum, X-drive and H-drive models and layouts | Collision and new drivetrain tests pass |
 | 10 | **[done]** Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |
 | port | **[done]** First real team port (1239E 2026-27): mechanisms, element and beam heights, an LVGL stand-in, edited LemLib headers, `--env` | All nine routines run; RCL and MCL evaluated against the truth ([docs/porting_1239e.md](docs/porting_1239e.md)) |
+| 11.1 | **[done]** UI foundations: service layer (run specs, sessions, jobs, workspace) with the CLI on it; server and protocol; app shell with its own field renderer; `vexsim ui`; frontend build in CI | `vexsim ui` lists a workspace and runs a simulation; all existing tests pass |
+| 11.2 | Simulate view: parity with `vexsim run` and the pygame viewer | 1239E Left 40 runs, and `full_omni_6m` drives by keyboard and gamepad, from the UI; drag-to-start works; build errors are clickable |
+| 11.3 | Timeline, plots, run history, replay, compare, export | Scrub a finished run, reopen an old one, overlay two |
+| 11.4 | Robot and field editors | Drag a sensor in `1239e_2026-27.yaml`: the number changes and its comments survive |
+| 11.5 | Bench, Calibrate, Analyze, Sweeps pages | Every remaining command has a page; the 1239E evaluation runs as a sweep |
+| 11.6 | Real-robot logs and debug drawing | An MCL log plays beside its replay; robot code can draw on the field (`vexsim::draw_*`) |
+| 11.7 | (optional) Desktop window and shortcut, a VS Code panel | — |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |
@@ -318,3 +329,24 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | Windows toolchain setup friction | `vexsim doctor` with exact MSYS2 install commands; CI on `windows-latest` |
 | Python is too slow for large Monte-Carlo sweeps | Vectorize per-wheel math with numpy; parallel workers; numba as an optional speedup |
 | Development and validation happen on Linux, but you're on Windows | Windows CI job on every change, plus a hands-on check on your machine at the end of Phases 7 and 8 |
+
+## 13. Browser UI (phase 11)
+`vexsim ui [folder]` starts a small server on this computer and opens the browser on the app. Everything the commands and the pygame viewer do becomes clicks: run configurations instead of command lines, the robot dragged to its start, a timeline to scrub, editors that mark errors at the line, and pages for building, benchmarking and calibrating.
+
+**Decisions** (2026-10-27): browser-based; the browser draws the field itself (canvas), separately from the pygame viewer, which stays for now; the server listens on 127.0.0.1 only, with no network viewing; after the simulate view, the pages come in the order of the phases below.
+
+```
+browser (React + TypeScript)      <-- HTTP -->   vexsim ui server (FastAPI)
+  field canvas, plots, editors    <-- WS ---->   workspace, configs, runs, jobs
+                                                    |
+                 sim worker process (one per live run)    job processes
+                 Simulation + program (+ C++ robot host)  build, bench, calibrate, sweeps
+```
+- **Service layer (`vexsim/app/`), shared by the CLI and the UI.** `RunSpec` holds everything `vexsim run` takes and converts to and from its arguments, so the UI can copy a run as a command. `Session` runs one simulation; `Jobs` runs long tasks (builds first) with progress and cancel; `Workspace` finds the robots, fields, programs, PROS projects, scenarios, inputs and logs in a folder.
+- **Each live simulation runs in its own process.** A hung program or a crashed C++ host can't freeze the UI, and environment variables don't leak between runs. The worker paces simulated time (real time x speed) and sends about 60 frames a second.
+- **Protocol:** JSON over a WebSocket per session, plus REST for the rest. Message types are pydantic models in `vexsim/ui/protocol.py`; `frontend/src/protocol.ts` is generated from them, and a test fails if it is stale.
+- **Builds** of a PROS project run as jobs, one at a time per project, and a session waits for its project's build.
+- **Safety:** the server can build and run code, so it binds to 127.0.0.1, requires a random token (from the URL `vexsim ui` opens, then kept in a cookie), checks the Host and Origin headers, and serves and writes only files inside the workspace.
+- **Packaging:** `pip install -e ".[ui]"`. The built app is committed under `vexsim/ui/static/`, so users need no Node.js; CI rebuilds it and fails if the committed copy is stale. Every asset is local, so the UI works offline.
+- **Tests:** pytest for the services and the server (including WebSockets), Vitest for the frontend's logic, and Playwright end to end (Ubuntu CI).
+

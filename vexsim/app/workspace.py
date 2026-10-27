@@ -1,0 +1,189 @@
+"""What's in a folder: robots, fields, scenarios, Python programs, PROS projects, inputs, logs.
+
+The UI works on one folder, its workspace. ``Workspace.scan`` finds what vexsim can use
+in it by reading the files, never running them, and ``Workspace.path`` turns the paths the
+UI sends back into files, refusing anything outside the folder.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Literal
+
+ItemKind = Literal["robot", "field", "scenario", "program", "project", "input", "log", "invalid"]
+KIND_ORDER: tuple[str, ...] = (
+    "robot",
+    "field",
+    "program",
+    "project",
+    "scenario",
+    "input",
+    "log",
+    "invalid",
+)
+SKIP_DIRS = {"node_modules", "__pycache__", "build", "dist", "bin", "venv", "env", "site-packages"}
+MAX_DEPTH = 8
+MAX_FILES = 20_000
+MAX_READ = 512 * 1024  # bytes read to classify a file
+
+_PROGRAM_FUNCTION = re.compile(r"^def (initialize|autonomous|opcontrol)\b", re.MULTILINE)
+_TELEMETRY_HEADER = "time_s,phase,x_in,y_in,heading_deg"
+_INPUT_COLUMNS = {"LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y", "buttons"}
+
+
+@dataclass(frozen=True)
+class WorkspaceItem:
+    kind: ItemKind
+    path: str  # relative to the workspace, with / separators
+    name: str  # what to call it
+    detail: str = ""  # a short description, e.g. "differential, 4 motors"
+    problem: str = ""  # why it won't work as it is, if it won't
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class Workspace:
+    def __init__(self, root: str | os.PathLike[str]):
+        self.root = Path(root).resolve()
+
+    @property
+    def name(self) -> str:
+        return self.root.name or str(self.root)
+
+    def path(self, relative: str) -> Path:
+        """The file a workspace path names; raises ValueError for anything outside it."""
+        path = (self.root / relative).resolve()
+        if path != self.root and self.root not in path.parents:
+            raise ValueError(f"{relative} is outside the workspace")
+        return path
+
+    def relative(self, path: str | os.PathLike[str]) -> str:
+        return Path(os.path.relpath(Path(path).resolve(), self.root)).as_posix()
+
+    def scan(self) -> list[WorkspaceItem]:
+        """Everything vexsim can use in the workspace, grouped by kind, then by path."""
+        items: list[WorkspaceItem] = []
+        seen = 0
+        for folder, dirs, files in os.walk(self.root):
+            here = Path(folder)
+            depth = len(here.relative_to(self.root).parts)
+            if "project.pros" in files:
+                items.append(self._project(here))
+                dirs[:] = []  # a project's sources and headers aren't workspace files
+                continue
+            dirs[:] = sorted(
+                d
+                for d in dirs
+                if not d.startswith(".") and d not in SKIP_DIRS and depth < MAX_DEPTH
+            )
+            for name in sorted(files):
+                seen += 1
+                if seen > MAX_FILES:
+                    break
+                item = self._classify(here / name)
+                if item is not None:
+                    items.append(item)
+        order = {kind: i for i, kind in enumerate(KIND_ORDER)}
+        return sorted(items, key=lambda i: (order[i.kind], i.path.lower()))
+
+    # --- classifying files -----------------------------------------------------------------
+
+    def _project(self, folder: Path) -> WorkspaceItem:
+        lemlib = (folder / "include" / "lemlib").is_dir()
+        return WorkspaceItem(
+            "project",
+            self.relative(folder),
+            folder.name,
+            "PROS project with LemLib" if lemlib else "PROS project",
+        )
+
+    def _classify(self, path: Path) -> WorkspaceItem | None:
+        suffix = path.suffix.lower()
+        if suffix in (".yaml", ".yml"):
+            return self._config(path)
+        if suffix == ".py":
+            text = _read(path)
+            functions = sorted(set(_PROGRAM_FUNCTION.findall(text or "")))
+            if functions:
+                return WorkspaceItem(
+                    "program", self.relative(path), path.name, "Python: " + ", ".join(functions)
+                )
+            return None
+        if suffix == ".csv":
+            text = _read(path, 4096) or ""
+            header = text.splitlines()[0] if text else ""
+            if header.startswith(_TELEMETRY_HEADER):
+                return WorkspaceItem("log", self.relative(path), path.name, "telemetry log")
+            columns = {c.strip() for c in header.split(",")}
+            if "time_s" in columns and columns & _INPUT_COLUMNS:
+                return WorkspaceItem("input", self.relative(path), path.name, "controller input")
+        return None
+
+    def _config(self, path: Path) -> WorkspaceItem | None:
+        from vexsim.config.issues import ConfigError
+        from vexsim.config.yaml_io import load_yaml_file
+
+        relative = self.relative(path)
+        try:
+            data = load_yaml_file(path)
+        except ConfigError as exc:
+            issue = exc.issues[0]
+            where = f" ({issue.location})" if issue.location else ""
+            return WorkspaceItem("invalid", relative, path.name, problem=issue.message + where)
+        if not isinstance(data, dict):
+            return None
+        name = str(data.get("name") or path.stem)
+        if "drivetrain" in data:
+            return self._robot(path, relative, name)
+        if "task" in data and "robot" in data:
+            task = data.get("task")
+            kind = task.get("type", "") if isinstance(task, dict) else ""
+            return WorkspaceItem("scenario", relative, name, f"benchmark scenario: {kind}".strip())
+        if "size_in" in data or "elements" in data:
+            return self._field(path, relative, name)
+        return None
+
+    def _robot(self, path: Path, relative: str, name: str) -> WorkspaceItem:
+        from vexsim.config.loader import validate_robot
+
+        report = validate_robot(path)
+        if report.config is None or not report.ok:
+            return WorkspaceItem("robot", relative, name, problem=_first_error(report))
+        drive = report.config.drivetrain
+        motors = sum(len(g.motors) for g in drive.gearing.values())
+        detail = f"{drive.type}, {motors} drive motor{'s' if motors != 1 else ''}"
+        return WorkspaceItem("robot", relative, name, detail)
+
+    def _field(self, path: Path, relative: str, name: str) -> WorkspaceItem:
+        from vexsim.config.loader import validate_field
+
+        report = validate_field(path)
+        if report.config is None or not report.ok:
+            return WorkspaceItem("field", relative, name, problem=_first_error(report))
+        width, height = report.config.size_in
+        count = len(report.config.elements)
+        detail = f"{width:g} x {height:g} in"
+        if count:
+            detail += f", {count} element{'s' if count != 1 else ''}"
+        return WorkspaceItem("field", relative, name, detail)
+
+
+def _first_error(report) -> str:
+    errors = report.errors or report.issues
+    if not errors:
+        return "invalid config"
+    issue = errors[0]
+    more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+    return f"{issue.location or '(document)'}: {issue.message}{more}"
+
+
+def _read(path: Path, limit: int = MAX_READ) -> str | None:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            return f.read(limit)
+    except OSError:
+        return None

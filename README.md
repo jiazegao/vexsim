@@ -20,17 +20,18 @@ This README is the complete guide: how to use every feature, and what every modu
 4. [Describing a robot](#4-describing-a-robot)
 5. [Describing a field](#5-describing-a-field)
 6. [Running a simulation: `vexsim run`](#6-running-a-simulation-vexsim-run)
-7. [Writing robot programs in Python](#7-writing-robot-programs-in-python)
-8. [Running PROS 4 and LemLib C++ code](#8-running-pros-4-and-lemlib-c-code)
-9. [Analysis commands: motor curves, drift, odometry](#9-analysis-commands-motor-curves-drift-odometry)
-10. [Benchmarking algorithms: `vexsim bench`](#10-benchmarking-algorithms-vexsim-bench)
-11. [Calibrating to your robot](#11-calibrating-to-your-robot)
-12. [Porting a team's code](#12-porting-a-teams-code)
-13. [Using vexsim as a Python library](#13-using-vexsim-as-a-python-library)
-14. [Module reference: what each part does](#14-module-reference-what-each-part-does)
-15. [The physics models](#15-the-physics-models)
-16. [Limits: what isn't modeled](#16-limits-what-isnt-modeled)
-17. [Developing vexsim](#17-developing-vexsim)
+7. [The browser app: `vexsim ui`](#7-the-browser-app-vexsim-ui)
+8. [Writing robot programs in Python](#8-writing-robot-programs-in-python)
+9. [Running PROS 4 and LemLib C++ code](#9-running-pros-4-and-lemlib-c-code)
+10. [Analysis commands: motor curves, drift, odometry](#10-analysis-commands-motor-curves-drift-odometry)
+11. [Benchmarking algorithms: `vexsim bench`](#11-benchmarking-algorithms-vexsim-bench)
+12. [Calibrating to your robot](#12-calibrating-to-your-robot)
+13. [Porting a team's code](#13-porting-a-teams-code)
+14. [Using vexsim as a Python library](#14-using-vexsim-as-a-python-library)
+15. [Module reference: what each part does](#15-module-reference-what-each-part-does)
+16. [The physics models](#16-the-physics-models)
+17. [Limits: what isn't modeled](#17-limits-what-isnt-modeled)
+18. [Developing vexsim](#18-developing-vexsim)
 
 ---
 
@@ -41,21 +42,22 @@ vexsim needs **Python 3.11 or newer**.
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev,viz]"
+python -m pip install -e ".[dev,viz,ui]"
 ```
 
 **Linux / macOS**
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,viz]"
+python -m pip install -e ".[dev,viz,ui]"
 ```
 
 | Extra | Adds | Needed for |
 |---|---|---|
 | (none) | numpy, pydantic, PyYAML | everything headless: configs, simulation, benchmarks, calibration fits |
 | `viz` | matplotlib, pygame | the live viewer, screenshots, every plot and chart |
-| `dev` | pytest, ruff | running the tests and the linter |
+| `ui` | FastAPI, uvicorn, websockets | the browser app, [`vexsim ui`](#7-the-browser-app-vexsim-ui) |
+| `dev` | pytest, ruff, and the browser app's server packages | running the tests and the linter |
 
 The `vexsim` command is installed with the package (`python -m vexsim` works too).
 
@@ -86,6 +88,11 @@ vexsim doctor
 
 ## 2. Quick start
 Every command below runs from the repository root, with the example files.
+
+**Or use the browser app** for the same runs, picked from lists instead of typed ([section 7](#7-the-browser-app-vexsim-ui)):
+```
+vexsim ui
+```
 
 **Check a robot config and see what the simulator builds from it:**
 ```
@@ -344,7 +351,7 @@ Validation: elements must be inside the walls; a piece that starts overlapping a
 ```
 vexsim run ROBOT.yaml [--program FILE.py | --program PROS_PROJECT] [options]
 ```
-Without `--program`, you drive the robot from the keyboard or a gamepad.
+Without `--program`, you drive the robot from the keyboard or a gamepad. To start runs from the browser instead, see [`vexsim ui`](#7-the-browser-app-vexsim-ui).
 
 | Option | Meaning |
 |---|---|
@@ -411,7 +418,43 @@ A connected gamepad works too, through SDL's mapping. The sticks match. The Xbox
 
 ---
 
-## 7. Writing robot programs in Python
+## 7. The browser app: `vexsim ui`
+```
+vexsim ui [FOLDER] [--port N] [--no-browser]
+```
+`vexsim ui` opens vexsim in your web browser for a folder of robot configs, fields, programs and PROS projects (default: the current folder). You pick what to run from lists instead of typing a command line, then watch the run live. It is the same simulation as `vexsim run`, drawn by the browser.
+
+It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself comes prebuilt with the package, so you don't need Node.js, and it works offline.
+
+![The browser app after the 1239E port's Left 40 autonomous: where the robot went (green) and where its MCL code thought it was (blue, dashed)](docs/img/ui_1239e.png)
+
+**Running something:**
+1. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs and telemetry logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. *Refresh* looks again after you add or change files.
+2. The **run bar** holds the robot, field, program (a Python file or a PROS project), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file and environment variables (`KEY=VALUE`, one per line, like `--env`). The browser remembers the form for each folder.
+3. **Run** checks the files first; if something is wrong, the console says what, with the same messages as `vexsim validate-config`. A PROS project is built first, with the build's output in the console. Starting a run stops the one before it.
+
+**While it runs:**
+- **Controls:** pause, step 10 ms, restart from the start with the same seed, stop, and a speed from 0.1× to 8× real time, or *Max*. *Copy command* copies the run as the equivalent `vexsim run` command.
+- **The field:** the robot where it really is (front edge thicker), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate and the beams, and *Key* folds it away. The wheel zooms, dragging pans, and a double-click shows the whole field again. The pointer's field coordinates are shown in the opposite corner.
+- **Readings** (right): true and estimated pose and how far apart they are, speed, battery, each motor's current and temperature, distance sensor readings, and the brain and controller screens.
+- **Console** (bottom): the program's output, the build's output, and errors with their traceback.
+
+| Key | Action | Key | Action |
+|---|---|---|---|
+| Space | pause / resume | G | show or hide the estimate |
+| `.` | one step while paused | T | show or hide the paths |
+| R | restart | B | show or hide the beams |
+| + / - | speed | | |
+
+Each run executes in a process of its own, so a program that crashes or hangs never takes the app down; *Stop* ends it. If you reload the page, it reconnects to the run in progress.
+
+**Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie. Keep the terminal open while you use the app; Ctrl+C stops it. The browser only reaches files inside the folder.
+
+The app is new. It covers running simulations so far; driving by keyboard and gamepad, a timeline and replays, config editors, and pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
+
+---
+
+## 8. Writing robot programs in Python
 A program is a Python file with up to three **generator functions**. Each receives the `bot`, as PROS hands you the robot:
 
 ```python
@@ -500,7 +543,7 @@ There are also `chassis.tank(l, r)` and `chassis.arcade(throttle, turn)` (-127..
 
 ---
 
-## 8. Running PROS 4 and LemLib C++ code
+## 9. Running PROS 4 and LemLib C++ code
 ```
 vexsim build path/to/project                                     # compile only (incremental)
 vexsim run ROBOT.yaml --program path/to/project                  # build if needed, then the viewer
@@ -601,7 +644,7 @@ if (const char* name = std::getenv("AUTON")) selected = find_routine(name);
 
 ---
 
-## 9. Analysis commands: motor curves, drift, odometry
+## 10. Analysis commands: motor curves, drift, odometry
 **`vexsim motor-curves`** measures the simulated V5 motor on a dynamometer, under `move_velocity(max)` and `move_voltage(12000)`:
 ```
 vexsim motor-curves --cartridge red --out red.png      # torque, current, power vs. speed
@@ -635,7 +678,7 @@ Options: `--script gentle|aggressive`, `--noise`, `--seed`, `--out`, `--csv`.
 
 ---
 
-## 10. Benchmarking algorithms: `vexsim bench`
+## 11. Benchmarking algorithms: `vexsim bench`
 A benchmark runs one task many times (seeds) for every combination of the localizers and controllers a scenario lists, in parallel processes, and writes CSVs and a self-contained HTML report.
 ```
 vexsim bench examples/scenarios/s_curve.yaml --seeds 100
@@ -749,7 +792,7 @@ The built-in Python controllers drive the `left` and `right` sides (differential
 
 ---
 
-## 11. Calibrating to your robot
+## 12. Calibrating to your robot
 Most physics parameters are estimates: how well your wheels grip your tiles, how freely the rollers turn, how much a coasting robot slows. Calibration measures them on your robot, with no extra equipment:
 
 1. **Generate** a drive routine for your robot and add it to your PROS project:
@@ -804,7 +847,7 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
 
 ---
 
-## 12. Porting a team's code
+## 13. Porting a team's code
 [docs/porting_1239e.md](docs/porting_1239e.md) ports team 1239E's 2026-27 code step by step: LemLib with distance-sensor wall resets (RCL), a 2048-particle Monte Carlo localizer (MCL), a lift and end effector, an LVGL auton selector, and nine autonomous routines. It runs with four small marked edits:
 ```
 vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40"
@@ -820,13 +863,13 @@ python examples/scripts/evaluate_1239e.py --seeds 6 --tracking rcl+mcl,mcl,rcl,o
 1. **Take stock** of every device, library and system call, against [what's simulated](#whats-simulated).
 2. **Copy** `src/`, your own headers and `project.pros`, leaving out what PROS installs. Run `vexsim build`, and fix what doesn't compile.
 3. **Make small, inert edits:** replace wall-clock timing with `pros::millis()` or `micros()`; read the routine's name from an environment variable under `#ifdef VEXSIM`; seed random numbers from `VEXSIM_SEED`; optionally, add switches for experiments (like `VEXSIM_TRACKING`).
-4. **Write the robot config** from your code's ports, gearing and sensor offsets (convert `chassis.setPose` and offsets as in [Frames](#frames-and-angles)). Measure the rest, then [calibrate](#11-calibrating-to-your-robot).
+4. **Write the robot config** from your code's ports, gearing and sensor offsets (convert `chassis.setPose` and offsets as in [Frames](#frames-and-angles)). Measure the rest, then [calibrate](#12-calibrating-to-your-robot).
 5. **Write the field config**, with element heights if your sensors care about them.
 6. **Run each routine** headless, and compare the pose your code believes with the truth.
 
 ---
 
-## 13. Using vexsim as a Python library
+## 14. Using vexsim as a Python library
 Everything the commands do is available from Python.
 
 **A full simulation with a program** (a Python module or a C++ project):
@@ -922,7 +965,7 @@ print(result.combos(), result.rows[0]["final_error_in"])
 
 ---
 
-## 14. Module reference: what each part does
+## 15. Module reference: what each part does
 ```
 vexsim/
   cli.py, __main__.py   the `vexsim` command
@@ -938,6 +981,8 @@ vexsim/
   bench/                Monte-Carlo benchmarks and reports
   calibration/          robot logs, the calibration routine, replays, fitting
   viz/                  the live viewer and every plot
+  app/                  the services behind the browser app: run specs, the workspace, jobs, live runs
+  ui/                   the browser app: its server, its messages, and the built page
 ```
 
 ### Top level
@@ -1057,17 +1102,35 @@ vexsim/
 | `viewer.py` | The pygame viewer: live simulations (`LiveSource`) and log replays (`ReplaySource`), keyboard and gamepad input, the side panel. |
 | `motor_curves.py`, `drift.py`, `odometry.py`, `telemetry.py`, `calibration.py` | The plots behind `motor-curves`, `drift`, `odometry`, `plot` and `calibrate`. |
 
+### `app/`: the services behind the browser app
+| Module | What it does |
+|---|---|
+| `runspec.py` | `RunSpec`: everything `vexsim run` takes, converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files, `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
+| `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects, inputs, logs), and refuses paths outside it. |
+| `jobs.py` | `JobManager`: long tasks (builds, so far), each in a process of its own, with their output as it comes, cancel, and one job at a time per key (a second build of a project joins the first). |
+| `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
+| `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay and the console. |
+| `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels, sensors, motors, pieces, screens) and the active motion's path and target. |
+
+### `ui/`: the browser app
+| Module | What it does |
+|---|---|
+| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, runs and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
+| `protocol.py` | Every message and request as a pydantic model. `python -m vexsim.ui.protocol frontend/src/protocol.ts` writes them as TypeScript for the page; a test fails while that file is stale. |
+| `static/` | The built page (from `frontend/`, by `npm run build`), shipped with the package. |
+
 ### Outside the package
 | Folder | What it holds |
 |---|---|
 | `examples/` | robot and field configs, Python and C++ programs, inputs, scenarios, scripts ([the table above](#the-example-files)) |
 | `docs/` | deep dives: [models.md](docs/models.md) (every parameter's source, measurement experiments), [conventions.md](docs/conventions.md), [programming.md](docs/programming.md), [cpp.md](docs/cpp.md), [benchmarking.md](docs/benchmarking.md) (a worked 100-seed example), [calibration.md](docs/calibration.md), [porting_1239e.md](docs/porting_1239e.md), [1239e_real_vs_sim.md](docs/1239e_real_vs_sim.md); images and an example report |
+| `frontend/` | the browser app's source (React and TypeScript, the field drawn on a canvas), its unit tests (`tests/`, Vitest) and its end-to-end tests (`e2e/`, Playwright) |
 | `tests/` | the test suite, including a C++ test project for the bridge (`tests/cpp/bridge_test`) |
 | `PLAN.md` | the design plan and the phase history |
 
 ---
 
-## 15. The physics models
+## 16. The physics models
 This is a summary; [docs/models.md](docs/models.md) gives every parameter's source (VEX, a curve fit, a community report, or an estimate) and how to measure it.
 
 ### Motor
@@ -1123,27 +1186,39 @@ All use the arc method, which is exact for constant-curvature motion. X-drive, m
 
 ---
 
-## 16. Limits: what isn't modeled
+## 17. Limits: what isn't modeled
 - Robots don't pick up, carry or score pieces; mechanisms move but touch nothing.
 - There are no other robots (a benchmark `push` disturbance stands in for a shove).
 - The field is flat: no ramps, nothing to climb, no pitch or roll.
 - The distance sensor is a ray (the real one has a cone of view), and its confidence is constant.
 - Not simulated: ADI devices (outputs only remember what was written), the optical, vision and AI vision sensors, serial and radio links, the SD card, and touch input on the brain screen (LVGL runs headless).
 - Compute time on the brain isn't charged, and precompiled ARM libraries other than LemLib can't run.
-- Many physics parameters are estimates until you [calibrate](#11-calibrating-to-your-robot). Voltage-mode speed and thermal timing are the least certain; [docs/models.md](docs/models.md#calibrating-against-a-real-robot) lists experiments to measure them.
+- Many physics parameters are estimates until you [calibrate](#12-calibrating-to-your-robot). Voltage-mode speed and thermal timing are the least certain; [docs/models.md](docs/models.md#calibrating-against-a-real-robot) lists experiments to measure them.
 
 ---
 
-## 17. Developing vexsim
+## 18. Developing vexsim
 ```
 pytest          # every test (the C++ bridge tests skip without g++, unless VEXSIM_REQUIRE_CXX is set)
 ruff check .    # lint
 ruff format .   # format
 ```
-CI (`.github/workflows/ci.yml`) runs on Windows (with MSYS2 g++) and Linux, with Python 3.11 and 3.13: lint, every test with the C++ bridge required, validation of every example config, and every example command, uploading the plots and telemetry as artifacts.
+CI (`.github/workflows/ci.yml`) runs on Windows (with MSYS2 g++) and Linux, with Python 3.11 and 3.13: lint, every test with the C++ bridge required, validation of every example config, and every example command, uploading the plots and telemetry as artifacts. A Linux job checks the browser app: types, unit tests, a fresh build that must match the committed one, and the end-to-end tests.
+
+**The browser app** (`frontend/`, with Node.js 22):
+```
+cd frontend
+npm ci          # once: the exact versions in package-lock.json
+npm test        # unit tests (Vitest)
+npm run build   # type-check, then build into vexsim/ui/static: commit the result with the source
+npm run e2e     # end-to-end, in Chromium (Playwright): starts its own `vexsim ui` on port 8653,
+                # with the Python named by VEXSIM_PYTHON (default `python`)
+```
+To work on the page with live reloading, run `vexsim ui --dev --no-browser` (on the default port, 8642) and open the link it prints once, for its cookie; then run `npm run dev` and open http://127.0.0.1:5173. Messages are defined once, in `vexsim/ui/protocol.py`: after changing them, run `python -m vexsim.ui.protocol frontend/src/protocol.ts`.
 
 **Adding to vexsim:**
 - *A model parameter:* add a field to the spec dataclass (`MotorSpec`, `OmniWheelSpec`, ...). It becomes an override key automatically. Document its source in `docs/models.md`.
 - *A sensor type:* a config class in `config/robot.py`, a spec in `devices/specs.py` (in every preset), a device in `devices/devices.py`, the suite in `devices/suite.py`; for C++, the shim header, `runtime/devices.cpp`, and a reading line in `bridge/program.py`.
 - *A PROS function:* declare it in the shim header under `vexsim/bridge/cpp/include/pros/`, implement it in `runtime/devices.cpp` or `scheduler.cpp`, and exercise it in `tests/cpp/bridge_test`.
 - *A benchmark task or controller:* `bench/scenario.py` (the schema and `CONTROLLER_KINDS`) and `bench/trial.py`.
+- *A long task for the browser app:* a function in `app/jobs.py` (`JOB_KINDS`), which runs in its own process and reports through its connection.

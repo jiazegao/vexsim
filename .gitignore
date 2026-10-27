@@ -7,3 +7,7 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
+frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+.vexsim/

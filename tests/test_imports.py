@@ -20,6 +20,12 @@ MODULES = [
     "vexsim.bench.runner",
     "vexsim.calibration.fit",
     "vexsim.cli",
+    "vexsim.app.runspec",
+    "vexsim.app.workspace",
+    "vexsim.app.jobs",
+    "vexsim.app.session",
+    "vexsim.ui.protocol",
+    "vexsim.ui.server",
 ]
 
 

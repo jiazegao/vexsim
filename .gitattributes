@@ -1,0 +1,4 @@
+# The browser app as built by `npm run build` in frontend/, and the TypeScript generated
+# from vexsim/ui/protocol.py: regenerate these rather than editing or merging them.
+vexsim/ui/static/** linguist-generated=true -diff eol=lf
+frontend/src/protocol.ts linguist-generated=true eol=lf
