@@ -31,6 +31,7 @@ async function suite() {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   assert.ok(folder, "the repository is open");
 
+  const started = Date.now();
   await vscode.commands.executeCommand("vexsim.open");
   const app = await until("vexsim to start", () => api.app(folder)?.panel && api.app(folder), 120, async () => {
     const failure = api.lastFailure();
@@ -40,6 +41,7 @@ async function suite() {
     const pages = (await info(app).catch(() => ({ pages: "?" }))).pages;
     return ` (the server counts ${pages} of its pages open: ${pages ? "the page loaded but didn't say so" : "the page didn't load"})`;
   });
+  const ready = (Date.now() - started) / 1000;
   assert.ok((await info(app)).pages >= 1, "the page holds the server open");
 
   const tour = path.join(folder, "examples", "programs", "tour.py");
@@ -52,13 +54,15 @@ async function suite() {
   await vscode.commands.executeCommand("vexsim.stop");
   assert.strictEqual(api.app(folder), undefined, "Stop closes the panel");
   await until("vexsim to stop", () => info(app).then(() => false, () => true), 30);
+  return `VS Code ${vscode.version}: the app was ready in its panel ${ready.toFixed(1)} s after "Open the app", a place opened at its line, and Stop stopped vexsim`;
 }
 
 async function run() {
+  const result = process.env.VEXSIM_VSCODE_RESULT;
   try {
-    await suite();
+    const found = await suite();
+    if (result) fs.writeFileSync(result, JSON.stringify({ found }));
   } catch (error) {
-    const result = process.env.VEXSIM_VSCODE_RESULT;
     if (result) fs.writeFileSync(result, JSON.stringify({ error: error instanceof Error ? (error.stack ?? error.message) : String(error) }));
     throw error;
   }
