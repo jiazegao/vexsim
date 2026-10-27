@@ -1,0 +1,44 @@
+# Example robot: a 6-motor tank drive whose body isn't a rectangle. Seen from above it's a
+# drive base, a round bumper at the back and a clamp at the front with a notch that a goal
+# post or a ball settles into.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, angles
+# counter-clockwise from +x; the shape's parts are placed around the robot's origin.
+# See docs/conventions.md for the full reference.
+
+version: 1
+name: Example shaped 6-motor
+
+body:
+  mass_kg: 6.5
+  inertia_kgm2: auto            # auto = uniform over the shape, or a number in kg*m^2
+  shape:                        # instead of footprint_in; where parts overlap they merge
+    - {type: rect, pos_in: [0, 0], size_in: [12, 14]}       # the drive base
+    - {type: circle, pos_in: [-6, 0], diameter_in: 6}       # a round bumper at the back
+    - type: outline                                         # the clamp, with its notch
+      points_in: [[6, 7], [9, 7], [9, 2.5], [7, 0], [9, -2.5], [9, -7], [6, -7]]
+  cg_in: [0, 0, 3.5]            # x, y, height above the floor
+  battery: v5_default
+
+drivetrain:
+  type: differential
+  wheels:
+    - {name: lf, pos_in: [ 4.5,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: lm, pos_in: [ 0.0,  6.0], heading_deg: 0, type: traction, diameter_in: 3.25}
+    - {name: lb, pos_in: [-4.5,  6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: rf, pos_in: [ 4.5, -6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+    - {name: rm, pos_in: [ 0.0, -6.0], heading_deg: 0, type: traction, diameter_in: 3.25}
+    - {name: rb, pos_in: [-4.5, -6.0], heading_deg: 0, type: omni, diameter_in: 3.25}
+  gearing:
+    left:  {motors: [1, 2, 3],    cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb]}
+    right: {motors: [-4, -5, -6], cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb]}
+
+sensors:
+  - {type: imu, port: 10, pos_in: [0, 0]}
+  - type: rotation              # vertical (forward-tracking) wheel
+    port: 11
+    tracking_wheel: {pos_in: [0, -1.5], heading_deg: 0, diameter_in: 2.0}
+  - type: rotation              # horizontal (sideways-tracking) wheel
+    port: 12
+    tracking_wheel: {pos_in: [-3, 0], heading_deg: 90, diameter_in: 2.0}
+  - {type: distance, port: 13, pos_in: [8.5, 5], heading_deg: 0}   # on the clamp's left jaw

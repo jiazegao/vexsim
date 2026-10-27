@@ -252,6 +252,7 @@ export interface MechanismMount {
 export interface RobotScene {
   name: string;
   footprint: [number, number];
+  outline?: [number, number][][] | null;
   wheels: WheelMount[];
   sensors: SensorMount[];
   mechanisms: MechanismMount[];
@@ -536,9 +537,31 @@ export interface RobotConfig {
 export interface BodyConfig {
   mass_kg: number;
   inertia_kgm2?: "auto" | number;
-  footprint_in: [number, number];
+  footprint_in?: [number, number] | null;
+  shape?: (RectPart | CirclePart | OutlinePart)[] | null;
   cg_in: [number, number, number];
   battery?: "v5_default";
+}
+
+/** A rectangle in the robot's shape. */
+export interface RectPart {
+  type: "rect";
+  pos_in?: [number, number];
+  size_in: [number, number];
+  heading_deg?: number;
+}
+
+/** A circle in the robot's shape. */
+export interface CirclePart {
+  type: "circle";
+  pos_in?: [number, number];
+  diameter_in: number;
+}
+
+/** A closed outline in the robot's shape: straight edges from point to point, and from the last point back to the first. Its edges mustn't cross. */
+export interface OutlinePart {
+  type: "outline";
+  points_in: [number, number][];
 }
 
 export interface DrivetrainConfig {

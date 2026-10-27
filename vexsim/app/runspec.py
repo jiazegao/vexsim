@@ -365,6 +365,8 @@ def start_blocked(
 
     field = field or FieldConfig()
     x, y, heading = in_to_m(start[0]), in_to_m(start[1]), math.radians(start[2])
+    if config.body.shape is not None:
+        return _shape_blocked(config, field, (x, y, heading))
     length, width = (in_to_m(v) / 2 for v in config.body.footprint_in)
     c, s = math.cos(heading), math.sin(heading)
     box = [(length, width), (-length, width), (-length, -width), (length, -width)]
@@ -376,6 +378,47 @@ def start_blocked(
     if field.elements:
         for shape in Arena.of(field, resolve_params(config.overrides).field).obstacles:
             if shape.solid and _overlaps(corners, (x, y, heading, length, width), shape):
+                blocked.append(shape.name)
+    return blocked
+
+
+def _shape_blocked(
+    config: RobotConfig, field: FieldConfig, pose: tuple[float, float, float]
+) -> list[str]:
+    """``start_blocked`` for a robot with a ``body.shape``: in its own frame, meters."""
+    import math
+
+    from vexsim.geometry import Polygon
+    from vexsim.physics.arena import Arena
+    from vexsim.physics.params import resolve_params
+    from vexsim.units import in_to_m
+
+    tolerance = 1e-4  # touching isn't overlapping
+    outline = config.body.outline.mapped(in_to_m(1.0))
+    x, y, heading = pose
+    c, s = math.cos(heading), math.sin(heading)
+    blocked = []
+    room = [in_to_m(v) / 2 for v in field.size_in]
+    for axis, sign in ((0, 1.0), (0, -1.0), (1, 1.0), (1, -1.0)):
+        # how far the robot reaches toward this wall: the wall's direction in its frame
+        toward = (sign * c, -sign * s) if axis == 0 else (sign * s, sign * c)
+        if sign * (x, y)[axis] + outline.extreme(toward) > room[axis] + tolerance:
+            blocked.append(WALLS)
+            break
+    if field.elements:
+        for shape in Arena.of(field, resolve_params(config.overrides).field).obstacles:
+            if not shape.solid:
+                continue
+            dx, dy = shape.center[0] - x, shape.center[1] - y
+            center = (c * dx + s * dy, -s * dx + c * dy)
+            if shape.circle:
+                inside = outline.signed_distance(center)[0] < shape.half[0] - tolerance
+            else:
+                half = (shape.half[0] - tolerance, shape.half[1] - tolerance)
+                inside = min(half) > 0 and outline.overlaps(
+                    Polygon.rect(center, (2 * half[0], 2 * half[1]), shape.heading - heading)
+                )
+            if inside:
                 blocked.append(shape.name)
     return blocked
 

@@ -16,7 +16,8 @@ Euler update
 
 which stays stable at a 1 ms step even though tire friction is far stiffer.
 Motor torques, Coriolis terms and external forces are treated explicitly.
-Field walls, if given, then push the footprint back inside (see field.py).
+Field walls, if given, then push the footprint (or the body's shape) back inside
+(see field.py).
 
 Motor direction: a negative port in the config means the motor is mounted so
 that its raw positive direction drives the group backward. Group commands
@@ -194,10 +195,21 @@ class Robot:
         self._ground_force = (0.0, 0.0)
         self.contacts.normal = self.normal_loads()
 
-        length, width = (in_to_m(v) for v in body.footprint_in)
-        half = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]]) * (length / 2, width / 2)
-        self.footprint_corners = half - self.cg_offset  # body frame, relative to the CG
-        self.footprint_radius = float(np.hypot(*self.footprint_corners.T).max())
+        # What touches walls, obstacles and pieces (field.py, arena.py), in the body frame
+        # relative to the CG: the footprint's corners, or a shape's outline (where its edge
+        # turns) and the arcs of its edge.
+        self.outline = None  # a body.shape's, in meters, relative to the CG
+        self.footprint_arcs: tuple = ()
+        if body.shape is None:
+            length, width = (in_to_m(v) for v in body.footprint_in)
+            half = np.array([[1, 1], [-1, 1], [-1, -1], [1, -1]]) * (length / 2, width / 2)
+            self.footprint_corners = half - self.cg_offset
+            self.footprint_radius = float(np.hypot(*self.footprint_corners.T).max())
+        else:
+            self.outline = body.outline.mapped(in_to_m(1.0), -self.cg_offset)
+            self.footprint_corners = self.outline.corners
+            self.footprint_arcs = tuple(self.outline.arcs)
+            self.footprint_radius = self.outline.reach()
         self.walls = walls
         self.wall_contacts: list[WallContact] = []  # this step's
         self.wall_hits = 0  # times the robot started touching a wall

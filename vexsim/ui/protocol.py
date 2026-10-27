@@ -279,7 +279,11 @@ class MechanismMount(_Message):
 
 class RobotScene(_Message):
     name: str
-    footprint: tuple[float, float]  # length (x) by width (y)
+    footprint: tuple[float, float]  # length (x) by width (y); of the box around a shape
+    # a robot with a body.shape: its edge, as closed loops (robot frame) with the shape on
+    # their left; filled together (nonzero), they're the shape. None: the footprint rectangle,
+    # centered on the robot's origin
+    outline: list[list[tuple[float, float]]] | None = None
     wheels: list[WheelMount]
     sensors: list[SensorMount]
     mechanisms: list[MechanismMount]

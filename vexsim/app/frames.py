@@ -19,7 +19,8 @@ def _r(value: float, digits: int = 3) -> float:
 
 
 def robot_scene(cfg) -> dict[str, Any]:
-    """A robot config as the UI draws it: footprint, wheels, sensors and mechanisms."""
+    """A robot config as the UI draws it: footprint (or outline), wheels, sensors and
+    mechanisms."""
     wheels = [
         {
             "name": w.name,
@@ -52,13 +53,16 @@ def robot_scene(cfg) -> dict[str, Any]:
         {"name": name, "range": None if m.range_deg is None else [_r(v) for v in m.range_deg]}
         for name, m in cfg.mechanisms.items()
     ]
-    return {
+    scene: dict[str, Any] = {
         "name": cfg.name or "robot",
-        "footprint": [_r(v) for v in cfg.body.footprint_in],
+        "footprint": [_r(v) for v in cfg.body.size_in],
         "wheels": wheels,
         "sensors": sensors,
         "mechanisms": mechanisms,
     }
+    if cfg.body.shape is not None:
+        scene["outline"] = [[[_r(x), _r(y)] for x, y in loop] for loop in cfg.body.outline.loops()]
+    return scene
 
 
 def field_scene(field, arena) -> dict[str, Any]:

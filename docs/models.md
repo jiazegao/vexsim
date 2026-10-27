@@ -189,7 +189,7 @@ F = mu * N * tanh(|c| / x_s) * c / |c|,   c = (grip slip, sideways slip)
 - Each 1 ms step solves the linearly implicit Euler update `(M - dt*J) dq = dt*Q`. Tire friction has time constants near 0.15 ms, so a plain explicit step would blow up; this one stays stable with no substeps.
 - Motor torques, rotating-frame terms and external forces are explicit.
 
-**Walls:** after each step, the field walls push the footprint back inside ([below](#field-walls-vexsimphysicsfieldpy)).
+**Walls:** after each step, the field walls push the footprint (or the shape) back inside ([below](#field-walls-vexsimphysicsfieldpy)).
 
 **Motor direction:** a negative port means the motor's raw positive direction drives its group backward. Group commands apply that sign, as a PROS 4 `MotorGroup` does.
 
@@ -233,7 +233,7 @@ Not modeled: what a mechanism carries or touches. An intake spins, but picks not
 
 ## Field walls: `vexsim/physics/field.py`
 The robot's footprint (`body.footprint_in`) collides with the field perimeter (`size_in` in the field config). Each step, after the robot moves:
-1. Every footprint corner past a wall is a contact.
+1. Every footprint corner past a wall is a contact. A robot with a `body.shape` has its corners where its outside edge turns, and each round piece of the edge adds its furthest point toward the wall.
 2. **Impulses** on the body settle the contacts, the way rigid-body engines handle hard impacts. A few sweeps (sequential impulses) resolve two or three contacts at once, such as both front corners or a field corner.
    - **Normal:** stop the corner's approach, then bounce it back at `wall_restitution` times the impact speed. Impacts below 5 cm/s don't bounce, so a robot pushed against a wall stays there.
    - **Friction:** oppose the corner's sliding along the wall, up to `wall_friction` times the normal impulse.
@@ -269,6 +269,13 @@ A field config can list elements ([conventions.md](conventions.md#field-elements
 - the footprint's nearest point to a circle.
 
 So the robot stops flush against a barrier, squares up against its face, and pivots onto the nearer face when it meets a corner off center.
+
+**A robot with a shape** (`body.shape`, [conventions.md](conventions.md#robot-config-semantics)) collides by its outside edge, which `vexsim.geometry.Outline` finds exactly: the pieces of its parts' edges (segments and arcs) that no other part covers. Where parts overlap, the edge inside doesn't count. A contact is any of:
+- a corner of the edge inside an obstacle, or the point where a round piece of the edge reaches deepest into it;
+- an obstacle corner inside the shape (pushed out the nearest way);
+- for a circle (a round goal, or a piece), the nearest point of each piece of the edge it reaches into. A corner counts once, and only where no piece of the edge through it comes nearer, so a circle in a notch touches both of its sides, and one beside a corner touches only the face.
+
+A piece touched twice moves out of both contacts as far as the deeper needs, not their sum. A shape of one rectangle moves exactly as the same footprint (`tests/test_shapes.py` checks they agree to 1e-12 m over 3 s of contacts).
 
 **Pieces.** Each step, after the robot moves:
 1. **Move.** Ground friction slows each piece (Coulomb, `friction * g`), and it moves.

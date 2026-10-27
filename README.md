@@ -171,7 +171,7 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 Conversions happen only at those boundaries (`vexsim/units.py`).
 
 ### Frames and angles
-- **Robot frame:** origin at the center of the footprint, **+x forward, +y left**, +z up. Angles are counter-clockwise from +x, seen from above. Everything you place on the robot (`pos_in`, `cg_in`) uses this frame.
+- **Robot frame:** origin at the center of the footprint (or wherever a `shape` puts it: its parts are placed around the origin), **+x forward, +y left**, +z up. Angles are counter-clockwise from +x, seen from above. Everything you place on the robot (`pos_in`, `cg_in`) uses this frame.
 - **Field frame:** origin at the field center, axes parallel to the walls, angles counter-clockwise from +x. The walls' inside faces are at `x = ±size_in[0]/2` and `y = ±size_in[1]/2` (144 × 144 in by default).
 - **Poses** in vexsim (`--start`, Python programs, scenarios, telemetry) are `x, y` in inches and a heading in degrees **counter-clockwise from +x**.
 - **PROS and LemLib** use heading **clockwise from +y**. Robot code never sees vexsim's frame: the IMU reads clockwise-positive as on the V5, and a pose reported by C++ code (LemLib's, or `vexsim::report_pose`) is converted. To start the simulated robot where LemLib's `chassis.setPose(x, y, theta)` says it is, use `--start x,y,(90 - theta)`. LemLib's (0, 0, 0) faces +y, so it is `--start 0,0,90`.
@@ -242,10 +242,37 @@ overrides:                      # optional: any model parameter
 | Key | Meaning |
 |---|---|
 | `mass_kg` | the whole robot, mechanisms included |
-| `inertia_kgm2` | yaw inertia; `auto` treats the robot as a uniform box over its footprint |
-| `footprint_in` | length × width, centered on the robot origin. It collides with walls and obstacles, and every wheel and sensor must be inside it. |
+| `inertia_kgm2` | yaw inertia; `auto` treats the robot as a uniform box over its footprint (a uniform plate over its `shape`) |
+| `footprint_in` | length × width, centered on the robot origin. It collides with walls, obstacles and pieces, and every wheel and sensor must be inside it. |
+| `shape` | instead of `footprint_in`, for a robot that isn't a rectangle: rectangles, circles and outlines ([below](#a-robot-that-isnt-a-rectangle-shape)) |
 | `cg_in` | center of gravity (x, y, height); the height sets the weight transfer |
 | `battery` | `v5_default` (the only preset) |
+
+### A robot that isn't a rectangle: `shape`
+Instead of `footprint_in`, a body can have a `shape`: rectangles, circles and closed outlines, in inches in the robot frame, placed around the robot's origin. Where parts overlap they merge, and only the shape's outside edge touches walls, field elements and pieces: a goal post or a ball settles into a notch, touching both sides, and a round bumper meets a wall wherever it bulges most. From `examples/robots/shaped_6m.yaml`:
+```yaml
+body:
+  mass_kg: 6.5
+  inertia_kgm2: auto            # a uniform plate over the shape
+  shape:
+    - {type: rect, pos_in: [0, 0], size_in: [12, 14]}       # the drive base
+    - {type: circle, pos_in: [-6, 0], diameter_in: 6}       # a round bumper at the back
+    - type: outline                                         # the clamp, with its notch
+      points_in: [[6, 7], [9, 7], [9, 2.5], [7, 0], [9, -2.5], [9, -7], [6, -7]]
+  cg_in: [0, 0, 3.5]
+```
+
+| Part | Keys |
+|---|---|
+| `rect` | `size_in`: length (along its heading) by width; `pos_in`: its center (default `[0, 0]`); `heading_deg` (default 0) |
+| `circle` | `diameter_in`; `pos_in`: its center (default `[0, 0]`) |
+| `outline` | `points_in`: three or more points, joined in order by straight edges, and the last back to the first. The edges mustn't cross. |
+
+- The origin is what the robot's pose, `--start` and odometry offsets refer to. It needn't be the middle of the shape.
+- `inertia_kgm2: auto` is a uniform plate over the shape (for a single rectangle, the footprint's box).
+- The wheels, sensors and CG must be inside the shape, and its box (in the robot's own frame) must fit the 18 in starting size. A part that touches no other part is a warning: it still moves with the robot.
+- Moving mechanisms don't change the shape, and the shape has no height: it touches whatever is in the way, at any height.
+- The field view, the editor's diagram and the pygame viewer draw the shape. On the field, an arrow from the origin marks its front, and the start pose is dragged by the shape itself.
 
 ### Drivetrain
 **Wheels.** Each wheel has a `name`, a position `pos_in`, a `type` (`omni`, `traction` or `mecanum`) and a `diameter_in`.
@@ -317,8 +344,8 @@ The `sensor.*` values shown are the `default` preset's; an override applies on t
 ### Validation
 `vexsim validate-config ROBOT.yaml [--field FIELD.yaml] [--strict] [-q]` prints what the simulator will build, and every problem. Exit code 0 means valid and 1 means errors; `--strict` fails on warnings too, and `-q` prints only problems. The browser app's editor ([section 7](#7-the-browser-app-vexsim-ui)) runs the same checks as you type and marks each problem at its line.
 - **Structure:** a misspelled key is an error that suggests the closest valid key, and duplicate keys are errors (plain YAML silently keeps the last one).
-- **Errors:** a port used twice (motors, mechanisms and sensors share ports 1–21); the CG, a wheel or a sensor outside the footprint; wheels all in a line, or the CG outside the polygon they form (the robot would tip over); a wheel in no gear group, or in two; unknown wheel names; a mecanum wheel without `roller_angle_deg`, or roller angles on other wheels; a differential drive without exactly `left` and `right`; an X-drive, mecanum or H-drive that can't strafe independently; mechanism stops that don't contain the start; unknown or inconsistent overrides.
-- **Warnings:** a footprint over the 18 in starting size; more than 88 W of drive motors; wheels geared together with different diameters (they scrub); unusual wheel types for the drivetrain.
+- **Errors:** a port used twice (motors, mechanisms and sensors share ports 1–21); the CG, a wheel or a sensor outside the footprint (or the shape); both or neither of `footprint_in` and `shape`; an outline that crosses itself; wheels all in a line, or the CG outside the polygon they form (the robot would tip over); a wheel in no gear group, or in two; unknown wheel names; a mecanum wheel without `roller_angle_deg`, or roller angles on other wheels; a differential drive without exactly `left` and `right`; an X-drive, mecanum or H-drive that can't strafe independently; mechanism stops that don't contain the start; unknown or inconsistent overrides.
+- **Warnings:** a footprint or shape over the 18 in starting size; a part of a shape that touches no other part; more than 88 W of drive motors; wheels geared together with different diameters (they scrub); unusual wheel types for the drivetrain.
 
 ---
 
@@ -452,7 +479,7 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 **While it runs:**
 - **Controls:** pause, step 10 ms, restart from the start with the same seed, stop, and a speed from 0.1× to 8× real time, or *Max*. *Copy command* copies the run as the equivalent `vexsim run` command. In `match` and `skills` modes, the time left in the period counts down beside the clock.
 - **Driving:** with no program, or in `driver` and `match` modes, you drive: the keyboard as in the pygame viewer (below), any gamepad (its face buttons map to the V5's by position), or the on-screen controller in the readings, whose sticks you can drag and buttons press. The controller there shows what the robot reads, whatever drives it.
-- **The field:** the robot where it really is (front edge thicker), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, each wheel's sideways force (orange), mecanum rollers, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate, the beams, the forces and what the robot code draws (each of its layers, too), and *Key* folds it away. The wheel zooms, dragging pans, and a double-click (or *Fit*) shows the whole field again; *Follow* keeps the robot in the middle; *Save picture* saves the field as a PNG. The pointer's field coordinates are shown in the bottom corner.
+- **The field:** the robot where it really is (front edge thicker; a robot with a `shape` has an arrow to its front), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, each wheel's sideways force (orange), mecanum rollers, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate, the beams, the forces and what the robot code draws (each of its layers, too), and *Key* folds it away. The wheel zooms, dragging pans, and a double-click (or *Fit*) shows the whole field again; *Follow* keeps the robot in the middle; *Save picture* saves the field as a PNG. The pointer's field coordinates are shown in the bottom corner.
 - **What the robot code draws:** robot code can draw on the field to show what it's thinking: a localizer's particles, a planned path, a target. C++ code draws with `vexsim::draw_*` ([section 9](#vexsim-extras-for-c-vexsimsimhpp)), Python programs with `bot.draw` ([section 8](#drawing-on-the-field-botdraw)); `tour.py` numbers its stops, and the 1239E port draws its MCL. Each layer of drawings can be shown or hidden in the key, and recorded runs keep them.
 - **Readings** (right): true and estimated pose and how far apart they are, speed, battery, the controller, each motor's current and temperature, mechanisms' angles, IMU and GPS readings, distance sensor readings, and the brain and controller screens.
 - **Console** (bottom): the program's output, the build's output, and errors with their traceback. **Problems** lists the compiler's errors and warnings and where a Python program failed, as `file:line` links that open the place in VS Code (or Cursor; *Open files in* picks); places in the console and build output are links too.
@@ -497,7 +524,7 @@ A robot that localizes with Monte Carlo localization can log every update to its
 
 *Edit*, beside each robot and field in the workspace list, opens its config in a tab of its own, beside *Simulate*: the YAML on the left, the robot (or field) drawn from it on the right. A config that doesn't load opens the same way, from *Unreadable configs*, so you can fix it.
 - **The text:** a YAML editor with line numbers, folding, search and undo. What you type is checked as you go, with the same checks as `vexsim validate-config` (section 4), and each problem is marked at its line: underlined, with a dot in the margin, and listed below the editor, where a click goes to it. *Summary* shows what `validate-config` prints about the robot or field.
-- **The diagram:** a robot from above in its own frame (+x forward, to the right): its footprint, wheels, tracking wheels, distance sensors with their beams, the IMU and GPS, and its center of gravity, labelled with their names and ports. A field shows its walls, obstacles and pieces. A part with a problem is outlined red (an error) or yellow (a warning). Click a part to select its line in the text; put the cursor in a part's line to select the part.
+- **The diagram:** a robot from above in its own frame (+x forward, to the right): its footprint (or each part of its shape), wheels, tracking wheels, distance sensors with their beams, the IMU and GPS, and its center of gravity, labelled with their names and ports. A field shows its walls, obstacles and pieces. A part with a problem is outlined red (an error) or yellow (a warning). Click a part to select its line in the text; put the cursor in a part's line to select the part.
 - **Dragging** a part moves it, in 1/8 in steps on a robot and 1/2 in steps on a field (hold Shift for 0.01 in and 0.1 in); the round handle of a selected sensor, wheel or rectangular obstacle turns it, in 15° steps (Shift: 1°). The arrow keys move the selected part a step, and `[` and `]` turn it. The numbers show beside the pointer as you drag.
 - **Only the numbers you change are rewritten.** A drop rewrites just those numbers in the text, in place: every comment, blank line, alignment and key order stays as it was, and a coordinate you didn't move keeps its exact value (dragging `4.656207, 5.6937585` along x leaves `5.6937585` alone). A key the file doesn't have yet, such as a sensor's `heading_deg`, is added in the mapping's own style. A value that comes from a YAML anchor or alias can only be changed in the text. Ctrl+Z undoes a drag like any edit, from the text or the diagram.
 - **Saving:** nothing is written until *Save* (Ctrl+S). A tab with unsaved changes has a dot, and closing it (or the page) asks first. Saving keeps the file's line endings. If the file changed on disk since you opened it, the app says so and lets you keep yours or load the file's. The workspace list and the field view pick the change up at once.
@@ -1122,15 +1149,16 @@ vexsim/
 | `__main__.py` | Makes `python -m vexsim` work. |
 | `units.py` | Conversions between VEX units and SI (`in_to_m`, `rpm_to_rad_s`, `mv_to_v`, ...). The simulator computes in SI and converts only at its boundaries. |
 | `v5.py` | V5 constants: 21 smart ports, cartridge speeds (100/200/600 rpm), ±12000 mV, 11 W per motor, the 88 W motor budget, the 18 in starting size. |
+| `geometry.py` | Robot shapes: `Outline`, the union of rectangles, circles and polygons. Its outside edge exactly (segments and arcs, holes included), inside tests, signed distances, the contacts of discs (`discs`: a circle in a notch touches both sides), how far it reaches, bounds, area and moments (Green's theorem), overlap with a convex polygon, and loops to draw. `polygon_problem` says what's wrong with an outline. |
 | `mcllog.py` | MCL logs as 1239E's code writes them: `parse` reads the updates (each sensor's reading and ray, the particles, the time, the estimate and its spread), `MclLog` gives a log's path to follow, its summary, and each update as drawings. |
 | `workers.py` | `process_pool`: worker processes for the benchmark, the calibration fit and sweeps, each of which exits when the process that made the pool ends (a cancelled job's workers don't go on simulating for nobody). |
 
 ### `config/`: robot and field configs
 | Module | What it does |
 |---|---|
-| `robot.py` | The robot YAML schema (pydantic): `RobotConfig`, with `BodyConfig`, `DrivetrainConfig` (`WheelConfig`, `GearGroupConfig`), `MechanismConfig`, and the sensor configs (`ImuConfig`, `RotationConfig` with `TrackingWheelConfig`, `DistanceConfig`, `GpsConfig`). Per-field rules (port ranges, positive sizes) and `ratio_value("36:48")`. |
+| `robot.py` | The robot YAML schema (pydantic): `RobotConfig`, with `BodyConfig` (a `footprint_in`, or a `shape` of `RectPart`, `CirclePart` and `OutlinePart`; `body.outline` is its `Outline`), `DrivetrainConfig` (`WheelConfig`, `GearGroupConfig`), `MechanismConfig`, and the sensor configs (`ImuConfig`, `RotationConfig` with `TrackingWheelConfig`, `DistanceConfig`, `GpsConfig`). Per-field rules (port ranges, positive sizes) and `ratio_value("36:48")`. |
 | `field.py` | The field YAML schema: `FieldConfig`, `ObstacleConfig`, `PieceConfig`, and `check_field` (elements inside the walls, overlapping pieces). |
-| `checks.py` | Cross-field robot checks (`check_robot`): ports, footprint containment, tipping, gearing, drivetrain layout, strafing ability, motor budget, overrides. |
+| `checks.py` | Cross-field robot checks (`check_robot`): ports, footprint (or shape) containment, tipping, gearing, drivetrain layout, strafing ability, motor budget, overrides. |
 | `loader.py` | `load_robot` and `load_field` (raise on errors), and `validate_robot` and `validate_field` (return a report), from a file or a mapping. |
 | `yaml_io.py` | A strict YAML loader: `36:48` stays text instead of becoming the base-60 number 2208, and duplicate keys are errors. |
 | `issues.py` | `ConfigIssue`, `ValidationReport` and `ConfigError`: problems with a location, a severity and a message, with "did you mean" suggestions. |
@@ -1156,8 +1184,8 @@ vexsim/
 | `robot.py` | `Robot`: the drivetrain built from a config. Gear groups (`DriveGroup`), wheels, chassis, mechanisms and power; the implicit integrator; the pose, velocities and contacts; wall and obstacle contacts. |
 | `kinematics.py` | `DriveKinematics`: which gear-group speeds produce a body motion (forward, sideways, turn), for any drivetrain; whether it can strafe; top speeds. |
 | `mechanism.py` | `Mechanism`: a lift, intake or arm: its motors through a ratio, inertia, load, friction and hard stops. |
-| `field.py` | `Walls` and `FieldSpec`: the perimeter. Footprint corners past a wall are resolved with impulses (bounce, wall friction), then pushed back inside. `robot_impulses` is shared with obstacles. |
-| `arena.py` | `Arena`: game elements. Robot contacts with solid obstacles; pieces (`Pieces`) sliding, bouncing and being pushed; ray casts for sensors (`ray`, with a beam height). `Shape` is a rectangle or a circle. |
+| `field.py` | `Walls` and `FieldSpec`: the perimeter. Footprint corners past a wall (and a shape's round edges' furthest points) are resolved with impulses (bounce, wall friction), then pushed back inside. `robot_impulses` is shared with obstacles. |
+| `arena.py` | `Arena`: game elements. Robot contacts with solid obstacles, by footprint or by shape; pieces (`Pieces`) sliding, bouncing and being pushed; ray casts for sensors (`ray`, with a beam height). `Shape` is a rectangle or a circle. |
 | `params.py` | `PhysicsParams` and `resolve_params`: every parameter group with the config's `overrides` applied; `check_overrides` validates the keys. |
 | `rig.py` | `ShaftRig` (a motor driving an inertia), and the dynamometer behind `motor-curves` (`torque_speed_curve`, `free_speed`, `hold_speed`). |
 
@@ -1303,6 +1331,7 @@ Omni wheels grip along their rolling direction and roll freely across it, which 
 
 ### Walls, obstacles, pieces, mechanisms
 - **Walls and solid obstacles:** footprint corners inside them are contacts, resolved with impulses: a bounce (`wall_restitution`, none below 5 cm/s) and friction (`wall_friction`); then the robot is moved out. A robot driving into a wall stalls with its wheels slipping, and an angled approach squares it up (a wall reset).
+- **A robot with a `shape`** collides by its outside edge: its corners, and each round piece of the edge where it bulges most, against walls and obstacles; obstacle corners inside it; and every piece of its edge that a round goal or a piece reaches into, so something in a notch touches both sides. A shape of one rectangle moves exactly as the same footprint.
 - **Pieces** slide with Coulomb ground friction, bounce off walls, obstacles, each other and the robot, and get pushed; a piece pinned against something stops the robot. They don't spin, and robots can't pick them up.
 - **Mechanisms:** see [Mechanisms](#mechanisms). Friction is implicit (exact stiction), and hard stops are inelastic.
 
@@ -1334,6 +1363,7 @@ All use the arc method, which is exact for constant-curvature motion. X-drive, m
 
 ## 17. Limits: what isn't modeled
 - Robots don't pick up, carry or score pieces; mechanisms move but touch nothing.
+- A robot's outline (its footprint or `shape`) is flat and fixed: it has no height, and doesn't change as mechanisms move.
 - There are no other robots (a benchmark `push` disturbance stands in for a shove).
 - The field is flat: no ramps, nothing to climb, no pitch or roll.
 - The distance sensor is a ray (the real one has a cone of view), and its confidence is constant.

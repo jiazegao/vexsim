@@ -62,11 +62,19 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
 
     body = cfg.body
     dt = cfg.drivetrain
-    length, width = body.footprint_in
-    footprint = f"{length:g} x {width:g} in footprint"
+    if body.shape is None:
+        length, width = body.footprint_in
+        footprint = f"{length:g} x {width:g} in footprint"
 
-    def inside(xy: tuple[float, float]) -> bool:
-        return abs(xy[0]) <= length / 2 + _EPS and abs(xy[1]) <= width / 2 + _EPS
+        def inside(xy: tuple[float, float]) -> bool:
+            return abs(xy[0]) <= length / 2 + _EPS and abs(xy[1]) <= width / 2 + _EPS
+
+    else:
+        footprint = "robot's shape"
+        outline = body.outline
+
+        def inside(xy: tuple[float, float]) -> bool:
+            return outline.signed_distance(xy[:2])[0] <= _EPS
 
     # Body
     if not inside(body.cg_in[:2]):
@@ -75,12 +83,24 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
             "body.cg_in",
             f"center of gravity {_fmt(body.cg_in[:2])} is outside the {footprint}",
         )
-    if max(body.footprint_in) > STARTING_SIZE_LIMIT_IN + _EPS:
+    length, width = body.size_in
+    if max(length, width) > STARTING_SIZE_LIMIT_IN + _EPS:
+        what = footprint if body.shape is None else f"{length:.4g} x {width:.4g} in shape"
         add(
             "warning",
-            "body.footprint_in",
-            f"{footprint} exceeds the {STARTING_SIZE_LIMIT_IN:g} in starting size limit",
+            "body.footprint_in" if body.shape is None else "body.shape",
+            f"{what} exceeds the {STARTING_SIZE_LIMIT_IN:g} in starting size limit",
         )
+    if body.shape is not None:
+        groups = body.outline.groups()
+        for group in groups[1:]:  # groups[0] has the first part
+            for i in group:
+                add(
+                    "warning",
+                    f"body.shape[{i}]",
+                    "this part doesn't touch the rest of the shape (it moves with the robot "
+                    "all the same)",
+                )
     lo, hi = PLAUSIBLE_MASS_KG
     if not lo <= body.mass_kg <= hi:
         add("warning", "body.mass_kg", f"{body.mass_kg:g} kg is outside the usual {lo:g}-{hi:g} kg")

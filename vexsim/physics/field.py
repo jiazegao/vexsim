@@ -1,9 +1,11 @@
 """The field perimeter: walls the robot's footprint collides with.
 
 The footprint is a rectangle (``body.footprint_in``) around the robot's
-center. Each physics step, after the robot moves, every corner that ended up
-past a wall is a contact. Contacts are resolved with impulses, the usual way
-rigid-body engines handle hard impacts:
+center, or a ``body.shape``. Each physics step, after the robot moves, every
+corner that ended up past a wall is a contact (a shape's corners are where its
+outside edge turns; each round piece of its edge adds its furthest point toward
+the wall). Contacts are resolved with impulses, the usual way rigid-body
+engines handle hard impacts:
 
   normal    stop the corner's approach, then bounce it back at
             ``wall_restitution`` times the impact speed (slow touches don't
@@ -83,36 +85,49 @@ class Walls:
 
         heading = robot.heading
         c, s = math.cos(heading), math.sin(heading)
-        corners = robot.footprint_corners  # (4, 2) body frame, relative to the CG
-        world = cg + corners @ np.array([[c, s], [-s, c]])
-        found = []  # (corner, field normal, depth)
+        rotate = np.array([[c, s], [-s, c]])
+        corners = robot.footprint_corners  # (n, 2) body frame, relative to the CG
+        world = cg + corners @ rotate
+        found = []  # (point: body frame from the CG, field frame; field normal, depth)
         for axis in (0, 1):
             for sign in (1.0, -1.0):
                 depth = sign * world[:, axis] - half[axis]
+                normal = np.zeros(2)
+                normal[axis] = -sign
                 for k in np.flatnonzero(depth > 0.0):
-                    normal = np.zeros(2)
-                    normal[axis] = -sign
-                    found.append((int(k), normal, float(depth[k])))
+                    found.append((corners[k], world[k], normal, float(depth[k])))
+                if not robot.footprint_arcs:
+                    continue
+                # a shape's round edges: each one's furthest point toward the wall
+                toward = -normal @ rotate.T  # body frame
+                angle = math.atan2(toward[1], toward[0])
+                for arc in robot.footprint_arcs:
+                    if arc.covers(angle):
+                        point = np.array(arc.center) + arc.radius * toward
+                        place = cg + point @ rotate
+                        reach = sign * place[axis] - half[axis]
+                        if reach > 0.0:
+                            found.append((point, place, normal, float(reach)))
         if not found:
             return []
 
-        points = [(*corners[k], *n) for k, n, _ in found]
+        points = [(*point, *n) for point, _, n, _ in found]
         impulses = robot_impulses(robot, points, self.spec)
         # Move straight back in: per wall, by its deepest corner.
         shift = np.zeros(2)
-        for _, normal, depth in found:
+        for _, _, normal, depth in found:
             axis = 0 if normal[0] else 1
             if abs(shift[axis]) < depth:
                 shift[axis] = normal[axis] * depth
         robot.cg_position += shift
         return [
             WallContact(
-                point=(float(world[k, 0]), float(world[k, 1])),
+                point=(float(place[0]), float(place[1])),
                 normal=(float(n[0]), float(n[1])),
                 depth_m=depth,
                 impulse_n_s=float(j),
             )
-            for (k, n, depth), j in zip(found, impulses, strict=True)
+            for (_, place, n, depth), j in zip(found, impulses, strict=True)
         ]
 
 

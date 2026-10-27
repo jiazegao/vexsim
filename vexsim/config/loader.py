@@ -12,7 +12,7 @@ from pydantic import BaseModel, ValidationError
 from vexsim.config.checks import check_robot
 from vexsim.config.field import FIELD_MODELS, FieldConfig, check_field
 from vexsim.config.issues import ConfigError, ConfigIssue, ValidationReport
-from vexsim.config.robot import ROBOT_MODELS, SENSOR_TYPES, RobotConfig
+from vexsim.config.robot import ROBOT_MODELS, SENSOR_TYPES, SHAPE_TYPES, RobotConfig
 from vexsim.config.yaml_io import load_yaml_file
 
 M = TypeVar("M", bound=BaseModel)
@@ -72,6 +72,8 @@ def _format_location(loc: tuple[Any, ...]) -> str:
     # Tagged unions insert the tag into the path: sensors.0.imu.port -> sensors[0].port
     if len(parts) > 2 and parts[0] == "sensors" and parts[2] in SENSOR_TYPES:
         del parts[2]
+    if len(parts) > 3 and parts[:2] == ["body", "shape"] and parts[3] in SHAPE_TYPES:
+        del parts[3]
     out = ""
     for part in parts:
         if isinstance(part, int):

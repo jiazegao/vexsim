@@ -21,10 +21,18 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
     lines = []
     if cfg.name:
         lines.append(f"  name        {cfg.name}")
-    inertia_note = "auto: uniform box" if body.inertia_kgm2 == "auto" else "explicit"
+    if body.shape is None:
+        inertia_note = "auto: uniform box" if body.inertia_kgm2 == "auto" else "explicit"
+        size = f"footprint {body.footprint_in[0]:.1f} x {body.footprint_in[1]:.1f} in"
+    else:
+        inertia_note = "auto: uniform over the shape" if body.inertia_kgm2 == "auto" else "explicit"
+        parts = len(body.shape)
+        size = (
+            f"shape {body.size_in[0]:.1f} x {body.size_in[1]:.1f} in "
+            f"({parts} part{'s' * (parts != 1)}, {body.outline.area:.0f} sq in)"
+        )
     lines += [
-        f"  body        {body.mass_kg:.2f} kg ({kg_to_lb(body.mass_kg):.1f} lb), "
-        f"footprint {body.footprint_in[0]:.1f} x {body.footprint_in[1]:.1f} in, "
+        f"  body        {body.mass_kg:.2f} kg ({kg_to_lb(body.mass_kg):.1f} lb), {size}, "
         f"CG {_xy(body.cg_in)}",
         f"              yaw inertia {body.yaw_inertia_kgm2():.3f} kg*m^2 ({inertia_note})",
     ]

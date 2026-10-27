@@ -9,6 +9,7 @@ docs/conventions.md.
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -23,6 +24,7 @@ from pydantic import (
     model_validator,
 )
 
+from vexsim.geometry import Circle, Outline, Polygon, polygon_problem
 from vexsim.units import in_to_m
 from vexsim.v5 import CARTRIDGE_FREE_RPM, SMART_PORT_COUNT
 
@@ -99,19 +101,106 @@ GearRatio = Annotated[str | float, BeforeValidator(_normalize_ratio)]
 Inertia = Annotated[Literal["auto"] | float, BeforeValidator(_normalize_inertia)]
 
 
+class RectPart(_Model):
+    """A rectangle in the robot's shape."""
+
+    type: Literal["rect"]
+    pos_in: Vec2 = (0.0, 0.0)  # center
+    size_in: tuple[PositiveFloat, PositiveFloat]  # length (along its heading) by width
+    heading_deg: FiniteFloat = 0.0  # rotation of its length axis, CCW from robot +x
+
+
+class CirclePart(_Model):
+    """A circle in the robot's shape."""
+
+    type: Literal["circle"]
+    pos_in: Vec2 = (0.0, 0.0)  # center
+    diameter_in: PositiveFloat
+
+
+class OutlinePart(_Model):
+    """A closed outline in the robot's shape: straight edges from point to point, and from
+    the last point back to the first. Its edges mustn't cross."""
+
+    type: Literal["outline"]
+    points_in: Annotated[tuple[Vec2, ...], Field(min_length=3)]
+
+    @model_validator(mode="after")
+    def _simple(self) -> OutlinePart:
+        problem = polygon_problem(self.points_in)
+        if problem:
+            raise ValueError(
+                f"the outline's points (numbered from 0) don't make a shape: {problem}"
+            )
+        return self
+
+
+ShapePart = Annotated[RectPart | CirclePart | OutlinePart, Field(discriminator="type")]
+SHAPE_TYPES = ("rect", "circle", "outline")
+
+
 class BodyConfig(_Model):
     mass_kg: PositiveFloat
     inertia_kgm2: Inertia = "auto"
-    footprint_in: tuple[PositiveFloat, PositiveFloat]  # length (x) by width (y)
+    # The robot seen from above, in the robot frame: either a rectangle centered on the
+    # origin, length (x) by width (y), or a shape made of rectangles, circles and outlines
+    # (where they overlap they merge: only the outside edge touches anything).
+    footprint_in: tuple[PositiveFloat, PositiveFloat] | None = None
+    shape: tuple[ShapePart, ...] | None = None
     cg_in: tuple[FiniteFloat, FiniteFloat, PositiveFloat]  # x, y, height above the floor
     battery: BatteryPreset = "v5_default"
 
+    @model_validator(mode="after")
+    def _one_shape(self) -> BodyConfig:
+        if self.footprint_in is None and self.shape is None:
+            raise ValueError(
+                "the body needs footprint_in: [length, width] (a rectangle centered on the "
+                "robot's origin) or shape: (rectangles, circles and outlines)"
+            )
+        if self.footprint_in is not None and self.shape is not None:
+            raise ValueError("the body has both footprint_in and shape; keep one")
+        if self.shape == ():
+            raise ValueError("the body's shape needs a part: a rect, a circle or an outline")
+        return self
+
+    @property
+    def outline(self) -> Outline:
+        """The robot seen from above, in inches, robot frame."""
+        return _outline(self.footprint_in, self.shape)
+
+    @property
+    def size_in(self) -> tuple[float, float]:
+        """Length (x) by width (y) of the box around the robot, in its own frame."""
+        if self.shape is None:
+            return self.footprint_in
+        x0, y0, x1, y1 = self.outline.bounds
+        return x1 - x0, y1 - y0
+
     def yaw_inertia_kgm2(self) -> float:
-        """Explicit inertia, or a uniform box over the footprint when set to 'auto'."""
+        """Explicit inertia, or a uniform plate over the robot's shape when set to 'auto'
+        (a uniform box over the footprint: m(L^2 + W^2)/12)."""
         if self.inertia_kgm2 != "auto":
             return self.inertia_kgm2
-        length, width = (in_to_m(v) for v in self.footprint_in)
-        return self.mass_kg * (length**2 + width**2) / 12.0
+        if self.shape is None:
+            length, width = (in_to_m(v) for v in self.footprint_in)
+            return self.mass_kg * (length**2 + width**2) / 12.0
+        area, _, polar = self.outline.moments  # inches
+        return self.mass_kg * in_to_m(1.0) ** 2 * polar / area
+
+
+@lru_cache(maxsize=64)
+def _outline(footprint: tuple[float, float] | None, shape: tuple | None) -> Outline:
+    if shape is None:
+        return Outline([Polygon.rect((0.0, 0.0), footprint)])
+    parts = []
+    for part in shape:
+        if part.type == "rect":
+            parts.append(Polygon.rect(part.pos_in, part.size_in, math.radians(part.heading_deg)))
+        elif part.type == "circle":
+            parts.append(Circle(tuple(part.pos_in), part.diameter_in / 2))
+        else:
+            parts.append(Polygon.of(part.points_in))
+    return Outline(parts)
 
 
 class WheelConfig(_Model):
@@ -266,6 +355,9 @@ class RobotConfig(_Model):
 ROBOT_MODELS: tuple[type[BaseModel], ...] = (
     RobotConfig,
     BodyConfig,
+    RectPart,
+    CirclePart,
+    OutlinePart,
     DrivetrainConfig,
     WheelConfig,
     GearGroupConfig,

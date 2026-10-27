@@ -2,6 +2,7 @@
 // field with its elements, drawn from the config being edited; and which part is under the
 // pointer, or under its turn handle.
 
+import { configPoints, partPoints } from "./body";
 import type { Part } from "./configdoc";
 import { drawField } from "./draw";
 import type { Palette } from "./palette";
@@ -31,10 +32,9 @@ export interface PlanPicture {
   stale: boolean; // the text doesn't parse just now: this is how it last did
 }
 
-/** The robot's area: its footprint and every part, with room around them. */
+/** The robot's area: its footprint (or shape) and every part, with room around them. */
 export function robotExtent(robot: RobotConfig, parts: Part[]): [number, number] {
-  const [length, width] = robot.body.footprint_in;
-  let half = Math.max(length, width) / 2;
+  let half = Math.max(...configPoints(robot.body).map(([x, y]) => Math.max(Math.abs(x), Math.abs(y))));
   for (const part of parts) half = Math.max(half, Math.abs(part.x) + part.size / 2, Math.abs(part.y) + part.size / 2);
   return [2 * half + 8, 2 * half + 8];
 }
@@ -54,24 +54,28 @@ export function drawPlan(ctx: CanvasRenderingContext2D, view: View, colors: Pale
 
 function drawRobotPlan(ctx: CanvasRenderingContext2D, view: View, colors: Palette, robot: RobotConfig, picture: PlanPicture): void {
   drawInchGrid(ctx, view, colors);
-  const [length, width] = robot.body.footprint_in;
-  const corners: [number, number][] = [
-    [length / 2, width / 2],
-    [length / 2, -width / 2],
-    [-length / 2, -width / 2],
-    [-length / 2, width / 2],
-  ];
-  polygon(ctx, view, corners);
-  ctx.fillStyle = withAlpha(colors.ink, 0.04);
-  ctx.fill();
-  ctx.strokeStyle = colors.ink2;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  // the front edge, thicker, as on the field
-  line(ctx, view, corners[0], corners[1]);
-  ctx.lineWidth = 4;
-  ctx.stroke();
-  label(ctx, view, colors, length / 2, 0, "front", "start", 8, 4);
+  if (robot.body.shape?.length) {
+    drawShapePlan(ctx, view, colors, robot);
+  } else {
+    const [length, width] = robot.body.footprint_in ?? [0, 0];
+    const corners: [number, number][] = [
+      [length / 2, width / 2],
+      [length / 2, -width / 2],
+      [-length / 2, -width / 2],
+      [-length / 2, width / 2],
+    ];
+    polygon(ctx, view, corners);
+    ctx.fillStyle = withAlpha(colors.ink, 0.04);
+    ctx.fill();
+    ctx.strokeStyle = colors.ink2;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // the front edge, thicker, as on the field
+    line(ctx, view, corners[0], corners[1]);
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    label(ctx, view, colors, length / 2, 0, "front", "start", 8, 4);
+  }
 
   for (const part of picture.parts) {
     const state = partState(part, picture);
@@ -81,6 +85,32 @@ function drawRobotPlan(ctx: CanvasRenderingContext2D, view: View, colors: Palett
     else if (part.kind === "cg") drawCg(ctx, view, colors, part, state);
   }
   drawSelection(ctx, view, colors, picture);
+}
+
+/** A robot's shape: each of its parts (overlaps show darker), and an arrow along its +x axis
+ * to its front, as on the field. */
+function drawShapePlan(ctx: CanvasRenderingContext2D, view: View, colors: Palette, robot: RobotConfig): void {
+  for (const part of robot.body.shape ?? []) {
+    polygon(ctx, view, partPoints(part));
+    ctx.fillStyle = withAlpha(colors.ink, 0.05);
+    ctx.fill();
+    ctx.strokeStyle = colors.ink2;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  const front = Math.max(...configPoints(robot.body).map(([x]) => x));
+  const [ox, oy] = toScreen(view, 0, 0);
+  const [fx, fy] = toScreen(view, front, 0);
+  ctx.beginPath();
+  ctx.moveTo(ox, oy);
+  ctx.lineTo(fx, fy);
+  ctx.lineTo(fx - 9 * Math.cos(-0.45), fy - 9 * Math.sin(-0.45));
+  ctx.moveTo(fx, fy);
+  ctx.lineTo(fx - 9 * Math.cos(0.45), fy - 9 * Math.sin(0.45));
+  ctx.strokeStyle = colors.ink2;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  label(ctx, view, colors, front, 0, "front", "start", 8, 4);
 }
 
 /** A light inch grid (heavier every 6 in) and the robot's axes through its origin. */

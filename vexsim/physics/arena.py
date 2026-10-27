@@ -4,7 +4,11 @@ Obstacles are fixed rectangles and circles (goals, barriers). The robot's
 footprint collides with them as with the walls (field.py): a contact is a
 footprint corner inside an obstacle, an obstacle corner inside the footprint,
 or the point of the footprint nearest a circle, and the same impulses resolve
-them (``field.wall_restitution`` and ``field.wall_friction``).
+them (``field.wall_restitution`` and ``field.wall_friction``). A robot with a
+``body.shape`` collides by its outside edge (vexsim.geometry): its corners and
+the deepest point of each round piece of its edge, obstacle corners inside it,
+and the nearest point of each piece of its edge that a circle reaches, so a
+goal or a piece in a notch touches both sides.
 
 Pieces are discs (balls, rings, cylinders by their outer diameter) that slide
 on the tiles. Each physics step, after the robot moves:
@@ -227,24 +231,10 @@ class Arena:
         return contacts
 
     def _robot_obstacles(self, robot: Robot) -> list[WallContact]:
-        footprint = _footprint(robot)
-        found = []  # (point, normal pushing the robot, depth)
-        for shape in self.solid:
-            if math.dist(shape.center, footprint.center) > shape.radius + footprint.radius:
-                continue
-            if shape.circle:
-                distance, normal, point = footprint.signed_distance(shape.center)
-                if distance < shape.half[0]:
-                    found.append((point, -normal, shape.half[0] - distance))
-                continue
-            for corner in footprint.corners():
-                distance, normal, _ = shape.signed_distance(corner)
-                if distance < 0:
-                    found.append((corner, normal, -distance))
-            for corner in shape.corners():
-                distance, normal, _ = footprint.signed_distance(corner)
-                if distance < 0:
-                    found.append((corner, -normal, -distance))
+        if robot.outline is None:
+            found = self._footprint_obstacles(robot)
+        else:
+            found = self._shape_obstacles(robot)
         if not found:
             return []
         c, s = math.cos(robot.heading), math.sin(robot.heading)
@@ -263,6 +253,62 @@ class Arena:
             WallContact((float(p[0]), float(p[1])), (float(n[0]), float(n[1])), d, float(j))
             for (p, n, d), j in zip(found, impulses, strict=True)
         ]
+
+    def _footprint_obstacles(self, robot: Robot) -> list[tuple[np.ndarray, np.ndarray, float]]:
+        """A footprint rectangle's contacts: (point, normal pushing the robot, depth)."""
+        footprint = _footprint(robot)
+        found = []
+        for shape in self.solid:
+            if math.dist(shape.center, footprint.center) > shape.radius + footprint.radius:
+                continue
+            if shape.circle:
+                distance, normal, point = footprint.signed_distance(shape.center)
+                if distance < shape.half[0]:
+                    found.append((point, -normal, shape.half[0] - distance))
+                continue
+            for corner in footprint.corners():
+                distance, normal, _ = shape.signed_distance(corner)
+                if distance < 0:
+                    found.append((corner, normal, -distance))
+            for corner in shape.corners():
+                distance, normal, _ = footprint.signed_distance(corner)
+                if distance < 0:
+                    found.append((corner, -normal, -distance))
+        return found
+
+    def _shape_obstacles(self, robot: Robot) -> list[tuple[np.ndarray, np.ndarray, float]]:
+        """A ``body.shape``'s contacts, as for the footprint: its corners inside an obstacle
+        (and the deepest point of each round piece of its edge), obstacle corners inside the
+        shape, and each piece of its edge a circle reaches into."""
+        outline, cg = robot.outline, robot.cg_position
+        c, s = math.cos(robot.heading), math.sin(robot.heading)
+        rotate = np.array([[c, s], [-s, c]])  # body frame (from the CG) @ rotate: field frame
+        corners = None
+        found = []
+        for shape in self.solid:
+            if math.dist(shape.center, cg) > shape.radius + robot.footprint_radius:
+                continue
+            if shape.circle:
+                local = (shape.center - cg) @ rotate.T
+                for _, depth, normal, point in outline.discs(local, shape.half[0]):
+                    found.append((cg + point @ rotate, -(normal @ rotate), depth))
+                continue
+            if corners is None:
+                corners = cg + outline.corners @ rotate
+            for corner in corners:
+                distance, normal, _ = shape.signed_distance(corner)
+                if distance < 0:
+                    found.append((corner, normal, -distance))
+            for arc in robot.footprint_arcs:
+                center = cg + np.array(arc.center) @ rotate
+                distance, normal, _ = shape.signed_distance(center)
+                facing = -normal @ rotate.T  # body frame: from the arc's center to the obstacle
+                if distance < arc.radius and arc.covers(math.atan2(facing[1], facing[0])):
+                    found.append((center - normal * arc.radius, normal, arc.radius - distance))
+            inside = outline.discs((shape.corners() - cg) @ rotate.T, 0.0)
+            for k, depth, normal, _ in inside:
+                found.append((shape.corners()[k], -(normal @ rotate), depth))
+        return found
 
     # --- pieces (a physics system, stepped after the robots) ----------------------------------
 
@@ -311,7 +357,7 @@ class Arena:
 
     def _near(self, robot: Robot) -> bool:
         """Whether any piece is within reach of the robot's footprint."""
-        x, y, _ = robot.pose
+        x, y = robot.pose[:2] if robot.outline is None else robot.cg_position
         gap = np.hypot(self.pieces.position[:, 0] - x, self.pieces.position[:, 1] - y)
         return bool((gap < robot.footprint_radius + self.pieces.radius).any())
 
@@ -351,6 +397,8 @@ class Arena:
         return out
 
     def _robot_pieces(self, robot: Robot) -> list[_Contact]:
+        if robot.outline is not None:
+            return self._shape_pieces(robot)
         pieces, out = self.pieces, []
         footprint = _footprint(robot)
         near = np.hypot(*(pieces.position - footprint.center).T) < footprint.radius + pieces.radius
@@ -360,6 +408,22 @@ class Arena:
             if distance < r:
                 out.append(_Contact(int(i), -1, normal, r - distance, point, robot=robot))
         return out
+
+    def _shape_pieces(self, robot: Robot) -> list[_Contact]:
+        """A ``body.shape``'s contacts with pieces: each piece of its edge a piece reaches
+        into (two, a piece in a notch)."""
+        pieces, cg = self.pieces, robot.cg_position
+        gap = np.hypot(*(pieces.position - cg).T)
+        near = np.flatnonzero(gap < robot.footprint_radius + pieces.radius)
+        if not len(near):
+            return []
+        c, s = math.cos(robot.heading), math.sin(robot.heading)
+        rotate = np.array([[c, s], [-s, c]])
+        local = (pieces.position[near] - cg) @ rotate.T
+        return [
+            _Contact(int(near[k]), -1, normal @ rotate, depth, cg + point @ rotate, robot=robot)
+            for k, depth, normal, point in robot.outline.discs(local, pieces.radius[near])
+        ]
 
     def _relative_velocity(self, c: _Contact) -> np.ndarray:
         v = self.pieces.velocity[c.a]
@@ -415,8 +479,15 @@ class Arena:
             ma, mb = pieces.mass[c.a], pieces.mass[c.b]
             pieces.position[c.a] += c.normal * c.depth * mb / (ma + mb)
             pieces.position[c.b] -= c.normal * c.depth * ma / (ma + mb)
+        moved: dict[int, np.ndarray] = {}  # piece: out of the robot (a shape may touch it twice)
         for c in robot_contacts:
-            pieces.position[c.a] += c.normal * c.depth
+            shift = moved.get(c.a)
+            if shift is None:
+                moved[c.a] = c.normal * c.depth
+            elif (remaining := c.depth - shift @ c.normal) > 0:
+                moved[c.a] = shift + c.normal * remaining
+        for i, shift in moved.items():
+            pieces.position[i] += shift
         if robot_contacts:
             again = self._fixed_contacts()  # pieces pushed into walls or obstacles go back...
             for c in again:

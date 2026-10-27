@@ -21,6 +21,7 @@ import numpy as np
 
 from vexsim.algorithms.localization.base import Pose
 from vexsim.config.robot import RobotConfig
+from vexsim.geometry import signed_area
 from vexsim.runtime.recorder import Log
 from vexsim.runtime.simulation import Simulation
 from vexsim.units import m_to_in
@@ -85,7 +86,7 @@ class Snapshot:
     time: float
     phase: str
     robot_name: str
-    footprint: tuple[float, float]
+    footprint: tuple[float, float]  # of the box around a shape
     true_pose: Pose
     est_pose: Pose | None
     speed_in_s: float
@@ -98,6 +99,8 @@ class Snapshot:
     overlay_path: np.ndarray | None = None  # (n, 2) inches
     overlay_target: tuple[float, float, float | None] | None = None
     sticks: dict[str, int] = field(default_factory=dict)
+    outline: list[list[tuple[float, float]]] | None = None  # a body.shape's edge (robot frame)
+    front: float | None = None  # how far ahead of its origin the robot's front is
     field_in: tuple[float, float] = (144.0, 144.0)  # inside the walls
     wall_contacts: list[tuple[float, float]] = field(default_factory=list)  # inches
     # Game elements, inches: obstacles as polygons or (x, y, r) circles (color, solid),
@@ -242,7 +245,7 @@ class LiveSource:
             time=sim.world.time,
             phase=sim.phase,
             robot_name=cfg.name or "robot",
-            footprint=cfg.body.footprint_in,
+            footprint=cfg.body.size_in,
             true_pose=Pose.from_si(robot.pose),
             est_pose=(
                 sim.estimated_pose if sim.localizer_ready or sim.reported_pose is not None else None
@@ -263,7 +266,15 @@ class LiveSource:
             field_in=sim.field.size_in,
             wall_contacts=[(m_to_in(c.point[0]), m_to_in(c.point[1])) for c in robot.wall_contacts],
             **_elements(sim),
+            **_shape(cfg),
         )
+
+
+def _shape(cfg: RobotConfig) -> dict:
+    """A body.shape's outline and front, for drawing it (none: the footprint rectangle)."""
+    if cfg.body.shape is None:
+        return {}
+    return {"outline": cfg.body.outline.loops(), "front": cfg.body.outline.front()}
 
 
 def _elements(sim) -> dict:
@@ -313,7 +324,7 @@ class ReplaySource:
             time=float(log["time_s"][i]),
             phase=log.phase[i] + " (replay)",
             robot_name=self.config.name or "robot",
-            footprint=self.config.body.footprint_in,
+            footprint=self.config.body.size_in,
             true_pose=Pose(log["x_in"][i], log["y_in"][i], log["heading_deg"][i]),
             est_pose=None if math.isnan(est.x) else est,
             speed_in_s=float(log["speed_in_s"][i]),
@@ -323,6 +334,7 @@ class ReplaySource:
                 (p, float(log[f"motor{p}_current_a"][i]), float(log[f"motor{p}_temp_c"][i]), False)
                 for p in log.motor_ports
             ],
+            **_shape(self.config),
         )
 
     @property
@@ -449,16 +461,11 @@ class Viewer:
         scale = (FIELD_PX - 2 * MARGIN) / 144.0
         return round(MARGIN + (x + 72.0) * scale), round(MARGIN + (72.0 - y) * scale)
 
-    def _polygon(self, pose: Pose, length: float, width: float) -> list[tuple[int, int]]:
+    def _polygon(self, pose: Pose, points) -> list[tuple[int, int]]:
+        """Robot-frame points (inches) on the screen, the robot at ``pose``."""
         h = math.radians(pose.heading)
         c, s = math.cos(h), math.sin(h)
-        corners = [
-            (length / 2, width / 2),
-            (length / 2, -width / 2),
-            (-length / 2, -width / 2),
-            (-length / 2, width / 2),
-        ]
-        return [self._to_px(pose.x + c * a - s * b, pose.y + s * a + c * b) for a, b in corners]
+        return [self._to_px(pose.x + c * a - s * b, pose.y + s * a + c * b) for a, b in points]
 
     def draw(self, snap: Snapshot) -> None:
         pg, scr = self.pg, self.screen
@@ -509,16 +516,23 @@ class Viewer:
                 pg.draw.line(scr, TARGET, (px, py), end, 2)
 
         length, width = snap.footprint
+        half = (length / 2, width / 2)
+        rect = [(half[0], half[1]), (-half[0], half[1]), (-half[0], -half[1]), (half[0], -half[1])]
+        loops = snap.outline or [rect]
         if self.show_ghost and snap.est_pose is not None:
-            pg.draw.polygon(scr, ESTIMATE, self._polygon(snap.est_pose, length, width), 2)
-        body = self._polygon(snap.true_pose, length, width)
+            for loop in loops:
+                pg.draw.polygon(scr, ESTIMATE, self._polygon(snap.est_pose, loop), 2)
         overlay = pg.Surface(scr.get_size(), pg.SRCALPHA)
-        pg.draw.polygon(overlay, (*ROBOT, 70), body)
+        for loop in loops:
+            if signed_area(loop) > 0:  # not a hole
+                pg.draw.polygon(overlay, (*ROBOT, 70), self._polygon(snap.true_pose, loop))
         scr.blit(overlay, (0, 0))
-        pg.draw.polygon(scr, ROBOT, body, 2)
+        for loop in loops:
+            pg.draw.polygon(scr, ROBOT, self._polygon(snap.true_pose, loop), 2)
         h = math.radians(snap.true_pose.heading)
+        front = length / 2 if snap.front is None else snap.front
         nose = self._to_px(
-            snap.true_pose.x + length / 2 * math.cos(h), snap.true_pose.y + length / 2 * math.sin(h)
+            snap.true_pose.x + front * math.cos(h), snap.true_pose.y + front * math.sin(h)
         )
         pg.draw.line(scr, ROBOT, self._to_px(snap.true_pose.x, snap.true_pose.y), nose, 3)
 

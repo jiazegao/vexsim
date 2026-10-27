@@ -134,7 +134,7 @@ export function FieldView(props: FieldViewProps) {
     const marker = (): StartMarker | null => {
       const { start, preview, source } = live.current;
       if (!start?.editable || !preview) return null;
-      const blocked = blockedBy(start.pose, preview.robot.footprint, preview.field);
+      const blocked = blockedBy(start.pose, preview.robot, preview.field);
       const outline = source.kind === "recording" || (source.kind === "live" && !!source.store.frame);
       return { pose: start.pose, robot: preview.robot, outline, grabbed: grabbedRef.current, blocked };
     };
@@ -216,7 +216,7 @@ export function FieldView(props: FieldViewProps) {
     const grabAt = (point: [number, number]) => {
       const m = marker();
       if (!m || !view) return null;
-      return hitStart(m.pose, m.robot.footprint, point, HANDLE_GAP_PX / view.scale, (HANDLE_RADIUS_PX + HIT_SLOP_PX) / view.scale);
+      return hitStart(m.pose, m.robot, point, HANDLE_GAP_PX / view.scale, (HANDLE_RADIUS_PX + HIT_SLOP_PX) / view.scale);
     };
     const onWheel = (event: WheelEvent) => {
       if (!view) return;
@@ -248,9 +248,9 @@ export function FieldView(props: FieldViewProps) {
           if (live.current.follow) live.current.onFollow(false);
         } else if (m && drag.kind === "move") {
           const center: [number, number] = [point[0] + drag.offset[0], point[1] + drag.offset[1]];
-          live.current.onStart(moved(m.pose, center, m.robot.footprint, fieldSize(), step));
+          live.current.onStart(moved(m.pose, center, m.robot, fieldSize(), step));
         } else if (m && drag.kind === "rotate") {
-          live.current.onStart(turned(m.pose, point, m.robot.footprint, fieldSize(), step));
+          live.current.onStart(turned(m.pose, point, m.robot, fieldSize(), step));
         }
       } else {
         const grab = grabAt(point);
@@ -362,7 +362,7 @@ export function FieldView(props: FieldViewProps) {
 }
 
 function StartHint(props: { start: StartEdit; preview: Preview; grabbed: boolean; showingRun: boolean }) {
-  const blocked = blockedBy(props.start.pose, props.preview.robot.footprint, props.preview.field);
+  const blocked = blockedBy(props.start.pose, props.preview.robot, props.preview.field);
   if (blocked.length) {
     return (
       <div className="hint bad" role="status" data-testid="start-blocked">
@@ -428,7 +428,7 @@ export function FieldKey(props: {
       </button>
       {open && (
         <>
-          {row("robot", "Robot (front edge thicker)")}
+          {row("robot", "Robot (front: thicker edge, or arrow)")}
           {row("line truth", "Where it went", "trails", "Show the paths (1)")}
           {row("line dashed estimate", "Where its code thinks it is", "estimate", "Show the robot code's estimate (2)")}
           {row("line dashed target", "Motion path / target")}

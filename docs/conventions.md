@@ -10,7 +10,7 @@ Conversions happen only at those boundaries, using `vexsim.units`.
 
 ## Frames
 **Robot frame**
-- Origin at the center of the footprint.
+- Origin at the center of the footprint. A robot with a `body.shape` places its parts around the origin, which needn't be the shape's middle.
 - **+x forward, +y left, +z up**, right-handed.
 - Angles are counter-clockwise from +x when seen from above.
 - Positions in the robot YAML (`pos_in`, `cg_in`) are in this frame.
@@ -52,7 +52,9 @@ Any wheel type works in any drivetrain: a tank drive with traction wheels in the
 
 **Tracking wheels:** `heading_deg` is the direction of travel the wheel measures. Use 0 for a forward-tracking wheel and 90 for a sideways-tracking wheel.
 
-**`inertia_kgm2: auto`** treats the robot as a uniform box over its footprint, using `m(L^2 + W^2)/12`. Give a measured value if you have one.
+**`inertia_kgm2: auto`** treats the robot as a uniform box over its footprint, using `m(L^2 + W^2)/12`, or as a uniform plate over its `shape`. Give a measured value if you have one.
+
+**Shape** (`body.shape`, instead of `footprint_in`): the robot seen from above, as rectangles (`pos_in` center, `size_in` length by width, `heading_deg`), circles (`pos_in`, `diameter_in`) and closed outlines (`points_in`, joined in order and back to the first; the edges mustn't cross). Overlapping parts merge into one shape, whose outside edge is what collides. It has no height, and mechanisms don't move it.
 
 **GPS:** `pos_in` is where the sensor sits, and `mount_yaw_deg` the direction its camera faces, counter-clockwise from the robot's +x. A GPS facing backward has `mount_yaw_deg: 180`.
 
@@ -89,7 +91,7 @@ Sensor frames (`vexsim.devices.frame.SensorFrame`) carry what PROS code would re
 
 - **Reversal follows PROS.** A negative motor port, or `reversed: true` on a rotation sensor, means the raw reading runs backwards, and the robot code is expected to reverse it, exactly like `pros::Motor(-4)`. The baseline localizers read these flags from the config.
 - **Tracking wheel geometry.** A tracking wheel's `heading_deg` is the direction of travel it measures: 0 for vertical, 90 for horizontal. 180 and 270 count backwards.
-- **Odometry offsets** are measured from the footprint center: a vertical wheel by its `y` (+left), a horizontal wheel by its `x` (+forward).
+- **Odometry offsets** are measured from the robot's origin (the footprint center): a vertical wheel by its `y` (+left), a horizontal wheel by its `x` (+forward).
 - **GPS frame.** vexsim's field frame is the GPS's: +y is the GPS's "north" (heading 0), so a robot facing +x reads heading 90. On a real field, point vexsim's +y the way your GPS reads 0. The reading is the sensor's own position and camera direction. The robot code's offset (`set_offset(x, y)`, in meters) is where the sensor sits relative to the robot's center, with +y along the camera's direction and +x to its right, as PROS defines it. With it, the GPS reports the robot's center.
 
 ## Field elements

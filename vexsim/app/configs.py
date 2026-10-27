@@ -243,6 +243,7 @@ def check_text(text: str, kind: ConfigKind) -> CheckedConfig:
         items = [f"drivetrain.wheels[{i}]" for i in range(len(config.drivetrain.wheels))]
         items += [f"sensors[{i}]" for i in range(len(config.sensors))]
         items += ["body.footprint_in", "body.cg_in"]
+        items += [f"body.shape[{i}]" for i in range(len(config.body.shape or ()))]
     else:
         summary = field_summary(config)
         items = [f"elements[{i}]" for i in range(len(config.elements))] + ["size_in"]

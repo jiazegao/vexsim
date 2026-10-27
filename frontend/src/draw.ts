@@ -1,6 +1,7 @@
 // Drawing a run on a canvas: the field, its elements, the robot and what it senses.
 // Everything is in field inches (see view.ts) except line widths, which are pixels.
 
+import { frontOf, outlineOf } from "./body";
 import type { Palette } from "./palette";
 import { mix, withAlpha } from "./palette";
 import type { Shape as DrawnShape, FieldScene, FrameMessage, OverlayMessage, RobotScene } from "./protocol";
@@ -348,6 +349,35 @@ function drawBeams(ctx: CanvasRenderingContext2D, view: View, colors: Palette, r
   }
 }
 
+/** Traces the robot's edge at `pose` (its footprint, or its shape's loops) as the path. */
+function traceBody(ctx: CanvasRenderingContext2D, view: View, robot: RobotScene, pose: readonly [number, number, number]): void {
+  const outline = outlineOf(robot);
+  const loops = outline ? outline.map((loop) => loop.map(([x, y]) => toScreen(view, ...place(pose, x, y)))) : [footprint(robot, pose, view)];
+  ctx.beginPath();
+  for (const loop of loops) {
+    loop.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.closePath();
+  }
+}
+
+/** Marks where the robot faces: its footprint's front edge, thicker, or on a shape (which
+ * has no one front edge), an arrow from its origin to its front. */
+function markFront(ctx: CanvasRenderingContext2D, view: View, robot: RobotScene, pose: readonly [number, number, number], width: number): void {
+  if (outlineOf(robot)) {
+    const [cx, cy] = toScreen(view, pose[0], pose[1]);
+    const [fx, fy] = toScreen(view, ...place(pose, frontOf(robot), 0));
+    ctx.lineWidth = width / 2 + 0.5;
+    arrow(ctx, cx, cy, fx, fy, 9);
+    return;
+  }
+  const corners = footprint(robot, pose, view);
+  ctx.beginPath();
+  ctx.moveTo(corners[0][0], corners[0][1]);
+  ctx.lineTo(corners[1][0], corners[1][1]);
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
 function footprint(robot: RobotScene, pose: readonly [number, number, number], view: View): [number, number][] {
   const [length, width] = robot.footprint;
   const corners: [number, number][] = [
@@ -378,22 +408,14 @@ function drawRobot(
   wheels: WheelState[],
   forces: boolean,
 ): void {
-  const corners = footprint(robot, pose, view);
-  ctx.beginPath();
-  corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-  ctx.closePath();
+  traceBody(ctx, view, robot, pose);
   ctx.fillStyle = withAlpha(colors.ink, 0.08);
   ctx.fill();
   ctx.strokeStyle = colors.ink;
   ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.stroke();
-  // the front edge, thicker
-  ctx.beginPath();
-  ctx.moveTo(corners[0][0], corners[0][1]);
-  ctx.lineTo(corners[1][0], corners[1][1]);
-  ctx.lineWidth = 4;
-  ctx.stroke();
+  if (!outlineOf(robot)) markFront(ctx, view, robot, pose, 4); // the front edge, thicker
   // wheels, colored by how much of their grip they use
   wheels.forEach(([x, y, heading, slip, side], i) => {
     const mount = robot.wheels[i];
@@ -443,49 +465,43 @@ function drawRobot(
       ctx.stroke();
     }
   });
-  // heading: center to front
-  const [cx, cy] = toScreen(view, pose[0], pose[1]);
-  const [fx, fy] = toScreen(view, ...place(pose, robot.footprint[0] / 2, 0));
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(fx, fy);
+  // heading: center to front (on a shape, an arrow: it marks the front)
   ctx.strokeStyle = colors.ink;
-  ctx.lineWidth = 2;
-  ctx.stroke();
+  if (outlineOf(robot)) {
+    markFront(ctx, view, robot, pose, 3);
+  } else {
+    const [cx, cy] = toScreen(view, pose[0], pose[1]);
+    const [fx, fy] = toScreen(view, ...place(pose, frontOf(robot), 0));
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(fx, fy);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
   dot(ctx, view, pose[0], pose[1], 3, colors.ink);
 }
 
 function drawStart(ctx: CanvasRenderingContext2D, view: View, colors: Palette, start: StartMarker): void {
   const { robot, pose } = start;
   if (start.blocked.length) {
-    const corners = footprint(robot, pose, view);
-    ctx.beginPath();
-    corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-    ctx.closePath();
+    traceBody(ctx, view, robot, pose);
     ctx.fillStyle = withAlpha(colors.slip, 0.18);
     ctx.fill();
     ctx.strokeStyle = colors.slip;
     ctx.lineWidth = 2.5;
     ctx.stroke();
   } else if (start.outline) {
-    const corners = footprint(robot, pose, view);
-    ctx.beginPath();
-    corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-    ctx.closePath();
+    traceBody(ctx, view, robot, pose);
     ctx.setLineDash([3, 3]);
     ctx.strokeStyle = colors.ink2;
     ctx.lineWidth = start.grabbed === "move" ? 2.5 : 1.5;
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.beginPath();
-    ctx.moveTo(corners[0][0], corners[0][1]);
-    ctx.lineTo(corners[1][0], corners[1][1]);
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    markFront(ctx, view, robot, pose, 3);
   }
-  // the rotate handle, on a stalk from the front edge
-  const [ex, ey] = toScreen(view, ...place(pose, robot.footprint[0] / 2, 0));
-  const [hx, hy] = toScreen(view, ...handlePoint([...pose], robot.footprint, HANDLE_GAP_PX / view.scale));
+  // the rotate handle, on a stalk from the front
+  const [ex, ey] = toScreen(view, ...place(pose, frontOf(robot), 0));
+  const [hx, hy] = toScreen(view, ...handlePoint([...pose], robot, HANDLE_GAP_PX / view.scale));
   ctx.beginPath();
   ctx.moveTo(ex, ey);
   ctx.lineTo(hx, hy);
@@ -505,25 +521,19 @@ function drawGhostRun(ctx: CanvasRenderingContext2D, view: View, colors: Palette
   ctx.setLineDash([...ghost.dash]);
   drawTrail(ctx, view, ghost.path, colors.ink2);
   ctx.setLineDash([]);
-  const corners = footprint(ghost.robot, ghost.pose, view);
-  ctx.beginPath();
-  corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-  ctx.closePath();
+  traceBody(ctx, view, ghost.robot, ghost.pose);
   ctx.fillStyle = withAlpha(colors.ink2, 0.08);
   ctx.fill();
   ctx.strokeStyle = colors.ink2;
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(corners[0][0], corners[0][1]);
-  ctx.lineTo(corners[1][0], corners[1][1]);
-  ctx.lineWidth = 3.5;
-  ctx.stroke();
+  markFront(ctx, view, ghost.robot, ghost.pose, 3.5);
 }
 
 /** A compared run's name, above its robot (drawn last, so nothing covers it). */
 function drawLabel(ctx: CanvasRenderingContext2D, view: View, colors: Palette, ghost: Ghost): void {
-  const corners = footprint(ghost.robot, ghost.pose, view);
+  const outline = outlineOf(ghost.robot);
+  const corners = outline ? outline.flat().map(([x, y]) => toScreen(view, ...place(ghost.pose, x, y))) : footprint(ghost.robot, ghost.pose, view);
   const x = corners.reduce((sum, [cx]) => sum + cx, 0) / corners.length;
   const top = Math.min(...corners.map(([, cy]) => cy));
   ctx.font = "12px system-ui, -apple-system, 'Segoe UI', sans-serif";
@@ -549,17 +559,14 @@ function drawStamp(ctx: CanvasRenderingContext2D, view: View, colors: Palette, t
 }
 
 function drawGhost(ctx: CanvasRenderingContext2D, view: View, colors: Palette, robot: RobotScene, pose: readonly [number, number, number]): void {
-  const corners = footprint(robot, pose, view);
-  ctx.beginPath();
-  corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-  ctx.closePath();
+  traceBody(ctx, view, robot, pose);
   ctx.setLineDash([5, 4]);
   ctx.strokeStyle = colors.estimate;
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.setLineDash([]);
   const [cx, cy] = toScreen(view, pose[0], pose[1]);
-  const [fx, fy] = toScreen(view, ...place(pose, robot.footprint[0] / 2, 0));
+  const [fx, fy] = toScreen(view, ...place(pose, frontOf(robot), 0));
   ctx.beginPath();
   ctx.moveTo(cx, cy);
   ctx.lineTo(fx, fy);
@@ -579,13 +586,13 @@ function dot(ctx: CanvasRenderingContext2D, view: View, x: number, y: number, ra
   }
 }
 
-function arrow(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
+function arrow(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, head = 6): void {
   const angle = Math.atan2(y1 - y0, x1 - x0);
   ctx.beginPath();
   ctx.moveTo(x0, y0);
   ctx.lineTo(x1, y1);
-  ctx.lineTo(x1 - 6 * Math.cos(angle - 0.45), y1 - 6 * Math.sin(angle - 0.45));
+  ctx.lineTo(x1 - head * Math.cos(angle - 0.45), y1 - head * Math.sin(angle - 0.45));
   ctx.moveTo(x1, y1);
-  ctx.lineTo(x1 - 6 * Math.cos(angle + 0.45), y1 - 6 * Math.sin(angle + 0.45));
+  ctx.lineTo(x1 - head * Math.cos(angle + 0.45), y1 - head * Math.sin(angle + 0.45));
   ctx.stroke();
 }
