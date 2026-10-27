@@ -89,6 +89,19 @@ def test_match_mode_cuts_autonomous_at_15_seconds():
     assert sim.phase == "done"
 
 
+def test_a_match_without_autonomous_idles_through_it():
+    """As with PROS's empty default: the 15 s pass with the robot still, then the driver."""
+    driver = []
+
+    def opcontrol(bot):
+        driver.append(bot.millis())
+        yield delay(50)
+
+    sim = run_program("match", opcontrol=opcontrol)
+    assert sim.phase == "done" and driver and driver[0] >= 15000
+    assert sim.robot.pose == pytest.approx((0.0, 0.0, 0.0), abs=1e-6)
+
+
 def test_program_errors_propagate():
     def autonomous(bot):
         yield
@@ -172,5 +185,8 @@ def test_cli_run_headless(tmp_path, capsys):
 
 def test_cli_rejects_bad_inputs(tmp_path, capsys):
     assert main(["plot", str(tmp_path / "nope.csv"), "--out", str(tmp_path / "x.png")]) == 1
+    # autonomous and skills run autonomous(): without one, say so (not a traceback)
+    assert main(["run", str(EXAMPLE_ROBOT), "--mode", "skills", "--headless"]) == 1
+    assert "skills mode runs the program's autonomous()" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         main(["run", str(EXAMPLE_ROBOT), "--start", "1,2", "--headless"])

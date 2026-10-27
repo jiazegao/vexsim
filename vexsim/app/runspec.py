@@ -207,7 +207,67 @@ def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared
             raise RunError(f"program not found: {named.program}")
     if spec.input and not Path(spec.input).is_file():
         raise RunError(f"input not found: {named.input}")
+    for where in start_blocked(robot.config, field_config, spec.start):
+        message = (
+            "the robot starts partly outside the walls; move its start in"
+            if where == WALLS
+            else f"the robot starts on top of {where}; move its start"
+        )
+        prepared.warnings.append(ConfigIssue("warning", "start", message))
     return prepared
+
+
+WALLS = "the walls"
+
+
+def start_blocked(
+    config: RobotConfig, field: FieldConfig | None, start: tuple[float, float, float]
+) -> list[str]:
+    """What the robot would start on top of: solid field elements its footprint overlaps,
+    and the walls if it sticks out past them. The physics can't untangle that well."""
+    import math
+
+    from vexsim.physics.arena import Arena
+    from vexsim.physics.params import resolve_params
+    from vexsim.units import in_to_m
+
+    field = field or FieldConfig()
+    x, y, heading = in_to_m(start[0]), in_to_m(start[1]), math.radians(start[2])
+    length, width = (in_to_m(v) / 2 for v in config.body.footprint_in)
+    c, s = math.cos(heading), math.sin(heading)
+    box = [(length, width), (-length, width), (-length, -width), (length, -width)]
+    corners = [(x + c * u - s * v, y + s * u + c * v) for u, v in box]
+    blocked = []
+    room_x, room_y = (in_to_m(v) / 2 for v in field.size_in)
+    if any(abs(px) > room_x + 1e-4 or abs(py) > room_y + 1e-4 for px, py in corners):
+        blocked.append(WALLS)
+    if field.elements:
+        for shape in Arena.of(field, resolve_params(config.overrides).field).obstacles:
+            if shape.solid and _overlaps(corners, (x, y, heading, length, width), shape):
+                blocked.append(shape.name)
+    return blocked
+
+
+def _overlaps(corners, box, shape, tolerance: float = 1e-4) -> bool:
+    """Whether a rectangle (its corners, and center, heading, half sizes) overlaps a field
+    obstacle by more than ``tolerance`` meters (touching isn't overlapping)."""
+    import math
+
+    x, y, heading, half_x, half_y = box
+    if shape.circle:  # the circle's center, in the box's frame, to the box's nearest point
+        c, s = math.cos(heading), math.sin(heading)
+        dx, dy = shape.center[0] - x, shape.center[1] - y
+        u, v = c * dx + s * dy, -s * dx + c * dy
+        nearest = math.hypot(u - max(-half_x, min(half_x, u)), v - max(-half_y, min(half_y, v)))
+        return nearest < shape.half[0] - tolerance
+    other = [tuple(p) for p in shape.corners()]
+    for angle in (heading, heading + math.pi / 2, shape.heading, shape.heading + math.pi / 2):
+        axis = (math.cos(angle), math.sin(angle))  # separating axis test
+        a = [px * axis[0] + py * axis[1] for px, py in corners]
+        b = [px * axis[0] + py * axis[1] for px, py in other]
+        if min(max(a), max(b)) - max(min(a), min(b)) <= tolerance:
+            return False
+    return True
 
 
 def build(prepared: Prepared, log: Callable[[str], None] | None = print) -> Path:
@@ -251,6 +311,12 @@ def program_factory(
     os.environ.update(spec.env)  # a Python program runs in this process
     module = load_program(prepared.program_file) if prepared.program_file else None
     mode = spec.mode or ("autonomous" if hasattr(module, "autonomous") else "driver")
+    if mode in ("autonomous", "skills") and not hasattr(module, "autonomous"):
+        what = f"{prepared.program_file.name} has none" if module else "there's no program"
+        raise RunError(
+            f"{mode} mode runs the program's autonomous(), and {what}: "
+            "pick a program that has one, or driver or match mode"
+        )
     return (lambda: module), mode
 
 

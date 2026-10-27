@@ -77,7 +77,12 @@ export function Controls(props: {
             <span className="time" data-testid="sim-time" data-t={frame.t}>
               {formatTime(frame.t)}
             </span>
-            <span className="muted">{frame.phase}</span>
+            <span className="muted" data-testid="phase">
+              {frame.phase}
+              {frame.period_left !== null && (
+                <span title="Time left in this period, as field control counts it"> · {clock(frame.period_left)} left</span>
+              )}
+            </span>
             <span className="muted" title="Simulated seconds per real second, lately">
               {state === "running" ? `${frame.rate.toFixed(1)}× real time` : ""}
             </span>
@@ -86,6 +91,12 @@ export function Controls(props: {
       </div>
     </div>
   );
+}
+
+/** A match clock: 1:05, 0:09. */
+function clock(seconds: number): string {
+  const whole = Math.ceil(Math.max(0, seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
 /** This run as a `vexsim run` command, for a terminal or a script. */

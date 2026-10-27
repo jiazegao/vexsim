@@ -4,6 +4,9 @@
 import type {
   AppInfo,
   JobInfo,
+  Preview,
+  RunConfiguration,
+  RunConfigurations,
   RunProblem,
   RunSpec,
   SessionInfo,
@@ -56,6 +59,23 @@ export const api = {
   sessions: () => request<SessionInfo[]>("/api/sessions"),
   stopSession: (id: string) => request<void>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
   jobs: () => request<JobInfo[]>("/api/jobs"),
+  configurations: () => request<RunConfigurations>("/api/configurations"),
+  saveConfigurations: (configurations: RunConfiguration[]) =>
+    request<RunConfigurations>("/api/configurations", { method: "PUT", body: JSON.stringify({ configurations }) }),
+
+  /** The robot and field before a run; a RunProblem if their configs don't load. */
+  async preview(robot: string, field: string | null): Promise<{ preview: Preview } | { problem: RunProblem }> {
+    const response = await fetch("/api/preview", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ robot, field }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 422 && typeof body.error === "string") return { problem: body as RunProblem };
+    if (!response.ok) throw new ApiError(response.status, describe(body.detail ?? response.statusText));
+    return { preview: body as Preview };
+  },
 
   /** Start a run (replacing any other); a RunProblem if it can't start. */
   async startSession(spec: RunSpec): Promise<StartResult> {

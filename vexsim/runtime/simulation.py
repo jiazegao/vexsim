@@ -147,6 +147,13 @@ def default_initialize(bot: Bot) -> Iterator[Any]:
         yield delay(10)
 
 
+def default_autonomous(bot: Bot) -> Iterator[Any]:
+    """No autonomous(): the robot sits still until field control ends the period, as with
+    PROS's empty default (a match's 15 s go by)."""
+    while True:
+        yield delay(10)
+
+
 def default_opcontrol(bot: Bot) -> Iterator[Any]:
     """Arcade drive: left stick forward/back, right stick turns. Drivetrains that can
     strafe also strafe with the left stick's sideways axis."""
@@ -160,6 +167,13 @@ def default_opcontrol(bot: Bot) -> Iterator[Any]:
         else:
             bot.drive.move(forward, 0.0, turn)
         yield delay(10)
+
+
+DEFAULTS = {
+    "initialize": default_initialize,
+    "autonomous": default_autonomous,
+    "opcontrol": default_opcontrol,
+}
 
 
 class Simulation:
@@ -253,6 +267,13 @@ class Simulation:
     def finished(self) -> bool:
         return not self._phases and self._current is None and self.phase != "disabled"
 
+    @property
+    def period_time_left(self) -> float | None:
+        """Seconds left in the current period when field control limits it (a match's
+        15 s autonomous and 1:45 driver, skills' 60 s), else None."""
+        end = getattr(self._current, "end_us", None)
+        return None if end is None else max(0.0, (end - self.world.clock.us) / 1e6)
+
     def run_for(self, seconds: float) -> None:
         self.world.run_for(seconds)
 
@@ -317,7 +338,7 @@ class Simulation:
                 self._current = self.program.start_phase(name, limit, now)
             else:
                 fn = getattr(self.program, name, None) if self.program else None
-                fn = fn or {"initialize": default_initialize, "opcontrol": default_opcontrol}[name]
+                fn = fn or DEFAULTS[name]
                 self._current = Coroutine(name, as_generator(fn, self.bot), now, limit)
         self._current.tick(now)
         if self._current.finished:

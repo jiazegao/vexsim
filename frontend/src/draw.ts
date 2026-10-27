@@ -3,7 +3,8 @@
 
 import type { Palette } from "./palette";
 import { mix, withAlpha } from "./palette";
-import type { FrameMessage, OverlayMessage, SceneMessage } from "./protocol";
+import type { FieldScene, FrameMessage, OverlayMessage, RobotScene } from "./protocol";
+import { handlePoint } from "./startpose";
 import type { Trail } from "./trail";
 import type { View } from "./view";
 import { toScreen } from "./view";
@@ -12,16 +13,38 @@ export interface Layers {
   trails: boolean;
   estimate: boolean;
   beams: boolean;
+  forces: boolean; // each wheel's sideways force
+}
+
+/** A robot and a field: a run's scene, or a preview before any run. */
+export interface Shape {
+  robot: RobotScene;
+  field: FieldScene;
+}
+
+/** The robot where it will start, which can be dragged: drawn as the robot itself when
+ * no run is shown, or as a dashed outline over a finished run. */
+export interface StartMarker {
+  pose: [number, number, number];
+  robot: RobotScene;
+  outline: boolean;
+  grabbed: "move" | "rotate" | null;
+  blocked: string[]; // what it would start on top of (drawn red)
 }
 
 export interface Picture {
-  scene: SceneMessage | null;
+  scene: Shape | null;
   frame: FrameMessage | null;
   overlay: OverlayMessage | null;
   truth: Trail;
   estimate: Trail;
+  pieces?: [number, number][]; // with no frame: where the field config puts the pieces
+  start?: StartMarker | null;
 }
 
+export const HANDLE_GAP_PX = 18; // from the robot's front edge to its rotate handle
+export const HANDLE_RADIUS_PX = 7;
+const NEWTONS_TO_IN = 0.6; // side-force ticks: inches per newton, as the pygame viewer
 const DEG = Math.PI / 180;
 const MM_PER_IN = 25.4;
 const NO_READING_IN = 10; // how long a beam that sees nothing is drawn
@@ -35,18 +58,21 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
   ctx.fillRect(0, 0, view.width, view.height);
   const size = scene?.field.size ?? DEFAULT_FIELD;
   drawField(ctx, view, colors, size);
-  if (scene) drawElements(ctx, view, colors, scene, frame);
+  if (scene) drawElements(ctx, view, colors, scene, frame?.pieces ?? picture.pieces ?? []);
   if (layers.trails) {
     drawTrail(ctx, view, picture.truth, colors.truth);
     if (layers.estimate) drawTrail(ctx, view, picture.estimate, colors.estimate);
   }
   if (picture.overlay) drawOverlay(ctx, view, colors, picture.overlay);
+  const start = picture.start;
+  if (start && !start.outline) drawRobot(ctx, view, colors, start.robot, start.pose, mounted(start.robot, start.pose), false);
   if (scene && frame) {
-    if (layers.beams) drawBeams(ctx, view, colors, scene, frame);
-    drawRobot(ctx, view, colors, scene, frame);
-    if (layers.estimate && frame.estimate) drawGhost(ctx, view, colors, scene, frame.estimate);
+    if (layers.beams) drawBeams(ctx, view, colors, scene.robot, frame);
+    drawRobot(ctx, view, colors, scene.robot, frame.pose, frame.wheels, layers.forces);
+    if (layers.estimate && frame.estimate) drawGhost(ctx, view, colors, scene.robot, frame.estimate);
     for (const [x, y] of frame.contacts) dot(ctx, view, x, y, 4, colors.slip);
   }
+  if (start) drawStart(ctx, view, colors, start);
   ctx.restore();
 }
 
@@ -85,7 +111,7 @@ function drawField(ctx: CanvasRenderingContext2D, view: View, colors: Palette, [
   ctx.fillText("y", ox - 3, oy - length - 5);
 }
 
-function drawElements(ctx: CanvasRenderingContext2D, view: View, colors: Palette, scene: SceneMessage, frame: FrameMessage | null): void {
+function drawElements(ctx: CanvasRenderingContext2D, view: View, colors: Palette, scene: Shape, pieces: [number, number][]): void {
   for (const element of scene.field.obstacles) {
     const color = element.color ?? colors.obstacle;
     ctx.beginPath();
@@ -110,12 +136,10 @@ function drawElements(ctx: CanvasRenderingContext2D, view: View, colors: Palette
       ctx.setLineDash([]);
     }
   }
-  if (frame) {
-    frame.pieces.forEach(([x, y], i) => {
-      const style = scene.field.pieces[i];
-      dot(ctx, view, x, y, (style?.radius ?? 1.5) * view.scale, style?.color ?? colors.piece, colors.surface);
-    });
-  }
+  pieces.forEach(([x, y], i) => {
+    const style = scene.field.pieces[i];
+    dot(ctx, view, x, y, (style?.radius ?? 1.5) * view.scale, style?.color ?? colors.piece, colors.surface);
+  });
 }
 
 function drawTrail(ctx: CanvasRenderingContext2D, view: View, trail: Trail, color: string): void {
@@ -170,8 +194,8 @@ function place(pose: readonly [number, number, number], x: number, y: number): [
   return [pose[0] + c * x - s * y, pose[1] + s * x + c * y];
 }
 
-function drawBeams(ctx: CanvasRenderingContext2D, view: View, colors: Palette, scene: SceneMessage, frame: FrameMessage): void {
-  for (const sensor of scene.robot.sensors) {
+function drawBeams(ctx: CanvasRenderingContext2D, view: View, colors: Palette, robot: RobotScene, frame: FrameMessage): void {
+  for (const sensor of robot.sensors) {
     if (sensor.kind !== "distance") continue;
     const reading = frame.distance[String(sensor.port)];
     const [ox, oy] = place(frame.pose, sensor.x, sensor.y);
@@ -200,8 +224,8 @@ function drawBeams(ctx: CanvasRenderingContext2D, view: View, colors: Palette, s
   }
 }
 
-function footprint(scene: SceneMessage, pose: readonly [number, number, number], view: View): [number, number][] {
-  const [length, width] = scene.robot.footprint;
+function footprint(robot: RobotScene, pose: readonly [number, number, number], view: View): [number, number][] {
+  const [length, width] = robot.footprint;
   const corners: [number, number][] = [
     [length / 2, width / 2],
     [length / 2, -width / 2],
@@ -214,9 +238,23 @@ function footprint(scene: SceneMessage, pose: readonly [number, number, number],
   });
 }
 
-function drawRobot(ctx: CanvasRenderingContext2D, view: View, colors: Palette, scene: SceneMessage, frame: FrameMessage): void {
-  const pose = frame.pose;
-  const corners = footprint(scene, pose, view);
+type WheelState = FrameMessage["wheels"][number];
+
+/** The wheels of a robot standing at `pose`: where they're mounted, no slip, no force. */
+function mounted(robot: RobotScene, pose: readonly [number, number, number]): WheelState[] {
+  return robot.wheels.map((w) => [...place(pose, w.x, w.y), pose[2] + w.heading, 0, 0]);
+}
+
+function drawRobot(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  colors: Palette,
+  robot: RobotScene,
+  pose: readonly [number, number, number],
+  wheels: WheelState[],
+  forces: boolean,
+): void {
+  const corners = footprint(robot, pose, view);
   ctx.beginPath();
   corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
   ctx.closePath();
@@ -233,8 +271,8 @@ function drawRobot(ctx: CanvasRenderingContext2D, view: View, colors: Palette, s
   ctx.lineWidth = 4;
   ctx.stroke();
   // wheels, colored by how much of their grip they use
-  frame.wheels.forEach(([x, y, heading, slip], i) => {
-    const mount = scene.robot.wheels[i];
+  wheels.forEach(([x, y, heading, slip, side], i) => {
+    const mount = robot.wheels[i];
     const length = mount ? mount.diameter : 3.25;
     const c = Math.cos(heading * DEG);
     const s = Math.sin(heading * DEG);
@@ -253,10 +291,37 @@ function drawRobot(ctx: CanvasRenderingContext2D, view: View, colors: Palette, s
     ctx.closePath();
     ctx.fillStyle = mix(colors.wheel, colors.slip, slip);
     ctx.fill();
+    const roller = mount?.roller ?? 0;
+    if (roller) {
+      // mecanum: a stroke along the ground rollers' axis
+      const g = (heading + roller) * DEG;
+      const q = 0.35 * length;
+      const [ax, ay] = toScreen(view, x - q * Math.cos(g), y - q * Math.sin(g));
+      const [bx, by] = toScreen(view, x + q * Math.cos(g), y + q * Math.sin(g));
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.strokeStyle = colors.surface;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    if (forces && Math.abs(side) > 0.2) {
+      // the sideways force on the wheel, across its rolling direction
+      const n = (heading + roller + 90) * DEG;
+      const reach = side * NEWTONS_TO_IN;
+      const [sx, sy] = toScreen(view, x, y);
+      const [ex, ey] = toScreen(view, x + reach * Math.cos(n), y + reach * Math.sin(n));
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.strokeStyle = colors.target;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
   });
   // heading: center to front
   const [cx, cy] = toScreen(view, pose[0], pose[1]);
-  const [fx, fy] = toScreen(view, ...place(pose, scene.robot.footprint[0] / 2, 0));
+  const [fx, fy] = toScreen(view, ...place(pose, robot.footprint[0] / 2, 0));
   ctx.beginPath();
   ctx.moveTo(cx, cy);
   ctx.lineTo(fx, fy);
@@ -266,8 +331,53 @@ function drawRobot(ctx: CanvasRenderingContext2D, view: View, colors: Palette, s
   dot(ctx, view, pose[0], pose[1], 3, colors.ink);
 }
 
-function drawGhost(ctx: CanvasRenderingContext2D, view: View, colors: Palette, scene: SceneMessage, pose: readonly [number, number, number]): void {
-  const corners = footprint(scene, pose, view);
+function drawStart(ctx: CanvasRenderingContext2D, view: View, colors: Palette, start: StartMarker): void {
+  const { robot, pose } = start;
+  if (start.blocked.length) {
+    const corners = footprint(robot, pose, view);
+    ctx.beginPath();
+    corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.closePath();
+    ctx.fillStyle = withAlpha(colors.slip, 0.18);
+    ctx.fill();
+    ctx.strokeStyle = colors.slip;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  } else if (start.outline) {
+    const corners = footprint(robot, pose, view);
+    ctx.beginPath();
+    corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.closePath();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = colors.ink2;
+    ctx.lineWidth = start.grabbed === "move" ? 2.5 : 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(corners[0][0], corners[0][1]);
+    ctx.lineTo(corners[1][0], corners[1][1]);
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+  // the rotate handle, on a stalk from the front edge
+  const [ex, ey] = toScreen(view, ...place(pose, robot.footprint[0] / 2, 0));
+  const [hx, hy] = toScreen(view, ...handlePoint([...pose], robot.footprint, HANDLE_GAP_PX / view.scale));
+  ctx.beginPath();
+  ctx.moveTo(ex, ey);
+  ctx.lineTo(hx, hy);
+  ctx.strokeStyle = colors.ink2;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(hx, hy, HANDLE_RADIUS_PX, 0, 2 * Math.PI);
+  ctx.fillStyle = start.grabbed === "rotate" ? colors.ink2 : colors.surface;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawGhost(ctx: CanvasRenderingContext2D, view: View, colors: Palette, robot: RobotScene, pose: readonly [number, number, number]): void {
+  const corners = footprint(robot, pose, view);
   ctx.beginPath();
   corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
   ctx.closePath();
@@ -277,7 +387,7 @@ function drawGhost(ctx: CanvasRenderingContext2D, view: View, colors: Palette, s
   ctx.stroke();
   ctx.setLineDash([]);
   const [cx, cy] = toScreen(view, pose[0], pose[1]);
-  const [fx, fy] = toScreen(view, ...place(pose, scene.robot.footprint[0] / 2, 0));
+  const [fx, fy] = toScreen(view, ...place(pose, robot.footprint[0] / 2, 0));
   ctx.beginPath();
   ctx.moveTo(cx, cy);
   ctx.lineTo(fx, fy);

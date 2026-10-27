@@ -89,6 +89,43 @@ export interface RunProblem {
   issues: Issue[];
 }
 
+export interface PreviewRequest {
+  robot: string;
+  field?: string | null;
+}
+
+/** A robot and a field before any run, to show them and drag the robot to its start. */
+export interface Preview {
+  robot: RobotScene;
+  field: FieldScene;
+  pieces: [number, number][];
+}
+
+/** A named run, kept in the workspace's .vexsim/launch.yaml. */
+export interface RunConfiguration {
+  robot: string;
+  program?: string | null;
+  field?: string | null;
+  mode?: "autonomous" | "driver" | "match" | "skills" | null;
+  start?: [number, number, number];
+  seed?: number;
+  noise?: "ideal" | "default" | "harsh" | null;
+  input?: string | null;
+  env?: Record<string, string>;
+  busy_timeout?: number;
+  name: string;
+}
+
+export interface RunConfigurations {
+  file: string;
+  configurations: RunConfiguration[];
+  error?: string | null;
+}
+
+export interface SaveConfigurations {
+  configurations: RunConfiguration[];
+}
+
 export interface WheelMount {
   name: string;
   x: number;
@@ -96,6 +133,7 @@ export interface WheelMount {
   heading: number;
   diameter: number;
   type: string;
+  roller: number;
 }
 
 export interface SensorMount {
@@ -106,15 +144,22 @@ export interface SensorMount {
   heading: number;
 }
 
+export interface MechanismMount {
+  name: string;
+  range: [number, number] | null;
+}
+
 export interface RobotScene {
   name: string;
   footprint: [number, number];
   wheels: WheelMount[];
   sensors: SensorMount[];
+  mechanisms: MechanismMount[];
 }
 
 export interface CircleObstacle {
   shape: "circle";
+  name: string;
   x: number;
   y: number;
   radius: number;
@@ -124,6 +169,7 @@ export interface CircleObstacle {
 
 export interface PolygonObstacle {
   shape: "polygon";
+  name: string;
   points: [number, number][];
   color: string | null;
   solid: boolean;
@@ -165,6 +211,11 @@ export interface SceneMessage {
   command: string;
 }
 
+export interface ControllerState {
+  analog: Record<string, number>;
+  digital: string[];
+}
+
 /** Where everything is, about 60 times a second while running. */
 export interface FrameMessage {
   type: "frame";
@@ -177,13 +228,18 @@ export interface FrameMessage {
   estimate: [number, number, number] | null;
   speed_in_s: number;
   battery: [number, number];
-  wheels: [number, number, number, number][];
+  wheels: [number, number, number, number, number][];
   distance: Record<string, number | null>;
   pieces: [number, number][];
   contacts: [number, number][];
   motors: [number, number, number, boolean][];
   lcd: string[];
   controller_screen: string[];
+  controller: ControllerState;
+  imu: Record<string, [number, number] | null>;
+  gps: Record<string, [number, number, number, number, boolean] | null>;
+  mechanisms: number[];
+  period_left: number | null;
 }
 
 /** A Python program's chassis motion: its path and target (when they change). */

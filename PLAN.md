@@ -1,6 +1,6 @@
 # VEX V5 Mechanics Simulator — Plan
 
-**Status:** v1.2 (2026-10-27). Phases 1-10 complete; phase 11, a browser UI, in progress ([section 13](#13-browser-ui-phase-11)): 11.1 is done.
+**Status:** v1.2 (2026-10-27). Phases 1-10 complete; phase 11, a browser UI, in progress ([section 13](#13-browser-ui-phase-11)): 11.1 and 11.2 are done.
 
 **v1.1:** Phase 7 runs robot code in a separate host process over pipes instead of a DLL loaded with `ctypes`, and compiles with g++ directly instead of CMake and Ninja. Sections 0, 2, 3 and 7 are updated.
 
@@ -312,7 +312,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 10 | **[done]** Calibration from real robot logs; game elements; GPS sensor | Fitted parameters reproduce a recorded run within tolerance |
 | port | **[done]** First real team port (1239E 2026-27): mechanisms, element and beam heights, an LVGL stand-in, edited LemLib headers, `--env` | All nine routines run; RCL and MCL evaluated against the truth ([docs/porting_1239e.md](docs/porting_1239e.md)) |
 | 11.1 | **[done]** UI foundations: service layer (run specs, sessions, jobs, workspace) with the CLI on it; server and protocol; app shell with its own field renderer; `vexsim ui`; frontend build in CI | `vexsim ui` lists a workspace and runs a simulation; all existing tests pass |
-| 11.2 | Simulate view: parity with `vexsim run` and the pygame viewer | 1239E Left 40 runs, and `full_omni_6m` drives by keyboard and gamepad, from the UI; drag-to-start works; build errors are clickable |
+| 11.2 | **[done]** Simulate view: parity with `vexsim run` and the pygame viewer | 1239E Left 40 runs, and `full_omni_6m` drives by keyboard and gamepad, from the UI; drag-to-start works; build errors are clickable |
 | 11.3 | Timeline, plots, run history, replay, compare, export | Scrub a finished run, reopen an old one, overlay two |
 | 11.4 | Robot and field editors | Drag a sensor in `1239e_2026-27.yaml`: the number changes and its comments survive |
 | 11.5 | Bench, Calibrate, Analyze, Sweeps pages | Every remaining command has a page; the 1239E evaluation runs as a sweep |
@@ -345,7 +345,9 @@ browser (React + TypeScript)      <-- HTTP -->   vexsim ui server (FastAPI)
 - **Service layer (`vexsim/app/`), shared by the CLI and the UI.** `RunSpec` holds everything `vexsim run` takes and converts to and from its arguments, so the UI can copy a run as a command. `Session` runs one simulation; `Jobs` runs long tasks (builds first) with progress and cancel; `Workspace` finds the robots, fields, programs, PROS projects, scenarios, inputs and logs in a folder.
 - **Each live simulation runs in its own process.** A hung program or a crashed C++ host can't freeze the UI, and environment variables don't leak between runs. The worker paces simulated time (real time x speed) and sends about 60 frames a second.
 - **Protocol:** JSON over a WebSocket per session, plus REST for the rest. Message types are pydantic models in `vexsim/ui/protocol.py`; `frontend/src/protocol.ts` is generated from them, and a test fails if it is stale.
-- **Builds** of a PROS project run as jobs, one at a time per project, and a session waits for its project's build.
+- **Builds** of a PROS project run as jobs, one at a time per project, and a session waits for its project's build. Compiler errors and Python tracebacks become `file:line` links that open in VS Code (`vscode://file/...`).
+- **Saved runs** are named run specs in the workspace's `.vexsim/launch.yaml` (start pose and environment included), so a team commits them with its code; this repository's cover its examples and every 1239E routine.
+- **Driving:** the page sends the virtual controller (keyboard as in the pygame viewer, the browser's Gamepad API, an on-screen controller) to the run's worker whenever it changes; frames carry what the robot's controller reads.
 - **Safety:** the server can build and run code, so it binds to 127.0.0.1, requires a random token (from the URL `vexsim ui` opens, then kept in a cookie), checks the Host and Origin headers, and serves and writes only files inside the workspace.
 - **Packaging:** `pip install -e ".[ui]"`. The built app is committed under `vexsim/ui/static/`, so users need no Node.js; CI rebuilds it and fails if the committed copy is stale. Every asset is local, so the UI works offline.
 - **Tests:** pytest for the services and the server (including WebSockets), Vitest for the frontend's logic, and Playwright end to end (Ubuntu CI).

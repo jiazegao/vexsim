@@ -14,7 +14,7 @@ const INFO: SessionInfo = {
 
 const SCENE: SceneMessage = {
   type: "scene",
-  robot: { name: "bot", footprint: [18, 18], wheels: [], sensors: [] },
+  robot: { name: "bot", footprint: [18, 18], wheels: [], sensors: [], mechanisms: [] },
   field: { name: "empty", size: [144, 144], obstacles: [], pieces: [] },
   mode: "autonomous",
   start: [0, 0, 0],
@@ -42,6 +42,11 @@ function frame(t: number, x: number, estimate: [number, number, number] | null =
     motors: [],
     lcd: [],
     controller_screen: [],
+    controller: { analog: { LEFT_X: 0, LEFT_Y: 0, RIGHT_X: 0, RIGHT_Y: 0 }, digital: [] },
+    imu: {},
+    gps: {},
+    mechanisms: [],
+    period_left: null,
   };
 }
 
@@ -106,6 +111,26 @@ describe("a session store", () => {
       ["error", "Traceback:"],
       ["error", "  line 1"],
     ]);
+  });
+
+  it("finds where a build failed, and where the program failed", () => {
+    const store = new SessionStore("s1", "/home/me/bot");
+    store.apply({ type: "build", lines: ["compiling 2 of 2 source file(s)", "/home/me/bot/src/a.cpp:3:1: warning: unused 'x'"] });
+    store.apply({
+      type: "error",
+      message: "compile errors:\n/home/me/bot/src/main.cpp:12:5: error: 'x' was not declared in this scope",
+      issues: [],
+      traceback: null,
+    });
+    expect(store.problems.map((p) => `${p.severity} ${p.file}:${p.line}`)).toEqual([
+      "warning /home/me/bot/src/a.cpp:3",
+      "error /home/me/bot/src/main.cpp:12",
+    ]);
+    const traceback = 'Traceback (most recent call last):\n  File "/home/me/bot/auton.py", line 4, in autonomous\n    spin()\nNameError: name \'spin\' is not defined\n';
+    store.apply({ type: "error", message: "NameError: name 'spin' is not defined", issues: [], traceback });
+    expect(store.problems.at(-1)).toMatchObject({ file: "/home/me/bot/auton.py", line: 4, message: "NameError: name 'spin' is not defined" });
+    store.apply(SCENE); // restarted: the program's problem goes, the build's stay
+    expect(store.problems).toHaveLength(2);
   });
 
   it("keeps at most MAX_LINES lines, the newest", () => {

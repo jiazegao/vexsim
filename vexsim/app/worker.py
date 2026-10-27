@@ -84,6 +84,7 @@ class Worker:
         self.stopping = False
         self.console_sent = 0
         self.overlay_key: Any = None
+        self.warnings: list[str] = []  # about the start, for the console
         self.debt = 0.0  # simulated seconds owed to real time
         self.rate_samples: deque[tuple[float, float]] = deque(maxlen=90)
 
@@ -149,6 +150,9 @@ class Worker:
             self.error(f"{type(exc).__name__}: {exc}", trace=traceback.format_exc())
             return False
         self.command_line = spec.command_line()
+        self.warnings = [
+            f"warning: {w.message}" for w in prepared.warnings if w.location == "start"
+        ]
         return True
 
     def create(self) -> bool:
@@ -169,6 +173,7 @@ class Worker:
         self.send(
             scene_of(self.sim, mode=self.mode, spec=self.spec_data, command=self.command_line)
         )
+        self.console(self.warnings)
         self.status("running")
         self.send_frame()
         return True

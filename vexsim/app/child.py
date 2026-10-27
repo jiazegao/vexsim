@@ -27,6 +27,7 @@ from pathlib import Path
 
 ADDRESS_PREFIX = "VEXSIM-CHILD-ADDRESS "
 AUTHKEY_ENV = "VEXSIM_CHILD_AUTHKEY"
+START_TIMEOUT_S = 60.0  # a fresh Python on a busy Windows machine can take a while
 
 
 class ChildError(RuntimeError):
@@ -63,18 +64,27 @@ class ChildProcess:
             errors="replace",
             bufsize=1,
         )
-        assert self.process.stdout is not None
+        stdout = self.process.stdout
+        assert stdout is not None
         early: list[str] = []
-        address = None
-        for line in self.process.stdout:
-            if line.startswith(ADDRESS_PREFIX):
-                address = line[len(ADDRESS_PREFIX) :].strip()
-                break
-            early.append(line.rstrip("\r\n"))
-        if address is None:
+        found: list[str] = []
+
+        def read_address() -> None:
+            for line in stdout:
+                if line.startswith(ADDRESS_PREFIX):
+                    found.append(line[len(ADDRESS_PREFIX) :].strip())
+                    return
+                early.append(line.rstrip("\r\n"))
+
+        starting = threading.Thread(target=read_address, daemon=True)
+        starting.start()
+        starting.join(START_TIMEOUT_S)  # it may die, or hang, before it says where it is
+        if not found:
+            self.process.kill()
             self.process.wait()
             output = "\n".join(early[-20:])
             raise ChildError(f"the {function} process didn't start:\n{output}".rstrip())
+        address = found[0]
         self._on_output = on_output
         for line in early:
             self._output(line)
@@ -160,12 +170,27 @@ def main() -> None:
         print(ADDRESS_PREFIX + str(listener.address), flush=True)
         conn = listener.accept()
     threading.Thread(target=_exit_when_orphaned, daemon=True).start()
-    function, kwargs = conn.recv()
-    module, name = function.split(":")
+    code = 0
     try:
+        function, kwargs = conn.recv()
+        module, name = function.split(":")
         getattr(importlib.import_module(module), name)(conn, **kwargs)
+    except BaseException:
+        import traceback
+
+        traceback.print_exc()
+        code = 1
     finally:
         conn.close()
+    # End now, without the interpreter's shutdown: on Windows that can wait forever on
+    # the thread above, which is blocked reading stdin.
+    for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
+        try:
+            if stream is not None:
+                stream.flush()
+        except (OSError, ValueError):
+            pass
+    os._exit(code)
 
 
 if __name__ == "__main__":

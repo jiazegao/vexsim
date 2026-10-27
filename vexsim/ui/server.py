@@ -41,15 +41,27 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from vexsim import __version__
+from vexsim.app.frames import preview_of
 from vexsim.app.jobs import JobManager
-from vexsim.app.runspec import RunError, check
+from vexsim.app.launch import (
+    LAUNCH_FILE,
+    LaunchFileError,
+    read_configurations,
+    write_configurations,
+)
+from vexsim.app.runspec import RunError, RunSpec, check
 from vexsim.app.session import Session
 from vexsim.app.workspace import Workspace
+from vexsim.config.field import FieldConfig
 from vexsim.ui.protocol import (
     AppInfo,
     ClientCommand,
     JobInfo,
+    Preview,
+    PreviewRequest,
+    RunConfigurations,
     RunProblem,
+    SaveConfigurations,
     SessionInfo,
     StartJob,
     StartSession,
@@ -162,16 +174,20 @@ class UIServer:
     def _publish(self, session: Session, seq: int, message: dict) -> None:
         self.hub.publish(f"session:{session.id}", seq, message)
 
-    def start_session(self, request: StartSession) -> Session:
-        """Check and start a run (raises RunError if it can't start)."""
-        spec = request.spec
+    def check(self, spec: RunSpec):
+        """``check`` the spec's files, which must be inside the workspace (raises RunError)."""
         for path in (spec.robot, spec.program, spec.field, spec.input):
             if path:
                 try:
                     self.workspace.path(path)
                 except ValueError as exc:
                     raise RunError(str(exc)) from None
-        prepared = check(spec, self.workspace.root)
+        return check(spec, self.workspace.root)
+
+    def start_session(self, request: StartSession) -> Session:
+        """Check and start a run (raises RunError if it can't start)."""
+        spec = request.spec
+        prepared = self.check(spec)
         if request.replace:
             for other in list(self.sessions.values()):
                 other.stop()
@@ -334,17 +350,53 @@ def create_app(
         items = [item.to_dict() for item in ws.scan()]
         return WorkspaceInfo(root=str(ws.root), name=ws.name, items=items)
 
+    def _problem(exc: RunError) -> JSONResponse:
+        issues = [
+            {"severity": i.severity, "location": i.location, "message": i.message}
+            for i in exc.issues
+        ]
+        problem = RunProblem(error=exc.message, issues=issues)
+        return JSONResponse(problem.model_dump(), status_code=422)
+
+    @app.post("/api/preview", responses={422: {"model": RunProblem}})
+    def preview(request: PreviewRequest):
+        """The robot and field before a run: the field view, and drag-to-start."""
+        try:
+            prepared = server.check(RunSpec(robot=request.robot, field=request.field))
+        except RunError as exc:
+            return _problem(exc)
+        field = prepared.field or FieldConfig()
+        return Preview.model_validate(preview_of(prepared.config, field))
+
+    @app.get("/api/configurations")
+    def configurations() -> RunConfigurations:
+        try:
+            found = read_configurations(server.workspace.root)
+        except LaunchFileError as exc:
+            return RunConfigurations(file=LAUNCH_FILE, configurations=[], error=str(exc))
+        return RunConfigurations(file=LAUNCH_FILE, configurations=found)
+
+    @app.put("/api/configurations", responses={409: {}, 422: {}})
+    def save_configurations(request: SaveConfigurations):
+        root = server.workspace.root
+        try:
+            read_configurations(root)
+        except LaunchFileError as exc:  # never overwrite a file that may hold someone's work
+            return JSONResponse({"detail": f"{exc} (fix the file first)"}, status_code=409)
+        try:
+            write_configurations(root, request.configurations)
+        except LaunchFileError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        except OSError as exc:
+            return JSONResponse({"detail": f"can't save {LAUNCH_FILE}: {exc}"}, status_code=500)
+        return RunConfigurations(file=LAUNCH_FILE, configurations=read_configurations(root))
+
     @app.post("/api/sessions", responses={422: {"model": RunProblem}})
     def start_session(request: StartSession):
         try:
             session = server.start_session(request)
         except RunError as exc:
-            issues = [
-                {"severity": i.severity, "location": i.location, "message": i.message}
-                for i in exc.issues
-            ]
-            problem = RunProblem(error=exc.message, issues=issues)
-            return JSONResponse(problem.model_dump(), status_code=422)
+            return _problem(exc)
         return SessionInfo.model_validate(session.info())
 
     @app.get("/api/sessions")

@@ -9,6 +9,7 @@ export type Mode = (typeof MODES)[number];
 export type Noise = (typeof NOISE)[number];
 
 export interface RunForm {
+  config: string; // the saved run configuration it was filled from; "" = none
   robot: string;
   field: string; // "" = an empty field
   program: string; // "" = none: the controller drives
@@ -20,10 +21,12 @@ export interface RunForm {
   noise: "" | Noise; // "" = as each sensor is configured
   input: string; // "" = none
   env: string; // KEY=VALUE, one per line
+  busy: string; // PROS projects: seconds a task may run without blocking (0 = no limit)
 }
 
 export function emptyForm(): RunForm {
   return {
+    config: "",
     robot: "",
     field: "",
     program: "",
@@ -35,6 +38,7 @@ export function emptyForm(): RunForm {
     noise: "",
     input: "",
     env: "",
+    busy: "5",
   };
 }
 
@@ -58,6 +62,8 @@ export function formToSpec(form: RunForm): { spec: RunSpec } | { error: string }
     }
     const seed = number(form.seed, "Seed");
     if (!Number.isInteger(seed)) throw new Error("Seed must be a whole number");
+    const busy = number(form.busy, "Busy timeout");
+    if (busy < 0) throw new Error("Busy timeout can't be negative");
     const spec: RunSpec = {
       robot: form.robot,
       program: form.program || null,
@@ -68,6 +74,7 @@ export function formToSpec(form: RunForm): { spec: RunSpec } | { error: string }
       noise: form.noise || null,
       input: form.input || null,
       env,
+      busy_timeout: busy,
     };
     return { spec };
   } catch (error) {
@@ -75,9 +82,10 @@ export function formToSpec(form: RunForm): { spec: RunSpec } | { error: string }
   }
 }
 
-export function specToForm(spec: RunSpec): RunForm {
+export function specToForm(spec: RunSpec, config = ""): RunForm {
   const [x, y, heading] = spec.start ?? [0, 0, 0];
   return {
+    config,
     robot: spec.robot,
     field: spec.field ?? "",
     program: spec.program ?? "",
@@ -91,7 +99,30 @@ export function specToForm(spec: RunSpec): RunForm {
     env: Object.entries(spec.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
+    busy: String(spec.busy_timeout ?? 5),
   };
+}
+
+/** A spec with its defaults filled in and its keys in order, to compare two. */
+function canonical(spec: RunSpec): string {
+  return JSON.stringify({
+    robot: spec.robot,
+    program: spec.program || null,
+    field: spec.field || null,
+    mode: spec.mode || null,
+    start: (spec.start ?? [0, 0, 0]).map(Number),
+    seed: spec.seed ?? 0,
+    noise: spec.noise || null,
+    input: spec.input || null,
+    env: Object.entries(spec.env ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    busy_timeout: spec.busy_timeout ?? 5,
+  });
+}
+
+/** Whether the form still describes `spec` (unchanged since it was filled from it). */
+export function sameRun(form: RunForm, spec: RunSpec): boolean {
+  const result = formToSpec(form);
+  return "spec" in result && canonical(result.spec) === canonical(spec);
 }
 
 /** The form with picks that no longer exist in the workspace cleared, and a robot picked. */

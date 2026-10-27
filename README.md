@@ -137,7 +137,7 @@ vexsim plot tour.csv --out telemetry.png
 **Try the other drivetrains, and a field with game elements:**
 ```
 vexsim run examples/robots/mecanum_4m.yaml --input examples/inputs/strafe_square.csv --start=-12,12,0
-vexsim run examples/robots/full_omni_6m.yaml --field examples/fields/practice_elements.yaml
+vexsim run examples/robots/full_omni_6m.yaml --field examples/fields/practice_elements.yaml --start=-48,-24,0
 ```
 
 **Benchmark two path followers over 20 randomized trials each:**
@@ -351,7 +351,7 @@ Validation: elements must be inside the walls; a piece that starts overlapping a
 ```
 vexsim run ROBOT.yaml [--program FILE.py | --program PROS_PROJECT] [options]
 ```
-Without `--program`, you drive the robot from the keyboard or a gamepad. To start runs from the browser instead, see [`vexsim ui`](#7-the-browser-app-vexsim-ui).
+Without `--program`, you drive the robot from the keyboard or a gamepad. To start runs from the browser instead, see [`vexsim ui`](#7-the-browser-app-vexsim-ui). If the robot would start on top of a solid field element, or partly outside the walls, `vexsim run` warns.
 
 | Option | Meaning |
 |---|---|
@@ -429,28 +429,34 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 ![The browser app after the 1239E port's Left 40 autonomous: where the robot went (green) and where its MCL code thought it was (blue, dashed)](docs/img/ui_1239e.png)
 
 **Running something:**
-1. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs and telemetry logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. *Refresh* looks again after you add or change files.
-2. The **run bar** holds the robot, field, program (a Python file or a PROS project), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file and environment variables (`KEY=VALUE`, one per line, like `--env`). The browser remembers the form for each folder.
-3. **Run** checks the files first; if something is wrong, the console says what, with the same messages as `vexsim validate-config`. A PROS project is built first, with the build's output in the console. Starting a run stops the one before it.
+1. Pick a **saved run** from the first list to fill in everything at once, start pose and environment included. This repository comes with runs for its examples, every 1239E routine among them. Saved runs live in the folder's `.vexsim/launch.yaml`, so a team can commit them; *Save*, *Save as…* and *Delete* change them. (The app rewrites that file when it saves, so comments in it aren't kept.)
+2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs and telemetry logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file, environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
+3. **Drag the robot to where it starts.** Before a run, the field shows the robot at its start: drag it to move it (to half inches), and drag the round handle ahead of it to turn it (to 15°; hold Shift for 0.1 in and 1°). It stays inside the walls, and turns red, with a note, if it would start on top of a field element (`vexsim run` warns about that too).
+4. **Run** checks the files first; if something is wrong, the console says what, with the same messages as `vexsim validate-config`. A PROS project is built first, with the build's output in the *Build* tab. Starting a run stops the one before it.
 
 **While it runs:**
-- **Controls:** pause, step 10 ms, restart from the start with the same seed, stop, and a speed from 0.1× to 8× real time, or *Max*. *Copy command* copies the run as the equivalent `vexsim run` command.
-- **The field:** the robot where it really is (front edge thicker), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate and the beams, and *Key* folds it away. The wheel zooms, dragging pans, and a double-click shows the whole field again. The pointer's field coordinates are shown in the opposite corner.
-- **Readings** (right): true and estimated pose and how far apart they are, speed, battery, each motor's current and temperature, distance sensor readings, and the brain and controller screens.
-- **Console** (bottom): the program's output, the build's output, and errors with their traceback.
+- **Controls:** pause, step 10 ms, restart from the start with the same seed, stop, and a speed from 0.1× to 8× real time, or *Max*. *Copy command* copies the run as the equivalent `vexsim run` command. In `match` and `skills` modes, the time left in the period counts down beside the clock.
+- **Driving:** with no program, or in `driver` and `match` modes, you drive: the keyboard as in the pygame viewer (below), any gamepad (its face buttons map to the V5's by position), or the on-screen controller in the readings, whose sticks you can drag and buttons press. The controller there shows what the robot reads, whatever drives it.
+- **The field:** the robot where it really is (front edge thicker), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, each wheel's sideways force (orange), mecanum rollers, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate, the beams and the forces, and *Key* folds it away. The wheel zooms, dragging pans, and a double-click (or *Fit*) shows the whole field again; *Follow* keeps the robot in the middle; *Save picture* saves the field as a PNG. The pointer's field coordinates are shown in the bottom corner.
+- **Readings** (right): true and estimated pose and how far apart they are, speed, battery, the controller, each motor's current and temperature, mechanisms' angles, IMU and GPS readings, distance sensor readings, and the brain and controller screens.
+- **Console** (bottom): the program's output, the build's output, and errors with their traceback. **Problems** lists the compiler's errors and warnings and where a Python program failed, as `file:line` links that open the place in VS Code (or Cursor; *Open files in* picks); places in the console and build output are links too.
 
 | Key | Action | Key | Action |
 |---|---|---|---|
-| Space | pause / resume | G | show or hide the estimate |
-| `.` | one step while paused | T | show or hide the paths |
-| R | restart | B | show or hide the beams |
-| + / - | speed | | |
+| Space | pause / resume | W / S | left stick up / down (arcade throttle) |
+| `.` | one step while paused | A / D | right stick left / right (arcade turn) |
+| R | restart | Up / Down | right stick up / down (tank) |
+| + / - | speed | Left / Right | left stick left / right (strafe) |
+| 1 2 3 4 | show or hide the paths, estimate, beams, forces | Shift | half stick |
+| ? | every key | Q / Z, E / C | L1 / L2, R1 / R2 |
+| | | I / L / K / J | X / A / B / Y |
+| | | T / F / G / H | the arrows (up, left, down, right) |
 
 Each run executes in a process of its own, so a program that crashes or hangs never takes the app down; *Stop* ends it. If you reload the page, it reconnects to the run in progress.
 
 **Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie. Keep the terminal open while you use the app; Ctrl+C stops it. The browser only reaches files inside the folder.
 
-The app is new. It covers running simulations so far; driving by keyboard and gamepad, a timeline and replays, config editors, and pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
+The app is new. It runs and drives simulations so far; a timeline and replays, config editors, and pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
 
 ---
 
@@ -1105,17 +1111,18 @@ vexsim/
 ### `app/`: the services behind the browser app
 | Module | What it does |
 |---|---|
-| `runspec.py` | `RunSpec`: everything `vexsim run` takes, converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files, `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
+| `runspec.py` | `RunSpec`: everything `vexsim run` takes, converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files (and warns, through `start_blocked`, when the robot would start on top of a field element), `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
+| `launch.py` | Saved runs: the workspace's `.vexsim/launch.yaml`, named run specs the app's *Saved run* list reads and writes (`read_configurations`, `write_configurations`). |
 | `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects, inputs, logs), and refuses paths outside it. |
 | `jobs.py` | `JobManager`: long tasks (builds, so far), each in a process of its own, with their output as it comes, cancel, and one job at a time per key (a second build of a project joins the first). |
 | `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
 | `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay and the console. |
-| `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels, sensors, motors, pieces, screens) and the active motion's path and target. |
+| `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels and their forces, the controller, sensors, motors, mechanisms, pieces, screens, the period's time left) and the active motion's path and target. `preview_of` gives the robot and field before any run, to drag the robot to its start. |
 
 ### `ui/`: the browser app
 | Module | What it does |
 |---|---|
-| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, runs and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
+| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, runs and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
 | `protocol.py` | Every message and request as a pydantic model. `python -m vexsim.ui.protocol frontend/src/protocol.ts` writes them as TypeScript for the page; a test fails while that file is stale. |
 | `static/` | The built page (from `frontend/`, by `npm run build`), shipped with the package. |
 

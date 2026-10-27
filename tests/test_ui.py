@@ -2,15 +2,24 @@
 live sessions in worker processes, the HTTP/WebSocket API and the generated protocol."""
 
 import json
+import queue
 import shutil
 import sys
+import threading
 import time
+from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter
 
 from tests.conftest import ROOT
 from vexsim.app.jobs import JobManager
+from vexsim.app.launch import (
+    LaunchFileError,
+    RunConfiguration,
+    read_configurations,
+    write_configurations,
+)
 from vexsim.app.runspec import RunError, RunSpec, check, quote_arg
 from vexsim.app.session import Session
 from vexsim.app.workspace import Workspace
@@ -19,6 +28,7 @@ from vexsim.ui.protocol import ServerMessage, typescript
 
 ROBOT = "examples/robots/full_omni_6m.yaml"
 TOUR = "examples/programs/tour.py"
+PRACTICE = "examples/fields/practice_elements.yaml"
 MESSAGES = TypeAdapter(ServerMessage)
 
 
@@ -69,6 +79,58 @@ def test_check_names_files_as_the_spec_does(tmp_path):
     pros = "examples/pros_projects/minimal_pros4/project.pros"
     assert check(RunSpec(robot=ROBOT, program=pros), ROOT).project == prepared.project
     assert check(RunSpec(robot=ROBOT, program=TOUR), ROOT).program_file == ROOT / TOUR
+
+
+def test_check_warns_when_the_robot_starts_on_an_obstacle(capsys):
+    def start_warnings(start):
+        prepared = check(RunSpec(robot=ROBOT, field=PRACTICE, start=start), ROOT)
+        return [w.message for w in prepared.warnings if w.location == "start"]
+
+    assert start_warnings((0, 0, 0)) == ["the robot starts on top of barrier; move its start"]
+    assert start_warnings((-48, 48, 45)) == ["the robot starts on top of red goal; move its start"]
+    outside = "the robot starts partly outside the walls; move its start in"
+    assert start_warnings((70, 0, 0)) == [outside]
+    assert start_warnings((-48, -24, 0)) == []
+    assert start_warnings((0, 9, 0)) == []  # half its 15 in width + the barrier's 1.5: touching
+    robot, field = str(ROOT / ROBOT), str(ROOT / PRACTICE)
+    assert main(["run", robot, "--field", field, "--headless", "--seconds", "0.05"]) == 0
+    assert "warning: the robot starts on top of barrier" in capsys.readouterr().out
+
+
+# --- saved runs ---------------------------------------------------------------------------
+
+
+def test_run_configurations_round_trip_through_launch_yaml(tmp_path):
+    assert read_configurations(tmp_path) == []
+    saved = [
+        RunConfiguration(
+            name="Left 40", robot="r.yaml", program="p", start=(60, 0, 0), env={"A": "Left 40"}
+        ),
+        RunConfiguration(name="Drive", robot="r.yaml", mode="driver", start=(-12.5, 3, 90)),
+    ]
+    path = write_configurations(tmp_path, saved)
+    assert path == tmp_path / ".vexsim" / "launch.yaml"
+    text = path.read_text(encoding="utf-8")
+    assert "start: [60, 0, 0]" in text and "env: {A: Left 40}" in text
+    assert "start: [-12.5, 3, 90]" in text and "seed" not in text  # defaults left out
+    assert read_configurations(tmp_path) == saved
+    with pytest.raises(LaunchFileError, match="two run configurations are named 'drive'"):
+        write_configurations(tmp_path, [*saved, RunConfiguration(name="drive", robot="r.yaml")])
+    path.write_text("configurations:\n  - {name: x}\n", encoding="utf-8")
+    with pytest.raises(LaunchFileError, match=r"configuration 1 \(x\): robot: Field required"):
+        read_configurations(tmp_path)
+    path.write_text("configurations: [unclosed\n", encoding="utf-8")
+    with pytest.raises(LaunchFileError, match="launch.yaml"):
+        read_configurations(tmp_path)
+
+
+def test_the_example_run_configurations_check_out():
+    configurations = read_configurations(ROOT)
+    names = {c.name for c in configurations}
+    assert {"Drive: full omni", "Tour (Python)", "1239E: Left 40", "1239E: driver"} <= names
+    for configuration in configurations:
+        prepared = check(configuration, ROOT)  # its files are there and its configs load
+        assert not [w for w in prepared.warnings if w.location == "start"], configuration.name
 
 
 # --- the workspace --------------------------------------------------------------------------
@@ -214,6 +276,42 @@ def test_a_session_stops_a_program_that_never_yields(tmp_path):
     assert session.state == "stopped" and not session.child.alive
 
 
+def test_a_session_takes_the_controller_and_times_a_match():
+    heard = Recorder()
+    spec = RunSpec(robot=ROBOT, field=PRACTICE, mode="match", start=(-48, -24, 0))
+    session = Session("s4", spec, base=ROOT, listener=heard)
+    session.start()
+    try:
+        wait_for(lambda: session.frame is not None and session.frame["phase"] == "autonomous")
+        left = session.frame["period_left"]
+        assert 0 < left <= 15
+        session.command({"cmd": "speed", "value": 0})
+        wait_for(lambda: session.frame["phase"] == "opcontrol")
+        assert 100 < session.frame["period_left"] <= 105
+        session.command({"cmd": "speed", "value": 1})
+        session.command({"cmd": "input", "analog": {"LEFT_Y": 127}, "digital": ["L1", "A"]})
+        wait_for(lambda: session.frame["controller"]["analog"]["LEFT_Y"] == 127)
+        assert session.frame["controller"]["digital"] == ["A", "L1"]
+        wait_for(lambda: session.frame["pose"][0] > -40)  # driven forward, along +x
+        frame = session.frame
+        assert len(frame["wheels"][0]) == 5 and frame["imu"] and frame["mechanisms"] == []
+    finally:
+        session.stop()
+    scene = heard.of("scene")[0]
+    assert {o["name"] for o in scene["field"]["obstacles"]} == {"barrier", "red goal", "blue goal"}
+    for _, message in heard.messages:
+        MESSAGES.validate_python(message)
+
+
+def test_a_session_warns_when_its_robot_starts_on_an_obstacle():
+    session = Session("s5", RunSpec(robot=ROBOT, field=PRACTICE), base=ROOT)
+    session.start()
+    try:
+        wait_for(lambda: any("starts on top of barrier" in line for line in session.console))
+    finally:
+        session.stop()
+
+
 def test_protocol_typescript_is_current():
     path = ROOT / "frontend" / "src" / "protocol.ts"
     assert path.read_text(encoding="utf-8") == typescript(), (
@@ -290,12 +388,85 @@ def test_the_server_says_why_a_run_cant_start(client):
     assert response.status_code == 422 and "outside the workspace" in response.json()["error"]
 
 
-def receive_until(socket, predicate, limit=5000):
-    for _ in range(limit):
-        message = json.loads(socket.receive_text())
-        if predicate(message):
-            return message
-    raise AssertionError("never came")
+def test_the_server_previews_a_robot_and_field(client):
+    authorized(client)
+    preview = client.post("/api/preview", json={"robot": ROBOT, "field": PRACTICE}).json()
+    assert preview["robot"]["footprint"] == [15.0, 15.0] and len(preview["robot"]["wheels"]) == 6
+    assert {o["name"] for o in preview["field"]["obstacles"]} == {
+        "barrier",
+        "red goal",
+        "blue goal",
+    }
+    assert len(preview["pieces"]) == 6 and preview["pieces"][0] == [-24.0, 24.0]
+    empty = client.post("/api/preview", json={"robot": ROBOT}).json()
+    assert empty["field"]["size"] == [144.0, 144.0] and empty["pieces"] == []
+    assert client.post("/api/preview", json={"robot": "nope.yaml"}).status_code == 422
+    outside = client.post("/api/preview", json={"robot": "../x.yaml"})
+    assert outside.status_code == 422 and "outside the workspace" in outside.json()["error"]
+
+
+def test_the_server_keeps_run_configurations(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from vexsim.ui.server import create_app
+
+    app = create_app(
+        tmp_path, token=TOKEN, port=8642, hosts={"testserver"}, origins={"http://testserver"}
+    )
+    launch = tmp_path / ".vexsim" / "launch.yaml"
+    with TestClient(app) as client:
+        authorized(client)
+        empty = {"file": ".vexsim/launch.yaml", "configurations": [], "error": None}
+        assert client.get("/api/configurations").json() == empty
+        left = {"name": "Left 40", "robot": "robot.yaml", "start": [60, 0, 0], "env": {"A": "1"}}
+        saved = client.put("/api/configurations", json={"configurations": [left]}).json()
+        assert [c["name"] for c in saved["configurations"]] == ["Left 40"] and launch.is_file()
+        twice = client.put("/api/configurations", json={"configurations": [left, left]})
+        assert twice.status_code == 422 and "named 'Left 40'" in twice.json()["detail"]
+        launch.write_text("configurations: [unclosed\n", encoding="utf-8")
+        broken = client.get("/api/configurations").json()
+        assert broken["configurations"] == [] and "launch.yaml" in broken["error"]
+        refused = client.put("/api/configurations", json={"configurations": [left]})
+        assert refused.status_code == 409  # someone's broken file isn't overwritten
+        assert launch.read_text(encoding="utf-8") == "configurations: [unclosed\n"
+
+
+class Messages:
+    """A test WebSocket's messages, read in the background, so a test that waits for one
+    fails (and says what came instead) rather than hangs."""
+
+    def __init__(self, socket):
+        self.queue: queue.Queue = queue.Queue()
+        self.seen: list[dict] = []
+        threading.Thread(target=self._pump, args=(socket,), daemon=True).start()
+
+    def _pump(self, socket) -> None:
+        try:
+            while True:
+                self.queue.put(json.loads(socket.receive_text()))
+        except Exception as exc:  # the socket closed
+            self.queue.put(exc)
+
+    def until(self, predicate, timeout: float = 90.0) -> dict:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                item = self.queue.get(timeout=max(0.001, deadline - time.monotonic()))
+            except queue.Empty:
+                raise AssertionError(f"not within {timeout} s; lately: {self.lately()}") from None
+            if isinstance(item, Exception):
+                raise AssertionError(f"the socket closed ({item!r}); lately: {self.lately()}")
+            self.seen.append(item)
+            if predicate(item):
+                return item
+
+    def lately(self) -> list[str]:
+        def brief(m: dict) -> str:
+            detail = {k: m[k] for k in ("state", "message", "t", "lines") if k in m}
+            return f"{m['type']} {detail}"[:300]
+
+        return [brief(m) for m in self.seen[-8:]]
 
 
 def test_the_server_streams_a_session_and_takes_commands(client):
@@ -305,13 +476,14 @@ def test_the_server_streams_a_session_and_takes_commands(client):
     session = response.json()
     assert session["command"] == f"vexsim run {ROBOT} --program {TOUR}"
     with client.websocket_connect(f"/api/sessions/{session['id']}/ws") as socket:
-        first = json.loads(socket.receive_text())
+        messages = Messages(socket)
+        first = messages.until(lambda m: True)
         assert first["type"] == "session" and first["session"]["id"] == session["id"]
-        receive_until(socket, lambda m: m["type"] == "frame" and m["t"] > 0.5)
+        messages.until(lambda m: m["type"] == "frame" and m["t"] > 0.5)
         socket.send_json({"cmd": "pause"})
-        receive_until(socket, lambda m: m["type"] == "status" and m["state"] == "paused")
+        messages.until(lambda m: m["type"] == "status" and m["state"] == "paused")
         socket.send_json({"cmd": "jump"})
-        error = receive_until(socket, lambda m: m["type"] == "error")
+        error = messages.until(lambda m: m["type"] == "error")
         assert error["message"].startswith("bad command")
     assert client.delete(f"/api/sessions/{session['id']}").status_code == 204
     assert client.get(f"/api/sessions/{session['id']}").json()["state"] == "stopped"
@@ -325,11 +497,40 @@ def test_the_server_builds_a_pros_project_then_runs_it(client, in_cache):
         assert response.status_code == 200 and response.json()["state"] == "building"
         session_id = response.json()["id"]
         with client.websocket_connect(f"/api/sessions/{session_id}/ws") as socket:
-            frame = receive_until(socket, lambda m: m["type"] == "frame" and m["t"] > 2.5, 20000)
+            frame = Messages(socket).until(lambda m: m["type"] == "frame" and m["t"] > 2.5, 300)
         assert frame["estimate"] is not None  # the program reports its own pose
     jobs = client.get("/api/jobs").json()
     assert [(j["title"], j["state"]) for j in jobs] == [("Build minimal_pros4", "succeeded")]
     client.delete(f"/api/sessions/{session_id}")
+
+
+def test_a_failed_build_says_where(tmp_path, in_cache):
+    """The browser's Problems tab reads file:line:col from this message."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from vexsim.ui.server import create_app
+
+    project = tmp_path / "bot"
+    shutil.copytree(ROOT / "examples" / "pros_projects" / "minimal_pros4", project)
+    main_cpp = project / "src" / "main.cpp"
+    lines = main_cpp.read_text(encoding="utf-8").splitlines(keepends=True)
+    at = next(i for i, line in enumerate(lines) if "void autonomous()" in line) + 1
+    lines.insert(at, "\tdrive_in_circles(3);\n")  # not declared anywhere
+    main_cpp.write_text("".join(lines), encoding="utf-8")
+    shutil.copy(ROOT / ROBOT, tmp_path / "robot.yaml")
+    app = create_app(
+        tmp_path, token=TOKEN, port=8642, hosts={"testserver"}, origins={"http://testserver"}
+    )
+    with in_cache(), TestClient(app) as client:
+        authorized(client)
+        spec = {"robot": "robot.yaml", "program": "bot"}
+        session_id = client.post("/api/sessions", json={"spec": spec}).json()["id"]
+        with client.websocket_connect(f"/api/sessions/{session_id}/ws") as socket:
+            error = Messages(socket).until(lambda m: m["type"] == "error", 300)
+    line = next(t for t in error["message"].splitlines() if "error:" in t and "drive_in" in t)
+    path = Path(line.split(f":{at + 1}:")[0])  # the project's own file, not a build copy
+    assert path.is_absolute() and path.parts[-3:] == ("bot", "src", "main.cpp")
 
 
 def test_vexsim_ui_needs_a_folder(capsys):

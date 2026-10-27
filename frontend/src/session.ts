@@ -15,6 +15,8 @@ import type {
   SessionInfo,
   SessionState,
 } from "./protocol";
+import type { Problem } from "./problems";
+import { compilerProblems, tracebackProblem } from "./problems";
 import { Trail } from "./trail";
 
 export const MAX_LINES = 5000;
@@ -40,6 +42,8 @@ export class SessionStore {
   truth = new Trail();
   estimate = new Trail();
   frames = 0; // frames received, all told
+  buildProblems: Problem[] = []; // the compiler's errors and warnings
+  runProblems: Problem[] = []; // where the program failed
   connected = false;
   version = 0; // bumped whenever views should re-read
 
@@ -49,7 +53,15 @@ export class SessionStore {
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
 
-  constructor(readonly id: string) {}
+  /** `root`: the workspace folder, to find the program's own frames in a traceback. */
+  constructor(
+    readonly id: string,
+    readonly root = "",
+  ) {}
+
+  get problems(): Problem[] {
+    return [...this.buildProblems, ...this.runProblems];
+  }
 
   // --- state -----------------------------------------------------------------------------
 
@@ -73,6 +85,7 @@ export class SessionStore {
         this.truth.clear();
         this.estimate.clear();
         this.lines = this.lines.filter((line) => line.kind === "build");
+        this.runProblems = [];
         break;
       case "frame": {
         const previous = this.frame;
@@ -95,6 +108,7 @@ export class SessionStore {
         break;
       case "build":
         this.addLines("build", message.lines);
+        this.buildProblems = merge(this.buildProblems, compilerProblems(message.lines.join("\n")));
         break;
       case "error":
         this.error = message;
@@ -103,6 +117,11 @@ export class SessionStore {
           this.addLines("error", [`  ${issue.location || "(document)"}: ${issue.message}`]);
         }
         if (message.traceback) this.addLines("error", message.traceback.trimEnd().split("\n"));
+        this.buildProblems = merge(this.buildProblems, compilerProblems(message.message));
+        if (message.traceback) {
+          const failed = tracebackProblem(message.traceback, this.root);
+          if (failed) this.runProblems = merge(this.runProblems, [failed]);
+        }
         break;
     }
     this.notify();
@@ -183,6 +202,14 @@ export class SessionStore {
     this.socket?.close();
     this.socket = null;
   }
+}
+
+/** `known` with the problems of `found` it doesn't have yet. */
+function merge(known: Problem[], found: Problem[]): Problem[] {
+  const key = (p: Problem) => `${p.severity}|${p.file}|${p.line}|${p.column}|${p.message}`;
+  const seen = new Set(known.map(key));
+  const fresh = found.filter((p) => !seen.has(key(p)) && seen.add(key(p)));
+  return fresh.length ? [...known, ...fresh] : known;
 }
 
 /** Whether a run in this state can take pause/step/speed commands. */

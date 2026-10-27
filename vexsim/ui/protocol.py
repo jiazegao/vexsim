@@ -5,7 +5,7 @@ session's WebSocket sends (``ServerMessage``) and the commands it takes
 (``ClientCommand``). ``frontend/src/protocol.ts`` is generated from them, so the two sides
 can't disagree; a test fails when it is stale. Regenerate it with:
 
-    python -m vexsim.ui.protocol > frontend/src/protocol.ts
+    python -m vexsim.ui.protocol frontend/src/protocol.ts
 
 Lengths are inches; angles are degrees, counter-clockwise from +x; times are seconds.
 """
@@ -20,6 +20,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from vexsim.app.launch import RunConfiguration
 from vexsim.app.runspec import RunSpec
 
 ItemKind = Literal["robot", "field", "scenario", "program", "project", "input", "log", "invalid"]
@@ -103,6 +104,29 @@ class RunProblem(_Message):
     issues: list[Issue]
 
 
+class PreviewRequest(_Message):
+    robot: str  # workspace paths
+    field: str | None = None
+
+
+class Preview(_Message):
+    """A robot and a field before any run, to show them and drag the robot to its start."""
+
+    robot: RobotScene
+    field: FieldScene
+    pieces: list[tuple[float, float]]  # where the field config puts the pieces
+
+
+class RunConfigurations(_Message):
+    file: str  # workspace path of the file they're kept in
+    configurations: list[RunConfiguration]
+    error: str | None = None  # why the file couldn't be read (it is then left alone)
+
+
+class SaveConfigurations(_Message):
+    configurations: list[RunConfiguration]
+
+
 # --- a session's scene ------------------------------------------------------------------------
 
 
@@ -113,6 +137,7 @@ class WheelMount(_Message):
     heading: float
     diameter: float
     type: str
+    roller: float  # mecanum: the ground rollers' angle to the wheel's axis; else 0
 
 
 class SensorMount(_Message):
@@ -123,15 +148,22 @@ class SensorMount(_Message):
     heading: float  # where it faces
 
 
+class MechanismMount(_Message):
+    name: str
+    range: tuple[float, float] | None  # hard stops, output degrees from the start
+
+
 class RobotScene(_Message):
     name: str
     footprint: tuple[float, float]  # length (x) by width (y)
     wheels: list[WheelMount]
     sensors: list[SensorMount]
+    mechanisms: list[MechanismMount]
 
 
 class CircleObstacle(_Message):
     shape: Literal["circle"]
+    name: str
     x: float
     y: float
     radius: float
@@ -141,6 +173,7 @@ class CircleObstacle(_Message):
 
 class PolygonObstacle(_Message):
     shape: Literal["polygon"]
+    name: str
     points: list[tuple[float, float]]
     color: str | None
     solid: bool
@@ -186,6 +219,11 @@ class SceneMessage(_Message):
     command: str
 
 
+class ControllerState(_Message):
+    analog: dict[str, int]  # LEFT_X, LEFT_Y, RIGHT_X, RIGHT_Y: -127 to 127
+    digital: list[str]  # pressed buttons: L1 L2 R1 R2 UP DOWN LEFT RIGHT X B Y A
+
+
 class FrameMessage(_Message):
     """Where everything is, about 60 times a second while running."""
 
@@ -199,13 +237,24 @@ class FrameMessage(_Message):
     estimate: tuple[float, float, float] | None  # where the robot code thinks it is
     speed_in_s: float
     battery: tuple[float, float]  # volts, state of charge (0-1)
-    wheels: list[tuple[float, float, float, float]]  # x, y, heading, slip (0-1), field frame
+    # x, y, heading, slip (0-1: the share of its grip in use), side force (N, + to the left
+    # of the wheel's rolling direction); field frame
+    wheels: list[tuple[float, float, float, float, float]]
     distance: dict[str, int | None]  # distance sensor port -> mm, None if it sees nothing
     pieces: list[tuple[float, float]]
     contacts: list[tuple[float, float]]  # where the robot touches a wall
     motors: list[tuple[int, float, float, bool]]  # port, current (A), temperature (C), hot
     lcd: list[str]  # brain screen lines
     controller_screen: list[str]
+    controller: ControllerState  # what the robot's controller reads
+    # IMU port -> heading (0-360, clockwise, as get_heading()) and rotation; None while
+    # it calibrates
+    imu: dict[str, tuple[float, float] | None]
+    # GPS port -> x, y, heading (clockwise from +y), its own error estimate (in), whether
+    # it read the field strip; None before its first reading
+    gps: dict[str, tuple[float, float, float, float, bool] | None]
+    mechanisms: list[float]  # output degrees from the start, in the scene's order
+    period_left: float | None  # seconds left in a timed period (match, skills)
 
 
 class OverlayMessage(_Message):
@@ -292,8 +341,14 @@ MODELS: list[type[BaseModel]] = [
     StartSession,
     StartJob,
     RunProblem,
+    PreviewRequest,
+    Preview,
+    RunConfiguration,
+    RunConfigurations,
+    SaveConfigurations,
     WheelMount,
     SensorMount,
+    MechanismMount,
     RobotScene,
     CircleObstacle,
     PolygonObstacle,
@@ -302,6 +357,7 @@ MODELS: list[type[BaseModel]] = [
     SessionMessage,
     StatusMessage,
     SceneMessage,
+    ControllerState,
     FrameMessage,
     OverlayMessage,
     ConsoleMessage,

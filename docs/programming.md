@@ -49,7 +49,7 @@ When a period's time runs out, every motor stops, as under field control.
 ```
 vexsim run examples/robots/full_omni_6m.yaml --program examples/programs/tour.py
 vexsim run examples/robots/full_omni_6m.yaml                 # no program: drive it yourself
-vexsim run ROBOT.yaml --field examples/fields/practice_elements.yaml   # with game elements
+vexsim run ROBOT.yaml --field examples/fields/practice_elements.yaml --start=-48,-24,0   # with game elements
 vexsim run ROBOT.yaml --program auton.py --headless --record run.csv --screenshot end.png
 ```
 

@@ -1,24 +1,42 @@
+import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Editor, Place, Problem } from "../problems";
+import { EDITORS, editorUrl, linkSegments, shortPath } from "../problems";
 import type { RunProblem } from "../protocol";
 import type { Line, SessionStore } from "../session";
 
-type Tab = "console" | "build";
+type Tab = "console" | "build" | "problems";
 
-export function ConsolePanel(props: { store: SessionStore | null; problem: RunProblem | null }) {
-  const { store, problem } = props;
+export function ConsolePanel(props: {
+  store: SessionStore | null;
+  problem: RunProblem | null;
+  root: string;
+  editor: Editor;
+  onEditor: (editor: Editor) => void;
+}) {
+  const { store, problem, root, editor } = props;
   const [tab, setTab] = useState<Tab>("console");
   const lines = store?.lines ?? [];
   const build = lines.filter((line) => line.kind === "build");
   const output = lines.filter((line) => line.kind !== "build");
-  const building = store?.state === "building";
+  const problems = store?.problems ?? [];
+  const errors = problems.filter((p) => p.severity === "error").length;
+  const state = store?.state;
 
-  // While a project builds, show the build; when it fails, too.
+  // While a project builds, show the build; when the run fails at a place, the problems.
   useEffect(() => {
-    if (building) setTab("build");
-  }, [building]);
+    if (state === "building") setTab("build");
+    if (state === "running") setTab("console");
+  }, [state]);
   useEffect(() => {
-    if (store?.state === "running") setTab("console");
-  }, [store?.state]);
+    if (state === "error" && errors > 0) setTab("problems");
+  }, [state, errors]);
+
+  const tabButton = (name: Tab, label: string, count: number, testid?: string) => (
+    <button role="tab" aria-selected={tab === name} className={tab === name ? "on" : ""} onClick={() => setTab(name)} data-testid={testid}>
+      {label} {count > 0 && <span className={`count${name === "problems" && errors ? " bad" : ""}`}>{count}</span>}
+    </button>
+  );
 
   return (
     <section className="console" aria-label="Output">
@@ -40,22 +58,80 @@ export function ConsolePanel(props: { store: SessionStore | null; problem: RunPr
         </div>
       )}
       <div className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "console"} className={tab === "console" ? "on" : ""} onClick={() => setTab("console")}>
-          Console {output.length > 0 && <span className="count">{output.length}</span>}
-        </button>
-        <button role="tab" aria-selected={tab === "build"} className={tab === "build" ? "on" : ""} onClick={() => setTab("build")}>
-          Build {build.length > 0 && <span className="count">{build.length}</span>}
-        </button>
+        {tabButton("console", "Console", output.length)}
+        {tabButton("build", "Build", build.length)}
+        {tabButton("problems", "Problems", problems.length, "problems-tab")}
+        <span className="spacer" />
+        <label className="editor" title="Where file:line links open">
+          Open files in
+          <select value={editor} onChange={(e) => props.onEditor(e.target.value as Editor)}>
+            {(Object.keys(EDITORS) as Editor[]).map((key) => (
+              <option key={key} value={key}>
+                {EDITORS[key]}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
-      <Lines
-        lines={tab === "console" ? output : build}
-        empty={tab === "console" ? "The program's output appears here." : "Builds of PROS projects appear here."}
-      />
+      {tab === "problems" ? (
+        <Problems problems={problems} root={root} editor={editor} />
+      ) : (
+        <Lines
+          lines={tab === "console" ? output : build}
+          root={root}
+          editor={editor}
+          empty={tab === "console" ? "The program's output appears here." : "Builds of PROS projects appear here."}
+        />
+      )}
     </section>
   );
 }
 
-function Lines(props: { lines: Line[]; empty: string }) {
+/** A file:line place: a link into the editor, or (with no editor) a button that copies it. */
+function PlaceLink(props: { place: Place; root: string; editor: Editor; children: ReactNode; testid?: string }) {
+  const { place, root, editor } = props;
+  const href = editorUrl(editor, root, place);
+  const where = `${shortPath(root, place.file)}:${place.line}${place.column ? `:${place.column}` : ""}`;
+  if (href) {
+    return (
+      <a className="place" href={href} title={`Open ${where} in ${EDITORS[editor]}`} data-testid={props.testid}>
+        {props.children}
+      </a>
+    );
+  }
+  return (
+    <button type="button" className="place" title={`Copy ${where}`} data-testid={props.testid} onClick={() => navigator.clipboard?.writeText(where).catch(() => {})}>
+      {props.children}
+    </button>
+  );
+}
+
+function Problems(props: { problems: Problem[]; root: string; editor: Editor }) {
+  const { problems, root, editor } = props;
+  if (problems.length === 0) {
+    return (
+      <div className="lines problems">
+        <span className="muted">No problems. A failed build's errors and warnings, and where a program failed, appear here.</span>
+      </div>
+    );
+  }
+  return (
+    <ul className="lines problems" data-testid="problems">
+      {problems.map((p, i) => (
+        <li key={i}>
+          <span className={`badge ${p.severity}`}>{p.severity}</span>
+          <PlaceLink place={p} root={root} editor={editor} testid="problem-link">
+            {shortPath(root, p.file)}:{p.line}
+            {p.column ? `:${p.column}` : ""}
+          </PlaceLink>{" "}
+          <span className="message">{p.message}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Lines(props: { lines: Line[]; root: string; editor: Editor; empty: string }) {
   const box = useRef<HTMLPreElement>(null);
   const pinned = useRef(true); // follow new lines unless scrolled up
 
@@ -79,7 +155,15 @@ function Lines(props: { lines: Line[]; empty: string }) {
       ) : (
         props.lines.map((line, i) => (
           <div key={i} className={`line ${line.kind}`}>
-            {line.text}
+            {linkSegments(line.text).map((segment, j) =>
+              typeof segment === "string" ? (
+                segment
+              ) : (
+                <PlaceLink key={j} place={segment} root={props.root} editor={props.editor}>
+                  {segment.text}
+                </PlaceLink>
+              ),
+            )}
           </div>
         ))
       )}

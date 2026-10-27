@@ -213,11 +213,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         prepared = check(RunSpec.from_args(args))
+        for warning in prepared.warnings:
+            if warning.location == "start":
+                print(f"warning: {warning.message}")
         executable = build(prepared, log=print) if prepared.project is not None else None
+        make_program, mode = program_factory(prepared, executable)
     except RunError as exc:
         _print_run_error(exc)
         return EXIT_INVALID
-    make_program, mode = program_factory(prepared, executable)
     inputs = ScriptedInput.from_csv(args.input) if args.input else None
     robot_logs = []  # the latest run's, when --robot-log asks for one
 

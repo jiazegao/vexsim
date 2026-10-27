@@ -8,6 +8,7 @@ jobs:
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -45,14 +46,21 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      # A test still running after 5 minutes dumps every thread's stack into the log (most
+      # take seconds, a LemLib build a few minutes). One that hangs is stopped at the step's
+      # timeout, and the next step turns its dump into annotations, which are easier to
+      # read than the log.
       - name: Test
-        run: pytest --junitxml=pytest.xml
+        shell: bash
+        timeout-minutes: 25
+        run: pytest --junitxml=pytest.xml -o faulthandler_timeout=300 2>&1 | tee pytest.log
         env:
           VEXSIM_REQUIRE_CXX: "1"  # fail, don't skip, the C++ bridge tests
+          PYTHONUNBUFFERED: "1"
 
       - name: Report test failures as annotations
         if: failure()
-        run: python .github/scripts/pytest_annotations.py pytest.xml
+        run: python .github/scripts/pytest_annotations.py pytest.xml pytest.log
 
       - name: Validate example configs
         shell: bash
@@ -110,6 +118,7 @@ jobs:
   frontend:
     name: Browser app
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend

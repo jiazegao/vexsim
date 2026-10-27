@@ -1,0 +1,103 @@
+# Run configurations for `vexsim ui`: pick one in the run bar to fill it in.
+# Each takes what `vexsim run` does; paths are relative to the folder vexsim ui opened.
+# The app rewrites this file when you save from it (comments here aren't kept).
+version: 1
+configurations:
+  - name: 'Drive: full omni'
+    robot: examples/robots/full_omni_6m.yaml
+    field: examples/fields/practice_elements.yaml
+    start: [-48, -24, 0]
+
+  - name: 'Drive: mecanum'
+    robot: examples/robots/mecanum_4m.yaml
+    field: examples/fields/v5rc_empty.yaml
+
+  - name: Tour (Python)
+    robot: examples/robots/full_omni_6m.yaml
+    program: examples/programs/tour.py
+
+  - name: Mecanum strafe square (scripted input)
+    robot: examples/robots/mecanum_4m.yaml
+    start: [-12, 12, 0]
+    input: examples/inputs/strafe_square.csv
+
+  - name: minimal_pros4 (C++)
+    robot: examples/robots/full_omni_6m.yaml
+    program: examples/pros_projects/minimal_pros4
+    start: [0, 0, 90]
+
+  - name: LemLib template (C++)
+    robot: examples/robots/lemlib_example.yaml
+    program: examples/pros_projects/lemlib_template
+    start: [0, 0, 90]
+
+  - name: '1239E: Left 40'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [60, 0, 0]
+    env: {VEXSIM_AUTON: Left 40}
+
+  - name: '1239E: Left 30'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [60, 0, 0]
+    env: {VEXSIM_AUTON: Left 30}
+
+  - name: '1239E: Left 30_10'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [60, 0, 0]
+    env: {VEXSIM_AUTON: Left 30_10}
+
+  - name: '1239E: Right 40'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [-60, 0, 180]
+    env: {VEXSIM_AUTON: Right 40}
+
+  - name: '1239E: Right 30'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [-60, 0, 180]
+    env: {VEXSIM_AUTON: Right 30}
+
+  - name: '1239E: Right 30_10'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [-60, 0, 180]
+    env: {VEXSIM_AUTON: Right 30_10}
+
+  - name: '1239E: Right 20_10'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [-60, 0, 180]
+    env: {VEXSIM_AUTON: Right 20_10}
+
+  - name: '1239E: alliance1pin'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    start: [-60, 0, 180]
+    env: {VEXSIM_AUTON: alliance1pin}
+
+  - name: '1239E: skills'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    mode: skills
+    start: [60, 0, 0]
+    env: {VEXSIM_AUTON: skills}
+
+  - name: '1239E: driver'
+    robot: examples/robots/1239e_2026-27.yaml
+    program: examples/pros_projects/1239e_2026-27
+    field: examples/fields/1239e_2026-27.yaml
+    mode: driver
+    start: [0, -48, 90]
