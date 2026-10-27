@@ -14,8 +14,9 @@ child exits by itself if the parent dies: it watches its stdin for the end, or o
 where a thread blocked reading a pipe can stall other calls on it, the parent's process (the
 child's stdin is empty there).
 
-``VEXSIM_CHILD_DUMP_S=N`` makes a child print where each of its threads is after N seconds,
-for finding where one is stuck.
+``VEXSIM_CHILD_DUMP_S=N`` makes a child that hasn't sent a message within N seconds print
+where each of its threads is, for finding where one is stuck. (Only then: dumping a thread
+that's busy running Python can crash the process, as it does on Python 3.11.)
 """
 
 from __future__ import annotations
@@ -183,6 +184,25 @@ def _exit_when_orphaned(parent: int) -> None:
     os._exit(3)
 
 
+class _Watched:
+    """The connection, which calls off the stuck-child dump once the child first speaks."""
+
+    def __init__(self, conn: Connection):
+        self._conn = conn
+        self._quiet = True
+
+    def send(self, message) -> None:
+        if self._quiet:
+            import faulthandler
+
+            faulthandler.cancel_dump_traceback_later()
+            self._quiet = False
+        self._conn.send(message)
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+
 def main() -> None:
     dump_after = float(os.environ.get(DUMP_ENV) or 0)
     if dump_after > 0:
@@ -199,7 +219,8 @@ def main() -> None:
     try:
         function, kwargs = conn.recv()
         module, name = function.split(":")
-        getattr(importlib.import_module(module), name)(conn, **kwargs)
+        given = _Watched(conn) if dump_after > 0 else conn
+        getattr(importlib.import_module(module), name)(given, **kwargs)
     except BaseException:
         import traceback
 
