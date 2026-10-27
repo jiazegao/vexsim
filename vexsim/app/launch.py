@@ -81,7 +81,7 @@ def write_configurations(root: Path, configurations: list[RunConfiguration]) -> 
     _check_names(configurations)
     path = Path(root) / LAUNCH_FILE
     data = {"version": VERSION, "configurations": [_plain(c) for c in configurations]}
-    text = yaml.dump(data, Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=100)
+    text = dump_yaml(data)
     head, *entries = text.split("\n  - name:")  # a blank line between configurations
     text = HEADER + head
     text += "".join(("\n\n" if i else "\n") + "  - name:" + e for i, e in enumerate(entries))
@@ -99,11 +99,11 @@ def _check_names(configurations: list[RunConfiguration]) -> None:
         seen.add(key)
 
 
-class _Inline(list):
+class Inline(list):
     """Written on one line: ``start: [60, 0, 0]``."""
 
 
-class _InlineMap(dict):
+class InlineMap(dict):
     """Written on one line: ``env: {VEXSIM_AUTON: Left 40}``."""
 
 
@@ -113,11 +113,17 @@ class _Dumper(yaml.SafeDumper):
 
 
 _Dumper.add_representer(
-    _Inline, lambda d, v: d.represent_sequence("tag:yaml.org,2002:seq", v, flow_style=True)
+    Inline, lambda d, v: d.represent_sequence("tag:yaml.org,2002:seq", v, flow_style=True)
 )
 _Dumper.add_representer(
-    _InlineMap, lambda d, v: d.represent_mapping("tag:yaml.org,2002:map", v, flow_style=True)
+    InlineMap, lambda d, v: d.represent_mapping("tag:yaml.org,2002:map", v, flow_style=True)
 )
+
+
+def dump_yaml(data) -> str:
+    """YAML as the app writes its files: keys in order, lists indented under their key,
+    ``Inline`` lists and ``InlineMap`` mappings on one line."""
+    return yaml.dump(data, Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=100)
 
 
 def _plain(configuration: RunConfiguration) -> dict:
@@ -125,7 +131,7 @@ def _plain(configuration: RunConfiguration) -> dict:
     data = configuration.model_dump(exclude_defaults=True)
     data = {"name": data.pop("name"), **data}
     if "start" in data:
-        data["start"] = _Inline(int(v) if float(v).is_integer() else v for v in data["start"])
+        data["start"] = Inline(int(v) if float(v).is_integer() else v for v in data["start"])
     if "env" in data:
-        data["env"] = _InlineMap(data["env"])
+        data["env"] = InlineMap(data["env"])
     return data

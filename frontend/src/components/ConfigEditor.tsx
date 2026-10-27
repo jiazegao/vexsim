@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Part } from "../configdoc";
-import { fieldParts, partAtLine, robotParts, spanRange } from "../configdoc";
+import { fieldParts, partAtLine, robotParts, spanRange, textChange } from "../configdoc";
 import type { ConfigCheck, ConfigEdit, ConfigFile, FieldConfig, PlacedIssue, RobotConfig } from "../protocol";
 import { ConfigDiagram } from "./ConfigDiagram";
 import type { YamlEditorHandle } from "./YamlEditor";
@@ -30,6 +30,7 @@ export function ConfigEditor(props: {
   onKeepOpen: () => void;
   onDirty: (path: string, dirty: boolean) => void;
   onSaved: (path: string) => void;
+  request?: { id: number; overrides: Record<string, number> } | null; // fitted values to add
 }) {
   const { path } = props;
   const [file, setFile] = useState<ConfigFile | null>(null);
@@ -84,6 +85,29 @@ export function ConfigEditor(props: {
       clearTimeout(timer);
     };
   }, [file, text, checked, take]);
+
+  // a calibration's fitted values, added under overrides (undoable), for you to look over
+  const handled = useRef(0);
+  const { request } = props;
+  useEffect(() => {
+    if (!file || !request || handled.current >= request.id || !editor.current) return;
+    handled.current = request.id;
+    (async () => {
+      try {
+        const before = textRef.current;
+        const patched = await api.setOverrides(before, request.overrides);
+        editor.current?.replace(patched.text);
+        setText(patched.text);
+        take(patched.text, patched.check);
+        const change = textChange(before, patched.text);
+        if (change) editor.current?.select(change.from, change.from + change.insert.length); // in view
+        const count = Object.keys(request.overrides).length;
+        setNotice({ bad: false, text: `Added ${count} fitted value${count === 1 ? "" : "s"} under overrides: look them over, then save (Ctrl+Z takes them out).` });
+      } catch (error) {
+        setNotice({ bad: true, text: `Couldn't add the fitted values: ${(error as Error).message}` });
+      }
+    })();
+  }, [file, request, take]);
 
   const dirty = saved !== null && text !== saved.text;
   const { onDirty } = props;

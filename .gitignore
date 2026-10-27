@@ -12,3 +12,4 @@ frontend/test-results/
 frontend/playwright-report/
 .vexsim/*
 !.vexsim/launch.yaml
+!.vexsim/sweeps.yaml

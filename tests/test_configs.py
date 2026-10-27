@@ -4,15 +4,18 @@ place (comments and layout untouched), files written back as they were."""
 from pathlib import Path
 
 import pytest
+import yaml
 
 from vexsim.app.configs import (
     Edit,
     PatchError,
     check_text,
     format_number,
+    format_override,
     kind_of,
     patch_text,
     read_config,
+    set_overrides,
     write_config,
 )
 
@@ -187,3 +190,28 @@ def test_files_are_written_back_in_their_own_line_endings(tmp_path):
     assert raw.startswith(b"\xef\xbb\xbf") and b"\r\n  mass_kg: 7\r\n" in raw
     assert raw.count(b"\n") == raw.count(b"\r\n") and version != read.version
     assert read_config(path).version == version
+
+
+def test_fitted_values_go_under_overrides():
+    values = {"wheel.omni.lateral_mu": 0.283456789, "battery.internal_resistance_ohm": 1.5e-5}
+    added = set_overrides("body:\n  mass_kg: 6  # kg\ndrivetrain: {}", values)
+    assert added == (
+        "body:\n  mass_kg: 6  # kg\ndrivetrain: {}\noverrides:\n"
+        "  wheel.omni.lateral_mu: 0.283457\n  battery.internal_resistance_ohm: 1.5e-05\n"
+    )
+    assert yaml.safe_load(added)["overrides"]["battery.internal_resistance_ohm"] == 1.5e-5
+    assert format_override(1e-5) == "1.0e-05"  # YAML reads 1e-05 as text
+    block = "overrides:\n  wheel.omni.lateral_mu: 0.2  # guess\n  motor.kt: 1.1\nbody: {}\n"
+    assert set_overrides(block, values) == (
+        "overrides:\n  wheel.omni.lateral_mu: 0.283457  # guess\n  motor.kt: 1.1\n"
+        "  battery.internal_resistance_ohm: 1.5e-05\nbody: {}\n"
+    )  # changed in place, comments kept; the new key after the others
+    empty = "overrides:   # fitted below\nbody: {}\n"
+    assert set_overrides(empty, {"a.b": 2}) == "overrides:\n  a.b: 2\nbody: {}\n"
+    assert set_overrides("overrides: {}\n", {"a.b": 2, "c.d": 3}) == "overrides: {a.b: 2, c.d: 3}\n"
+    flow = "overrides: {a.b: 1}\r\nbody: {}\r\n"
+    assert set_overrides(flow, {"c.d": 3}) == "overrides: {a.b: 1, c.d: 3}\r\nbody: {}\r\n"
+    with pytest.raises(PatchError, match="anchor or an alias"):
+        set_overrides("overrides: &o\n  a.b: 1\n", {"a.b": 2})
+    with pytest.raises(PatchError, match="isn't a mapping"):
+        set_overrides("overrides: [1]\n", {"a.b": 2})

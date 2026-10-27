@@ -3,6 +3,7 @@
 
 import type {
   AppInfo,
+  CalibrationSetup,
   ConfigCheck,
   ConfigEdit,
   ConfigFile,
@@ -11,6 +12,9 @@ import type {
   JobInfo,
   Preview,
   Replay,
+  ResultAbout,
+  ResultKind,
+  RoutinePlan,
   RunConfiguration,
   RunConfigurations,
   RunDetails,
@@ -18,7 +22,11 @@ import type {
   RunRecord,
   RunSpec,
   RunUpdate,
+  ScenarioInfo,
   SessionInfo,
+  StartJob,
+  Sweep,
+  SweepsFile,
   Tape,
   Telemetry,
   WorkspaceInfo,
@@ -64,12 +72,44 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type StartResult = { session: SessionInfo } | { problem: RunProblem };
 
+/** A request whose 422 may carry a RunProblem (a config's issues): what it gave, or that. */
+async function orProblem<T>(path: string, init: RequestInit): Promise<{ ok: T } | { problem: RunProblem }> {
+  const response = await fetch(path, { credentials: "same-origin", headers: { "content-type": "application/json" }, ...init });
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 422) {
+    if (typeof body.error === "string") return { problem: body as RunProblem };
+    return { problem: { error: describe(body.detail), issues: [] } };
+  }
+  if (!response.ok) throw new ApiError(response.status, describe(body.detail ?? response.statusText));
+  return { ok: body as T };
+}
+
+const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });
+const path = (...parts: string[]) => parts.map(encodeURIComponent).join("/");
+
 export const api = {
   info: () => request<AppInfo>("/api/info"),
   workspace: () => request<WorkspaceInfo>("/api/workspace"),
   sessions: () => request<SessionInfo[]>("/api/sessions"),
   stopSession: (id: string) => request<void>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
   jobs: () => request<JobInfo[]>("/api/jobs"),
+  /** Start a job; a RunProblem if it can't start (a broken config, a missing file). */
+  startJob: (job: StartJob) => orProblem<JobInfo>("/api/jobs", post(job)),
+  /** A job's log from line `since` on, its items from `itemsSince` on, and its result. */
+  job: (id: string, since = 0, itemsSince = 0) => request<JobInfo>(`/api/jobs/${path(id)}?since=${since}&items_since=${itemsSince}`),
+  cancelJob: (id: string) => request<JobInfo>(`/api/jobs/${path(id)}`, { method: "DELETE" }),
+  results: (kind: ResultKind) => request<ResultAbout[]>(`/api/results/${kind}`),
+  result: <T>(kind: ResultKind, id: string) => request<T>(`/api/results/${kind}/${path(id)}`),
+  deleteResult: (kind: ResultKind, id: string) => request<void>(`/api/results/${kind}/${path(id)}`, { method: "DELETE" }),
+  /** A file a job wrote in its result's folder (a report, a CSV), to open or download. */
+  resultFileUrl: (kind: ResultKind, id: string, name: string) => `/api/results/${kind}/${path(id)}/files/${path(name)}`,
+  benchReplay: (id: string, file: string) => request<Replay>(`/api/results/bench/${path(id)}/replay`, post({ file })),
+  scenario: (scenario: string) => orProblem<ScenarioInfo>(`/api/bench/scenario?path=${encodeURIComponent(scenario)}`, { method: "GET" }),
+  sweeps: () => request<SweepsFile>("/api/sweeps"),
+  saveSweeps: (sweeps: Sweep[]) => request<SweepsFile>("/api/sweeps", { method: "PUT", body: JSON.stringify({ sweeps }) }),
+  calibrationSetup: (robot: string) => orProblem<CalibrationSetup>(`/api/calibrate/parameters?robot=${encodeURIComponent(robot)}`, { method: "GET" }),
+  routine: (robot: string, project: string, write = false) => orProblem<RoutinePlan>("/api/calibrate/routine", post({ robot, project, write })),
+  setOverrides: (text: string, values: Record<string, number>) => request<ConfigPatched>("/api/config/overrides", post({ text, values })),
   configurations: () => request<RunConfigurations>("/api/configurations"),
   runs: () => request<RunRecord[]>("/api/runs"),
   run: (id: string) => request<RunDetails>(`/api/runs/${encodeURIComponent(id)}`),

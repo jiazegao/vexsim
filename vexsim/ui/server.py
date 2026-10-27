@@ -8,8 +8,12 @@ app from ``static/`` and an API under ``/api``:
   can't. ``GET /api/sessions[/{id}]``, ``DELETE /api/sessions/{id}`` (stop)
 - ``WS /api/sessions/{id}/ws``: the session's messages (``ServerMessage``) out, commands
   (``ClientCommand``) in
-- ``POST /api/jobs`` (``StartJob``), ``GET /api/jobs[/{id}?since=n]``,
-  ``DELETE /api/jobs/{id}`` (cancel)
+- ``POST /api/jobs`` (``StartJob``: a build, a benchmark, a sweep, ...),
+  ``GET /api/jobs[/{id}?since=n&items_since=k]``, ``DELETE /api/jobs/{id}`` (cancel)
+- ``GET /api/results/{kind}[/{id}[/files/{path}]]``, ``DELETE /api/results/{kind}/{id}``:
+  what benchmarks, sweeps and calibrations found
+- ``GET``/``PUT /api/configurations`` and ``/api/sweeps``: the saved runs and sweeps
+- ``GET``/``PUT /api/config``, ``POST /api/config/{check,patch,overrides}``: the editors
 
 The server can build and run code, so every request needs the random token ``serve``
 prints (in the URL once, then in a cookie), the Host header must be this server, and
@@ -21,8 +25,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
-import json
-import math
 import platform
 import secrets
 import socket
@@ -33,18 +35,26 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from vexsim import __version__
-from vexsim.app import configs, runs
+from vexsim.app import configs, results, runs
+from vexsim.app.benchmarks import ScenarioProblem, describe_scenario
 from vexsim.app.frames import preview_of
 from vexsim.app.jobs import JobManager
+from vexsim.app.jsonsafe import dumps
 from vexsim.app.launch import (
     LAUNCH_FILE,
     LaunchFileError,
@@ -53,15 +63,18 @@ from vexsim.app.launch import (
 )
 from vexsim.app.runspec import RunError, RunSpec, check
 from vexsim.app.session import Session
+from vexsim.app.sweeps import SWEEPS_FILE, SweepError, expand, read_sweeps, write_sweeps
 from vexsim.app.workspace import Workspace
 from vexsim.config.field import FieldConfig
 from vexsim.config.robot import RobotConfig
 from vexsim.ui.protocol import (
     AppInfo,
+    CalibrationSetup,
     ClientCommand,
     ConfigCheck,
     ConfigCheckRequest,
     ConfigFile,
+    ConfigOverridesRequest,
     ConfigPatched,
     ConfigPatchRequest,
     ConfigSave,
@@ -71,39 +84,40 @@ from vexsim.ui.protocol import (
     Preview,
     PreviewRequest,
     ReplayRequest,
+    ResultAbout,
+    ResultReplayRequest,
+    RoutinePlan,
+    RoutineRequest,
     RunConfigurations,
     RunDetails,
     RunProblem,
     RunRecord,
     RunUpdate,
     SaveConfigurations,
+    SaveSweeps,
+    ScenarioInfo,
     SessionInfo,
     StartJob,
     StartSession,
+    SweepsFile,
     TextSpan,
     WorkspaceInfo,
 )
 
 STATIC = Path(__file__).parent / "static"
+JSON = "application/json"
+FILE_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".png": "image/png",
+    ".csv": "text/csv; charset=utf-8",
+    ".yaml": "text/yaml; charset=utf-8",
+    ".json": JSON,
+}
 DEFAULT_PORT = 8642
 DEV_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")  # Vite's dev server
 _COMMANDS = TypeAdapter(ClientCommand)
+_JOBS = TypeAdapter(StartJob)
 _FRAME = object()  # a frame is waiting in a Subscriber
-
-
-def _finite(value):
-    """JSON-safe: NaN and infinities (which browsers can't parse) become null."""
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, dict):
-        return {k: _finite(v) for k, v in value.items()}
-    if isinstance(value, list | tuple):
-        return [_finite(v) for v in value]
-    return value
-
-
-def dumps(message: dict) -> str:
-    return json.dumps(_finite(message), separators=(",", ":"))
 
 
 # --- fanning messages out to browsers -----------------------------------------------------
@@ -231,10 +245,66 @@ class UIServer:
             self._job_done(job)
         return session
 
-    def submit_build(self, project: Path):
+    def submit_build(self, project: Path, debug: bool = False):
         """Build a PROS project (or join its build already running)."""
-        title, key = f"Build {project.name}", f"build:{project}"
-        return self.jobs.submit("build", {"project": str(project)}, title=title, key=key)
+        title, key = f"Build {project.name}" + (" (debug)" if debug else ""), f"build:{project}"
+        params = {"project": str(project), "debug": debug}
+        return self.jobs.submit("build", params, title=title, key=key)
+
+    def submit_job(self, request):
+        """Start a job the browser asked for (a ``StartJob``), its workspace paths checked
+        and made absolute. Raises ValueError (or RunError, ScenarioProblem, SweepError)
+        when it can't start."""
+        ws, kind = self.workspace, request.kind
+        root = str(ws.root)
+        if kind == "build":
+            project = ws.path(request.project)
+            if not (project / "project.pros").is_file() and not (project / "src").is_dir():
+                raise ValueError(f"{request.project} isn't a PROS project")
+            return self.submit_build(project, request.debug)
+        if kind == "doctor":
+            return self.jobs.submit("doctor", {}, title="Check the compiler", key="doctor")
+        params = request.model_dump(exclude={"kind"})
+        if kind == "motor_curves":
+            title = f"Motor curves: {request.cartridge} at {request.supply_voltage:g} V"
+            return self.jobs.submit(kind, params, title=title)
+        if kind in ("drift", "odometry"):
+            robot = self.robot_file(request.robot)
+            params.update(robot=str(robot), robot_name=request.robot)
+            title = f"{'Drift' if kind == 'drift' else 'Odometry'}: {robot.name}"
+            return self.jobs.submit(kind, params, title=title)
+        if kind == "bench":
+            scenario = ws.path(request.scenario)
+            info = describe_scenario(scenario, ws.root)  # fails early on a broken one
+            store = results.results_root(ws.root, "bench")
+            params.update(scenario=str(scenario), root=root, results=str(store))
+            return self.jobs.submit(kind, params, title=f"Bench: {info['name']}")
+        if kind == "calibrate":
+            robot, log = self.robot_file(request.robot), ws.path(request.log)
+            if not log.is_file():
+                raise ValueError(f"{request.log} doesn't exist")
+            store = results.results_root(ws.root, "calibrations")
+            params.update(
+                robot=str(robot),
+                robot_name=request.robot,
+                log=str(log),
+                log_name=request.log,
+                results=str(store),
+            )
+            return self.jobs.submit(kind, params, title=f"Calibrate: {log.name}")
+        if kind == "sweep":
+            expand(request.sweep, read_configurations(ws.root))  # fails early on a bad one
+            store = results.results_root(ws.root, "sweeps")
+            params.update(root=root, results=str(store))
+            return self.jobs.submit(kind, params, title=f"Sweep: {request.sweep.name}")
+        raise ValueError(f"unknown job kind {kind}")
+
+    def robot_file(self, relative: str) -> Path:
+        """A robot config in the workspace (raises ValueError if it isn't one)."""
+        path = self.workspace.path(relative)
+        if not path.is_file():
+            raise ValueError(f"{relative} doesn't exist")
+        return path
 
     def _on_job(self, event: str, job, line) -> None:
         if event == "log":
@@ -490,6 +560,15 @@ def create_app(
             return JSONResponse({"detail": str(exc)}, status_code=422)
         return ConfigPatched(text=text, check=_checked(configs.check_text(text, request.kind)))
 
+    @app.post("/api/config/overrides", responses={422: {}})
+    def config_overrides(request: ConfigOverridesRequest):
+        """Fitted values set under a robot config's ``overrides``, in its text."""
+        try:
+            text = configs.set_overrides(request.text, request.values)
+        except configs.PatchError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return ConfigPatched(text=text, check=_checked(configs.check_text(text, "robot")))
+
     @app.put("/api/config", responses={400: {}, 404: {}, 409: {}})
     def save_config(request: ConfigSave):
         """Write a config, in its own line endings; refused (409, with the version on disk)
@@ -665,19 +744,29 @@ def create_app(
             sender.cancel()
             server.hub.unsubscribe(channel, subscriber)
 
-    @app.post("/api/jobs")
-    def start_job(request: StartJob) -> JobInfo:
+    @app.post("/api/jobs", responses={422: {}})
+    async def start_job(request: Request):
+        """Start a job (``StartJob``); 422 with a ``detail`` (and ``issues``) if it can't."""
         try:
-            project = server.workspace.path(request.project)
-        except ValueError as exc:
+            wanted = _JOBS.validate_python(await request.json())
+        except ValidationError as exc:
+            error = exc.errors()[0]
+            where = ".".join(str(part) for part in error["loc"])
+            detail = f"{where}: {error['msg']}" if where else error["msg"]
+            return JSONResponse({"detail": detail}, status_code=422)
+        try:
+            job = await run_in_threadpool(server.submit_job, wanted)
+        except RunError as exc:
+            return _problem(exc)
+        except ScenarioProblem as exc:
+            return _problem(RunError(str(exc), exc.issues))
+        except (ValueError, OSError, LaunchFileError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
-        if not (project / "project.pros").is_file() and not (project / "src").is_dir():
-            return JSONResponse({"detail": f"{request.project} isn't a PROS project"}, 422)
-        return JobInfo.model_validate(server.submit_build(project).to_dict())
+        return JobInfo.model_validate(job.to_dict())
 
     @app.get("/api/jobs")
     def jobs() -> list[JobInfo]:
-        return [JobInfo.model_validate(j.to_dict(since=len(j.log))) for j in server.jobs.list()]
+        return [JobInfo.model_validate(j.to_dict(brief=True)) for j in server.jobs.list()]
 
     def _job(job_id: str):
         job = server.jobs.get(job_id)
@@ -688,14 +777,164 @@ def create_app(
         return job
 
     @app.get("/api/jobs/{job_id}")
-    def job_info(job_id: str, since: int = 0) -> JobInfo:
-        return JobInfo.model_validate(_job(job_id).to_dict(since=max(0, since)))
+    def job_info(job_id: str, since: int = 0, items_since: int = 0) -> Response:
+        job = _job(job_id)
+        return Response(dumps(job.to_dict(max(0, since), max(0, items_since))), media_type=JSON)
 
     @app.delete("/api/jobs/{job_id}")
     def cancel_job(job_id: str) -> JobInfo:
         job = _job(job_id)
         server.jobs.cancel(job)
-        return JobInfo.model_validate(job.to_dict(since=len(job.log)))
+        return JobInfo.model_validate(job.to_dict(brief=True))
+
+    # --- what the long jobs found (.vexsim/bench, sweeps, calibrations) ------------------
+
+    def _results_root(kind: str) -> Path:
+        if kind not in results.KINDS:
+            from fastapi import HTTPException
+
+            raise HTTPException(404, f"no results of kind {kind}")
+        return results.results_root(server.workspace.root, kind)
+
+    def _no_result(kind: str, result_id: str) -> JSONResponse:
+        return JSONResponse({"detail": f"no {kind} result {result_id}"}, status_code=404)
+
+    @app.get("/api/results/{kind}")
+    def list_results(kind: str) -> list[ResultAbout]:
+        return [ResultAbout.model_validate(a) for a in results.list_results(_results_root(kind))]
+
+    @app.get("/api/results/{kind}/{result_id}", responses={404: {}})
+    def read_result(kind: str, result_id: str) -> Response:
+        """A ``BenchResult``, ``SweepResult`` or ``CalibrationResult``."""
+        try:
+            data = results.read_result(_results_root(kind), result_id)
+        except (OSError, ValueError):
+            return _no_result(kind, result_id)
+        return Response(dumps(data), media_type=JSON)
+
+    @app.delete("/api/results/{kind}/{result_id}", status_code=204, responses={404: {}})
+    def delete_result(kind: str, result_id: str) -> Response:
+        try:
+            results.delete_result(_results_root(kind), result_id)
+        except (OSError, ValueError):
+            return _no_result(kind, result_id)
+        return Response(status_code=204)
+
+    @app.get("/api/results/{kind}/{result_id}/files/{name:path}", responses={404: {}})
+    def result_file(kind: str, result_id: str, name: str) -> Response:
+        """A file a job wrote: a benchmark's report.html and its charts, CSVs, ..."""
+        try:
+            path = results.result_file(_results_root(kind), result_id, name)
+        except (OSError, ValueError):
+            return JSONResponse({"detail": f"no file {name} in {result_id}"}, status_code=404)
+        media = FILE_TYPES.get(path.suffix.lower(), "application/octet-stream")
+        headers = {"Content-Security-Policy": "sandbox"}  # a report is a page of its own
+        if path.suffix.lower() in (".csv", ".yaml"):
+            headers["Content-Disposition"] = f'attachment; filename="{path.name}"'
+        return FileResponse(path, media_type=media, headers=headers)
+
+    @app.post("/api/results/bench/{result_id}/replay", responses={404: {}, 422: {}})
+    def bench_replay(result_id: str, request: ResultReplayRequest) -> Response:
+        """A benchmark's worst case on the field, drawn with its scenario's robot and field."""
+        store = _results_root("bench")
+        try:
+            data = results.read_result(store, result_id)
+            log = results.result_file(store, result_id, request.file)
+        except (OSError, ValueError):
+            return JSONResponse({"detail": f"no file {request.file} in {result_id}"}, 404)
+        scenario = data["scenario"]
+        ws = server.workspace
+        inside = ws.root in log.parents
+        try:
+            prepared = server.check(RunSpec(robot=scenario["robot"], field=scenario["field"]))
+            result = runs.replay_of(
+                log,
+                prepared.config,
+                prepared.field or FieldConfig(),
+                scenario["robot"],
+                ws.relative(log) if inside else str(log),
+            )
+        except RunError as exc:
+            return _problem(exc)
+        except (OSError, ValueError) as exc:
+            return JSONResponse(RunProblem(error=str(exc), issues=[]).model_dump(), 422)
+        for worst in data.get("worst", []):
+            if worst["file"] == request.file:
+                result["name"] = (
+                    f"{scenario['name']}: the worst of {worst['localizer']} / "
+                    f"{worst['controller']} (seed {worst['seed']})"
+                )
+        return Response(dumps(result), media_type=JSON)
+
+    # --- benchmark scenarios, sweeps, calibration ------------------------------------------
+
+    @app.get("/api/bench/scenario", responses={422: {"model": RunProblem}})
+    def scenario_info(path: str):
+        """A scenario, described for the Bench page (``ScenarioInfo``)."""
+        try:
+            info = describe_scenario(server.workspace.path(path), server.workspace.root)
+        except ScenarioProblem as exc:
+            return _problem(RunError(str(exc), exc.issues))
+        except (OSError, ValueError) as exc:
+            return JSONResponse(RunProblem(error=str(exc), issues=[]).model_dump(), 422)
+        return ScenarioInfo.model_validate(info)
+
+    @app.get("/api/sweeps")
+    def sweeps() -> SweepsFile:
+        try:
+            found = read_sweeps(server.workspace.root)
+        except SweepError as exc:
+            return SweepsFile(file=SWEEPS_FILE, sweeps=[], error=str(exc))
+        return SweepsFile(file=SWEEPS_FILE, sweeps=found)
+
+    @app.put("/api/sweeps", responses={409: {}, 422: {}})
+    def save_sweeps(request: SaveSweeps):
+        root = server.workspace.root
+        try:
+            read_sweeps(root)
+        except SweepError as exc:  # never overwrite a file that may hold someone's work
+            return JSONResponse({"detail": f"{exc} (fix the file first)"}, status_code=409)
+        try:
+            write_sweeps(root, request.sweeps)
+        except SweepError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        except OSError as exc:
+            return JSONResponse({"detail": f"can't save {SWEEPS_FILE}: {exc}"}, status_code=500)
+        return SweepsFile(file=SWEEPS_FILE, sweeps=read_sweeps(root))
+
+    def _robot_config(path: str) -> RobotConfig:
+        prepared = server.check(RunSpec(robot=path))  # raises RunError
+        return prepared.config
+
+    @app.get("/api/calibrate/parameters", responses={422: {"model": RunProblem}})
+    def calibration_setup(robot: str):
+        """The parameters a fit adjusts unless told otherwise, with their values now."""
+        from vexsim.app.calibrate import parameters
+
+        try:
+            config = _robot_config(robot)
+        except RunError as exc:
+            return _problem(exc)
+        return CalibrationSetup(robot=robot, parameters=parameters(config))
+
+    @app.post("/api/calibrate/routine", responses={422: {"model": RunProblem}})
+    def calibration_routine(request: RoutineRequest):
+        """The calibration routine in a PROS project: what adding it does, or (``write``)
+        adding it."""
+        from vexsim.app.calibrate import routine_plan, write_routine
+
+        try:
+            config = _robot_config(request.robot)
+            project = server.workspace.path(request.project)
+            if not (project / "project.pros").is_file() and not (project / "src").is_dir():
+                raise ValueError(f"{request.project} isn't a PROS project")
+            root = server.workspace.root
+            plan = (write_routine if request.write else routine_plan)(config, project, root)
+        except RunError as exc:
+            return _problem(exc)
+        except (OSError, ValueError) as exc:
+            return JSONResponse(RunProblem(error=str(exc), issues=[]).model_dump(), 422)
+        return RoutinePlan.model_validate(plan)
 
     if (STATIC / "index.html").is_file():
         app.mount("/", StaticFiles(directory=STATIC, html=True), name="app")

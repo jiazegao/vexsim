@@ -1,4 +1,5 @@
-"""What's in a folder: robots, fields, scenarios, Python programs, PROS projects, inputs, logs.
+"""What's in a folder: robots, fields, scenarios, Python programs, PROS projects, inputs,
+telemetry logs and robot logs.
 
 The UI works on one folder, its workspace. ``Workspace.scan`` finds what vexsim can use
 in it by reading the files, never running them, and ``Workspace.path`` turns the paths the
@@ -13,7 +14,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
-ItemKind = Literal["robot", "field", "scenario", "program", "project", "input", "log", "invalid"]
+ItemKind = Literal[
+    "robot", "field", "scenario", "program", "project", "input", "log", "robotlog", "invalid"
+]
 KIND_ORDER: tuple[str, ...] = (
     "robot",
     "field",
@@ -22,6 +25,7 @@ KIND_ORDER: tuple[str, ...] = (
     "scenario",
     "input",
     "log",
+    "robotlog",
     "invalid",
 )
 SKIP_DIRS = {"node_modules", "__pycache__", "build", "dist", "bin", "venv", "env", "site-packages"}
@@ -31,6 +35,10 @@ MAX_READ = 512 * 1024  # bytes read to classify a file
 
 _PROGRAM_FUNCTION = re.compile(r"^def (initialize|autonomous|opcontrol)\b", re.MULTILINE)
 _TELEMETRY_HEADER = "time_s,phase,x_in,y_in,heading_deg"
+_ROBOT_LOG_HEADER = "time_ms,battery_mv"  # vexsim.calibration.log
+_ROBOT_LOG_BEGIN = "#vexsim-log begin"  # a robot log in a terminal capture
+_CAPTURES = (".txt", ".log")
+MAX_CAPTURE = 20 * 1024 * 1024  # bytes: bigger text files aren't looked into
 _INPUT_COLUMNS = {"LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y", "buttons"}
 
 
@@ -118,9 +126,18 @@ class Workspace:
             header = text.splitlines()[0] if text else ""
             if header.startswith(_TELEMETRY_HEADER):
                 return WorkspaceItem("log", self.relative(path), path.name, "telemetry log")
+            if header.lstrip("\ufeff").startswith(_ROBOT_LOG_HEADER):
+                return WorkspaceItem("robotlog", self.relative(path), path.name, "robot log")
             columns = {c.strip() for c in header.split(",")}
             if "time_s" in columns and columns & _INPUT_COLUMNS:
                 return WorkspaceItem("input", self.relative(path), path.name, "controller input")
+        if (
+            suffix in _CAPTURES
+            and _size(path) <= MAX_CAPTURE
+            and _ROBOT_LOG_BEGIN in (_read(path) or "")
+        ):
+            detail = "robot log, in terminal output"
+            return WorkspaceItem("robotlog", self.relative(path), path.name, detail)
         return None
 
     def _config(self, path: Path) -> WorkspaceItem | None:
@@ -179,6 +196,13 @@ def _first_error(report) -> str:
     issue = errors[0]
     more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
     return f"{issue.location or '(document)'}: {issue.message}{more}"
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return MAX_CAPTURE + 1
 
 
 def _read(path: Path, limit: int = MAX_READ) -> str | None:

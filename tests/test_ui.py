@@ -162,6 +162,9 @@ def test_workspace_finds_what_vexsim_can_use(tmp_path):
     shutil.copy(examples / "inputs" / "strafe_square.csv", tmp_path)
     shutil.copytree(examples / "pros_projects" / "minimal_pros4", tmp_path / "minimal")
     (tmp_path / "run.csv").write_text("time_s,phase,x_in,y_in,heading_deg,est_x_in\n0,a,0,0,0,0\n")
+    shutil.copy(examples / "logs" / "full_omni_routine.csv", tmp_path)  # a robot log
+    (tmp_path / "terminal.txt").write_text("PROS terminal\n#vexsim-log begin\ntime_ms,battery_mv\n")
+    (tmp_path / "notes.txt").write_text("nothing to see\n")
     (tmp_path / "broken.yaml").write_text("drivetrain: [unclosed\n")
     (tmp_path / "notes.yaml").write_text("anything: else\n")  # not a vexsim config
     (tmp_path / "helper.py").write_text("def helper():\n    pass\n")  # not a program
@@ -179,6 +182,8 @@ def test_workspace_finds_what_vexsim_can_use(tmp_path):
         ("scenario", "s_curve.yaml"),
         ("input", "strafe_square.csv"),
         ("log", "run.csv"),
+        ("robotlog", "full_omni_routine.csv"),
+        ("robotlog", "terminal.txt"),
         ("invalid", "broken.yaml"),
     }
     assert found[("robot", "robots/full_omni_6m.yaml")].detail == "differential, 6 drive motors"

@@ -23,13 +23,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from vexsim.app.launch import RunConfiguration
 from vexsim.app.runs import PoseErrorSummary, RunRecord
 from vexsim.app.runspec import RunSpec
+from vexsim.app.sweeps import Sweep
 from vexsim.config.field import FIELD_MODELS, FieldConfig
 from vexsim.config.robot import ROBOT_MODELS, RobotConfig
 
-ItemKind = Literal["robot", "field", "scenario", "program", "project", "input", "log", "invalid"]
+ItemKind = Literal[
+    "robot", "field", "scenario", "program", "project", "input", "log", "robotlog", "invalid"
+]
 SessionState = Literal["building", "starting", "running", "paused", "finished", "error", "stopped"]
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 ConfigKind = Literal["robot", "field"]
+ResultKind = Literal["bench", "sweeps", "calibrations"]
+Workers = Annotated[int, Field(ge=1, le=64)]
 
 
 class _Message(BaseModel):
@@ -79,12 +84,20 @@ class SessionInfo(_Message):
 
 
 class JobInfo(_Message):
+    """A long task (``GET /api/jobs/{id}?since=n&items_since=k``): its log from line n on,
+    its items (parts of its result that came early) from k on, and once it's done, its
+    result. Listed jobs (``GET /api/jobs``) carry neither, nor their result."""
+
     id: str
     kind: str
     title: str
+    params: dict[str, Any]
     state: JobState
-    log: list[str]  # from the line asked for (``since``) on
+    log: list[str]
     log_size: int
+    progress: tuple[int, int] | None  # done, total
+    items: list[dict[str, Any]]
+    items_size: int
     result: dict[str, Any] | None
     error: str | None
     created: float
@@ -98,9 +111,91 @@ class StartSession(_Message):
     name: str | None = None  # what to call its recorded runs (a saved run's name)
 
 
-class StartJob(_Message):
+class BuildJob(_Message):
+    """``vexsim build``."""
+
     kind: Literal["build"]
     project: str  # workspace path of a PROS project
+    debug: bool = False  # -O0 -g, for a debugger
+
+
+class DoctorJob(_Message):
+    """``vexsim doctor``: is there a compiler that builds and runs PROS projects?"""
+
+    kind: Literal["doctor"]
+
+
+class MotorCurvesJob(_Message):
+    """``vexsim motor-curves``; its result is a ``MotorCurves``."""
+
+    kind: Literal["motor_curves"]
+    cartridge: Literal["red", "green", "blue"] = "green"
+    supply_voltage: Annotated[float, Field(ge=6, le=14)] = 12.8
+    points: Annotated[int, Field(ge=5, le=401)] = 61
+
+
+class DriftJob(_Message):
+    """``vexsim drift``; its result is a ``Drift``."""
+
+    kind: Literal["drift"]
+    robot: str
+    left: Annotated[float, Field(ge=-1, le=1)] = 1.0  # fractions of rated speed
+    right: Annotated[float, Field(ge=-1, le=1)] = 0.4
+    seconds: Annotated[float, Field(gt=0, le=10)] = 1.5
+    lateral_mu: Annotated[
+        list[Annotated[float, Field(gt=0, le=2)]], Field(min_length=1, max_length=3)
+    ] = [0.4, 0.2, 0.1]
+
+
+class OdometryJob(_Message):
+    """``vexsim odometry``; its result is an ``Odometry``."""
+
+    kind: Literal["odometry"]
+    robot: str
+    script: Literal["gentle", "aggressive"] = "aggressive"
+    noise: Literal["ideal", "default", "harsh"] | None = None  # None: as configured
+    seed: Annotated[int, Field(ge=0)] = 0
+
+
+class BenchJob(_Message):
+    """``vexsim bench``; its result is the id of a ``BenchResult``."""
+
+    kind: Literal["bench"]
+    scenario: str
+    seeds: Annotated[int, Field(ge=1, le=1000)] = 20
+    first_seed: Annotated[int, Field(ge=0)] = 0
+    workers: Workers | None = None  # None: all but one core
+    localizers: list[str] | None = None  # None: all of the scenario's
+    controllers: list[str] | None = None
+    worst_cases: bool = True  # re-run each combination's worst trial with full telemetry
+
+
+class CalibrateJob(_Message):
+    """``vexsim calibrate``; its result is the id of a ``CalibrationResult``."""
+
+    kind: Literal["calibrate"]
+    robot: str
+    log: str  # a robot log in the workspace
+    fit: list[str] | None = None  # parameters to fit; None: the wheel parameters
+    compare_only: bool = False  # replay the log as the config has it, fit nothing
+    max_iterations: Annotated[int, Field(ge=1, le=100)] = 12
+    workers: Workers | None = None
+
+
+class SweepJob(_Message):
+    """A sweep (saved or not); its result is the id of a ``SweepResult``."""
+
+    kind: Literal["sweep"]
+    sweep: Sweep
+    workers: Workers | None = None
+
+
+StartJob = Annotated[
+    Union[  # noqa: UP007 - a named union, for the TypeScript generator
+        BuildJob, DoctorJob, MotorCurvesJob, DriftJob, OdometryJob, BenchJob, CalibrateJob, SweepJob
+    ],
+    Field(discriminator="kind"),
+]
 
 
 class RunProblem(_Message):
@@ -426,6 +521,315 @@ class ConfigSaved(_Message):
     version: str
 
 
+# --- results of the long jobs (analysis, benchmarks, sweeps, calibration) -----------------
+
+
+class MotorCurve(_Message):
+    command: str  # "velocity" or "voltage"
+    label: str
+    speed_rpm: list[float]
+    torque_nm: list[float]
+    current_a: list[float]
+    power_w: list[float]
+
+
+class MotorCurves(_Message):
+    """A motor on the simulated dynamometer, under each command."""
+
+    cartridge: str
+    supply_voltage: float
+    current_limit_a: float
+    curves: list[MotorCurve]
+
+
+class DriftRun(_Message):
+    lateral_mu: float
+    true: list[tuple[float, float]]
+    odometry: list[tuple[float, float]]
+    final_error_in: float
+
+
+class Drift(_Message):
+    """An arc at fixed side speeds, for each roller friction: the true path against what
+    drive-encoder odometry believes."""
+
+    left: float
+    right: float
+    seconds: float
+    runs: list[DriftRun]
+
+
+class OdometryEstimate(_Message):
+    name: str
+    path: list[tuple[float, float, float]]
+    position_error_in: list[float]
+    heading_error_deg: list[float]
+    final_in: float
+    final_deg: float
+    worst_in: float
+
+
+class Odometry(_Message):
+    """A scripted drive, and each baseline localizer's estimate against the truth."""
+
+    script: str
+    noise: str | None
+    seed: int
+    time_s: list[float]
+    truth: list[tuple[float, float, float]]
+    estimates: list[OdometryEstimate]
+
+
+class ResultAbout(_Message):
+    """A saved result of a benchmark, a sweep or a calibration (``GET /api/results/{kind}``)."""
+
+    id: str
+    kind: ResultKind
+    title: str
+    created: float
+    summary: str
+
+
+class ScenarioController(_Message):
+    name: str
+    kind: str
+    project: str | None
+
+
+class ScenarioInfo(_Message):
+    """A benchmark scenario, described (``GET /api/bench/scenario?path=``)."""
+
+    name: str
+    description: str
+    path: str
+    robot: str  # workspace paths
+    field: str | None
+    task: str
+    tolerance_in: float | None
+    time_limit_s: float
+    noise: str | None
+    disturbances: list[str]
+    randomized: list[str]  # what each seed changes
+    localizers: list[str]
+    controllers: list[ScenarioController]
+
+
+class Metric(_Message):
+    key: str
+    label: str
+
+
+class Combination(_Message):
+    localizer: str
+    controller: str
+
+
+class Stats(_Message):
+    mean: float
+    median: float
+    p95: float
+    max: float
+
+
+class BenchSummary(_Message):
+    localizer: str
+    controller: str
+    trials: int
+    success_rate: float | None
+    timeouts: int
+    stats: dict[str, Stats | None]  # by metric key; None when no trial has a value
+
+
+class WorstCase(_Message):
+    localizer: str
+    controller: str
+    seed: int
+    file: str  # its telemetry log, in the result's folder
+
+
+class BenchResult(_Message):
+    """A benchmark's result (``GET /api/results/bench/{id}``). ``rows`` are the trials, as
+    trials.csv has them."""
+
+    about: ResultAbout
+    scenario: ScenarioInfo
+    first_seed: int
+    seeds: int
+    workers: int
+    wall_time_s: float
+    metrics: list[Metric]
+    combos: list[Combination]
+    summary: list[BenchSummary]
+    rows: list[dict[str, Any]]
+    worst: list[WorstCase]
+    report: str | None  # report.html, when matplotlib is there to draw its charts
+    files: list[str]
+    command: str  # the vexsim bench command that runs the same benchmark
+
+
+class ResultReplayRequest(_Message):
+    file: str  # a telemetry log in the result's folder (a benchmark's worst case)
+
+
+class SweepsFile(_Message):
+    """The workspace's sweeps (``.vexsim/sweeps.yaml``); ``error`` if that file can't be
+    read."""
+
+    file: str
+    sweeps: list[Sweep]
+    error: str | None = None
+
+
+class SaveSweeps(_Message):
+    sweeps: list[Sweep]
+
+
+class SweepVariation(_Message):
+    label: str
+    env: dict[str, str]
+
+
+class SweepTrial(_Message):
+    """One run of a sweep: what ran (``spec``, to run it again exactly), whether its program
+    finished, and how far the robot code's pose was from the truth (None without one)."""
+
+    index: int
+    run: str  # the saved run's name
+    variation: str  # its label
+    env: dict[str, str]
+    seed: int
+    start: tuple[float, float, float]  # where the robot was put down
+    spec: RunSpec
+    finished: bool
+    error: str | None
+    seconds: float | None  # how long the program ran
+    end: tuple[float, float, float] | None  # the true pose at the end
+    end_estimate: tuple[float, float, float] | None
+    mean_in: float | None
+    max_in: float | None
+    final_in: float | None
+    max_deg: float | None
+    trace: list[float | None]  # the position error every trace_step_s
+    wall_s: float
+
+
+class SweepResult(_Message):
+    """A sweep's result (``GET /api/results/sweeps/{id}``); live, its trials arrive one by
+    one as the job's items."""
+
+    about: ResultAbout
+    sweep: Sweep
+    variations: list[SweepVariation]
+    trace_step_s: float
+    workers: int
+    wall_time_s: float
+    trials: list[SweepTrial]
+    files: list[str]
+
+
+class FitParameter(_Message):
+    name: str
+    value: float  # the robot's now: its override, or the default
+    overridden: bool
+
+
+class CalibrationSetup(_Message):
+    """What a fit adjusts unless told otherwise (``GET /api/calibrate/parameters?robot=``)."""
+
+    robot: str
+    parameters: list[FitParameter]
+
+
+class RoutineRequest(_Message):
+    robot: str
+    project: str  # a PROS project in the workspace
+    write: bool = False  # False: only say what it would do
+
+
+class RoutineFile(_Message):
+    path: str
+    state: Literal["new", "same", "different"]  # as written for this robot, or otherwise
+
+
+class RoutineStep(_Message):
+    name: str
+    start_s: float
+    seconds: float
+
+
+class RoutinePlan(_Message):
+    """The calibration routine in a PROS project (``POST /api/calibrate/routine``)."""
+
+    project: str
+    files: list[RoutineFile]
+    seconds: float
+    steps: list[RoutineStep]
+
+
+class LogFacts(_Message):
+    rows: int
+    seconds: float
+    found: str  # e.g. "4 motors, 2 rotation sensors, 1 IMU"
+    skipped_lines: int
+    ignored_motors: list[int]  # logged motors that aren't in the drivetrain
+
+
+class FittedParameter(_Message):
+    name: str
+    before: float
+    after: float
+    uncertainty: float  # one standard deviation, as a fraction of the value
+
+
+class DirectParameter(_Message):
+    name: str
+    before: float | None
+    after: float  # read off the log (the battery's resistance)
+
+
+class RmsGroup(_Message):
+    group: str
+    unit: str
+    before: float | None
+    after: float
+
+
+class PanelSeries(_Message):
+    name: str  # "robot log", "simulated, before the fit" or "simulated"
+    values: list[float | None]
+
+
+class CalibrationPanel(_Message):
+    title: str
+    unit: str
+    time_s: list[float]
+    series: list[PanelSeries]
+
+
+class CalibrationResult(_Message):
+    """A calibration's result (``GET /api/results/calibrations/{id}``)."""
+
+    about: ResultAbout
+    robot: str
+    log: str
+    log_facts: LogFacts
+    compare_only: bool
+    parameters: list[FittedParameter]
+    direct: list[DirectParameter]
+    rms: list[RmsGroup]
+    overrides: dict[str, float]  # every fitted value, for the robot config
+    replays: int
+    panels: list[CalibrationPanel]
+    files: list[str]
+
+
+class ConfigOverridesRequest(_Message):
+    """Set ``overrides`` in a robot config's text (``POST /api/config/overrides``)."""
+
+    text: str
+    values: dict[str, float]
+
+
 class ConsoleMessage(_Message):
     type: Literal["console"]
     lines: list[str]
@@ -501,7 +905,15 @@ MODELS: list[type[BaseModel]] = [
     SessionInfo,
     JobInfo,
     StartSession,
-    StartJob,
+    BuildJob,
+    DoctorJob,
+    MotorCurvesJob,
+    DriftJob,
+    OdometryJob,
+    BenchJob,
+    CalibrateJob,
+    Sweep,
+    SweepJob,
     RunProblem,
     PreviewRequest,
     Preview,
@@ -547,6 +959,41 @@ MODELS: list[type[BaseModel]] = [
     ConfigPatched,
     ConfigSave,
     ConfigSaved,
+    MotorCurve,
+    MotorCurves,
+    DriftRun,
+    Drift,
+    OdometryEstimate,
+    Odometry,
+    ResultAbout,
+    ScenarioController,
+    ScenarioInfo,
+    Metric,
+    Combination,
+    Stats,
+    BenchSummary,
+    WorstCase,
+    BenchResult,
+    ResultReplayRequest,
+    SweepsFile,
+    SaveSweeps,
+    SweepVariation,
+    SweepTrial,
+    SweepResult,
+    FitParameter,
+    CalibrationSetup,
+    RoutineRequest,
+    RoutineFile,
+    RoutineStep,
+    RoutinePlan,
+    LogFacts,
+    FittedParameter,
+    DirectParameter,
+    RmsGroup,
+    PanelSeries,
+    CalibrationPanel,
+    CalibrationResult,
+    ConfigOverridesRequest,
     ConsoleMessage,
     BuildMessage,
     ErrorMessage,
@@ -560,6 +1007,8 @@ ALIASES: dict[str, Any] = {
     "SessionState": SessionState,
     "JobState": JobState,
     "ConfigKind": ConfigKind,
+    "ResultKind": ResultKind,
+    "StartJob": StartJob,
     "ServerMessage": ServerMessage,
     "ClientCommand": ClientCommand,
 }

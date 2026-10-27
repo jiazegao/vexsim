@@ -1322,6 +1322,15 @@ a.button:hover {
   background: var(--surface-2);
 }
 
+.result-head a.button {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+.result-head a.button:hover {
+  background: var(--surface-3);
+}
+
 .plots {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
@@ -1668,6 +1677,451 @@ button.pagetab,
 
 /* --- narrow screens ---------------------------------------------------------------- */
 
+/* --- the pages: Sweeps, Bench, Calibrate, Analyze, Build ----------------------------- */
+
+.pagetabs-gap {
+  width: 1px;
+  margin: 6px 8px;
+  background: var(--border);
+}
+
+.pagebox {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.page-head h1 {
+  margin: 4px 0 2px;
+  font-size: 20px;
+}
+
+.page-head p {
+  margin: 0;
+  max-width: 80ch;
+}
+
+.page-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 12px;
+  align-items: start;
+}
+
+.page-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.page-side {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.card h3 {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+}
+
+.card p {
+  margin: 0;
+}
+
+.card > .field {
+  flex: 0 0 auto;
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.form-row .grow {
+  flex: 1 1 240px;
+}
+
+.form-row .spacer {
+  flex: 1;
+}
+
+.field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+.bad {
+  color: var(--critical);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+fieldset.choices,
+fieldset.vary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 6px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+fieldset.choices legend,
+fieldset.vary legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+fieldset.choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+fieldset.vary {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+fieldset.vary .form-row {
+  align-items: center;
+}
+
+.runs-choice {
+  flex-direction: column;
+}
+
+.choice-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.choice-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 2px 14px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.choice-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.choice-list input {
+  flex: none;
+}
+
+.choice-list .missing {
+  color: var(--text-muted);
+}
+
+.actions-row {
+  align-items: center;
+}
+
+table.data {
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 100%;
+}
+
+table.data.compact {
+  min-width: 0;
+}
+
+table.data th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+table.data td {
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--gridline);
+  vertical-align: top;
+}
+
+table.data .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data tr.chosen td {
+  background: var(--accent-wash);
+}
+
+table.data td.best {
+  font-weight: 700;
+}
+
+table.data .row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 10px 16px;
+}
+
+.charts.one {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.small-multiples {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.chart .plot-canvas {
+  cursor: crosshair;
+}
+
+.chart .plot-label {
+  max-width: 260px;
+}
+
+.analysis {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  align-items: start;
+}
+
+.path-canvas {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--gridline);
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+.start-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--text-secondary);
+}
+
+.job {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.job-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.progress {
+  position: relative;
+  flex: 0 1 240px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.progress > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--series-1);
+  border-radius: 3px;
+  transition: width 0.2s;
+}
+
+.job-last {
+  max-width: 50ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-log summary,
+details.trials summary,
+.card details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.job-log pre {
+  max-height: 220px;
+  margin: 6px 0 0;
+}
+
+.results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.results li {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.results li .item {
+  flex: 1;
+  min-width: 0;
+}
+
+.results li.shown .item {
+  background: var(--accent-wash);
+}
+
+.results .item-detail {
+  white-space: normal;
+}
+
+.result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+dl.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+}
+
+dl.facts dt {
+  color: var(--text-secondary);
+}
+
+dl.facts dd {
+  margin: 0;
+}
+
+.scenario {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+ul.worst,
+ul.files,
+ul.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ul.worst li,
+ul.files li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+ul.checks li {
+  display: flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+ul.checks li.ok > span:first-child {
+  color: var(--good);
+}
+
+ul.checks li.bad > span:first-child {
+  color: var(--critical);
+}
+
+ol.steps {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.command {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.subtabs {
+  border-bottom: 1px solid var(--border);
+}
+
 @media (max-width: 1000px) {
   .workarea {
     grid-template-columns: minmax(0, 1fr);
@@ -1683,8 +2137,15 @@ button.pagetab,
 
 @media (max-width: 760px) {
   .editor-split,
-  .editor-foot {
+  .editor-foot,
+  .page-split,
+  .analysis {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-side {
+    position: static;
+    max-height: none;
   }
 
   .editor-split {

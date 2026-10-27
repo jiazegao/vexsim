@@ -31,6 +31,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from vexsim.app.jsonsafe import finite
 from vexsim.app.runspec import RunSpec
 
 RUNS_DIR = ".vexsim/runs"
@@ -169,7 +170,7 @@ class TapeRecorder:
         )
         tape = {"scene": self.scene, "samples": self.samples, "events": self.events}
         with gzip.open(self.folder / "tape.json.gz", "wt", encoding="utf-8") as f:
-            json.dump(_finite(tape), f, separators=(",", ":"))
+            json.dump(finite(tape), f, separators=(",", ":"))
         if recorder is not None and recorder.rows:
             recorder.write_csv(self.folder / "telemetry.csv.gz")
         (self.folder / "console.txt").write_text(
@@ -181,17 +182,6 @@ class TapeRecorder:
 
 def _rounded(values: dict) -> dict:
     return {k: round(float(v), 3) for k, v in values.items()}
-
-
-def _finite(value):
-    """JSON-safe: NaN and infinities become null."""
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, dict):
-        return {k: _finite(v) for k, v in value.items()}
-    if isinstance(value, list | tuple):
-        return [_finite(v) for v in value]
-    return value
 
 
 def _write_record(folder: Path, record: RunRecord) -> None:
@@ -363,6 +353,6 @@ def replay_of(log_path: Path, config, field, robot_path: str, log_name: str | No
     events = {"overlay": [], "lcd": [], "controller_screen": []}
     return {
         "name": f"{log_path.name} (replay)",
-        "tape": _finite({"scene": scene, "samples": samples, "events": events}),
+        "tape": finite({"scene": scene, "samples": samples, "events": events}),
         "telemetry": telemetry_columns(log_path),
     }

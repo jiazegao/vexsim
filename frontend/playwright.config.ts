@@ -4,16 +4,19 @@ import { defineConfig, devices } from "@playwright/test";
 
 // The end-to-end tests drive the built app (vexsim/ui/static) served by a real
 // `vexsim ui` for this repository. VEXSIM_PYTHON names a Python that has vexsim and
-// its [ui] extra installed (default: `python`). The runs it records go to RUNS (emptied
-// before the tests), not the repository's .vexsim/runs.
+// its [ui] extra installed (default: `python`). The runs it records go to RUNS, and what
+// its benchmarks, sweeps and calibrations find to RESULTS (both emptied before the tests),
+// not the repository's .vexsim.
 export const PORT = 8653;
 export const TOKEN = "e2e-token";
 export const RUNS = join(tmpdir(), "vexsim-e2e-runs");
+export const RESULTS = join(tmpdir(), "vexsim-e2e-results");
 const python = process.env.VEXSIM_PYTHON ?? "python";
 
 export default defineConfig({
   testDir: "e2e",
   globalSetup: "./e2e/setup.ts",
+  workers: 1, // one server for every test: one live run at a time, and the jobs share its cores
   timeout: 60_000,
   expect: { timeout: 30_000 },
   forbidOnly: !!process.env.CI,
@@ -30,6 +33,6 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 60_000,
     stdout: "pipe",
-    env: { VEXSIM_RUNS_DIR: RUNS },
+    env: { VEXSIM_RUNS_DIR: RUNS, VEXSIM_RESULTS_DIR: RESULTS },
   },
 });

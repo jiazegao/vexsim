@@ -262,14 +262,19 @@ def generate(config: RobotConfig, steps: list[Step] | None = None) -> tuple[str,
     return HEADER.substitute(values), SOURCE.substitute(values)
 
 
-def write_routine(config: RobotConfig, project: str | Path) -> list[Path]:
-    """Add the routine to a PROS project folder; returns the files written."""
+def routine_files(project: str | Path) -> list[Path]:
+    """Where the routine goes in a PROS project: its header, then its source."""
     project = Path(project)
-    header, source = generate(config)
-    paths = [
+    return [
         project / "include" / "vexsim_calibration.hpp",
         project / "src" / "vexsim_calibration.cpp",
     ]
+
+
+def write_routine(config: RobotConfig, project: str | Path) -> list[Path]:
+    """Add the routine to a PROS project folder; returns the files written."""
+    header, source = generate(config)
+    paths = routine_files(project)
     for path, text in zip(paths, (header, source), strict=True):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")

@@ -6,7 +6,7 @@ import math
 import os
 import time
 from collections.abc import Callable, Sequence
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import product
@@ -17,6 +17,7 @@ import numpy as np
 from vexsim.bench.scenario import LoadedScenario, load_scenario
 from vexsim.bench.trial import ROBOT_CODE, available_localizers, run_trial
 from vexsim.config.loader import load_robot
+from vexsim.workers import default_workers, process_pool
 
 # Metrics summarized per combination, with how to read them.
 SUMMARY_METRICS = [
@@ -139,7 +140,7 @@ def run_bench(
     for c in ctrls:
         pairs += [(ROBOT_CODE, c)] if c in executables else [(loc, c) for loc in locs]
     jobs = [(path, s, loc, names.index(c), executables.get(c)) for s in seeds for loc, c in pairs]
-    workers = workers or max(1, (os.cpu_count() or 2) - 1)
+    workers = workers or default_workers()
     started = time.perf_counter()
     rows: list[dict] = []
     if workers == 1:
@@ -148,7 +149,7 @@ def run_bench(
             if progress:
                 progress(i + 1, len(jobs))
     else:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with process_pool(workers) as pool:
             futures = [pool.submit(_job, job) for job in jobs]
             for i, future in enumerate(as_completed(futures)):
                 rows.append(future.result())

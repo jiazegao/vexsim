@@ -10,9 +10,17 @@ const GROUPS: { kinds: ItemKind[]; title: string; hint: string }[] = [
   { kinds: ["project"], title: "PROS projects", hint: "Click to build and run this project" },
   { kinds: ["input"], title: "Controller inputs", hint: "Click to drive with this recorded input" },
   { kinds: ["log"], title: "Telemetry logs", hint: "Click to play this log back, drawn with the robot and field picked above" },
-  { kinds: ["scenario"], title: "Benchmark scenarios", hint: "Benchmarks get their own page in a later version" },
+  { kinds: ["robotlog"], title: "Robot logs", hint: "Click to calibrate the simulated robot with this log" },
+  { kinds: ["scenario"], title: "Benchmark scenarios", hint: "Click to benchmark it" },
   { kinds: ["invalid"], title: "Unreadable configs", hint: "Click to open it and fix the YAML" },
 ];
+
+// What a click does on pages that take the item themselves
+const PAGE_HINTS: Record<string, Partial<Record<ItemKind, string>>> = {
+  analyze: { robot: "Click to analyze this robot" },
+  calibrate: { robot: "Click to calibrate this robot", project: "Click to add the calibration routine to this project" },
+  build: { project: "Click to pick this project" },
+};
 
 function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null): boolean {
   switch (item.kind) {
@@ -38,6 +46,8 @@ type Tab = "workspace" | "runs";
 export function Sidebar(props: {
   workspace: WorkspaceInfo | null;
   form: RunForm;
+  page: string; // the page on show: some take what's clicked themselves
+  picked: string[] | null; // what that page has picked (null: the run form's picks show)
   onPick: (item: WorkspaceItem) => void;
   onEdit: (item: WorkspaceItem) => void; // open a robot or field config in its editor
   onRefresh: () => void;
@@ -79,8 +89,8 @@ export function Sidebar(props: {
           {GROUPS.map((group) => {
             const items = workspace?.items.filter((item) => group.kinds.includes(item.kind)) ?? [];
             if (!items.length) return null;
-            const pickable = group.kinds[0] !== "scenario";
             const editable = ["robot", "field"].includes(group.kinds[0]);
+            const hint = PAGE_HINTS[props.page]?.[group.kinds[0]] ?? group.hint;
             return (
               <section key={group.title} className="group">
                 <h2>
@@ -88,15 +98,15 @@ export function Sidebar(props: {
                 </h2>
                 <ul>
                   {items.map((item) => {
-                    const selected = inUse(item, form, props.shownLog);
+                    const selected = props.picked ? props.picked.includes(item.path) : inUse(item, form, props.shownLog);
                     return (
                       <li key={item.kind + item.path} className={editable ? "editable" : undefined}>
                         <button
-                          className={`item${selected ? " selected" : ""}${pickable ? "" : " inert"}`}
+                          className={`item${selected ? " selected" : ""}`}
                           data-testid={`item-${item.path}`}
-                          title={`${item.path}\n${group.hint}`}
-                          aria-pressed={pickable ? selected : undefined}
-                          onClick={() => pickable && onPick(item)}
+                          title={`${item.path}\n${hint}`}
+                          aria-pressed={selected}
+                          onClick={() => onPick(item)}
                         >
                           <span className="item-name">{item.name}</span>
                           <span className="item-detail">{item.problem ? "" : item.detail}</span>

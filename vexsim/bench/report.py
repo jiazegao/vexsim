@@ -219,23 +219,11 @@ def write_report(result: BenchResult, out_dir: str | Path, *, worst_cases: bool 
     ]  # fmt: skip
     worst_html = ""
     if worst_cases:
-        trials = {}
-        replays = []
-        controllers = {c.name: c for c in result.loaded.controllers}
-        for loc, ctrl in result.combos():
-            row = result.worst(loc, ctrl)
-            trial = run_trial(
-                result.loaded,
-                row["seed"],
-                loc,
-                controllers[ctrl],
-                record=True,
-                executable=result.executables.get(ctrl),
-            )
-            trials[(loc, ctrl)] = trial
-            name = f"worst_{slug(loc)}__{slug(ctrl)}.csv"
-            trial.telemetry.recorder.write_csv(out / name)
-            replays.append((loc, ctrl, row["seed"], name))
+        trials = write_worst_cases(result, out)
+        replays = [
+            (loc, ctrl, trial.seed, worst_case_name(loc, ctrl))
+            for (loc, ctrl), trial in trials.items()
+        ]
         charts.append(("Worst case of each combination", _worst_case_chart(result, trials)))
         robot = _display(result.loaded.path(s.robot))
         items = "".join(
@@ -252,6 +240,31 @@ def write_report(result: BenchResult, out_dir: str | Path, *, worst_cases: bool 
             (chart_dir / f"{slug(title)}.png").write_bytes(png)
     (out / "report.html").write_text(_html(result, charts, worst_html), encoding="utf-8")
     return out / "report.html"
+
+
+def worst_case_name(localizer: str, controller: str) -> str:
+    """The telemetry log of a combination's worst trial, in the report's folder."""
+    return f"worst_{slug(localizer)}__{slug(controller)}.csv"
+
+
+def write_worst_cases(result: BenchResult, out: Path) -> dict:
+    """Re-run each combination's worst trial with full telemetry (runs are deterministic)
+    and write its log; returns the trials by (localizer, controller)."""
+    trials = {}
+    controllers = {c.name: c for c in result.loaded.controllers}
+    for loc, ctrl in result.combos():
+        row = result.worst(loc, ctrl)
+        trial = run_trial(
+            result.loaded,
+            row["seed"],
+            loc,
+            controllers[ctrl],
+            record=True,
+            executable=result.executables.get(ctrl),
+        )
+        trials[(loc, ctrl)] = trial
+        trial.telemetry.recorder.write_csv(out / worst_case_name(loc, ctrl))
+    return trials
 
 
 def _fmt(value, digits: int = 2) -> str:

@@ -18,9 +18,9 @@ import type { Layers } from "./draw";
 import { Playhead, usePlayheadClock } from "./playhead";
 import type { Editor } from "./problems";
 import { EDITORS } from "./problems";
-import type { AppInfo, Preview, RunConfiguration, RunProblem, RunRecord, WorkspaceInfo, WorkspaceItem } from "./protocol";
+import type { AppInfo, Preview, RunConfiguration, RunProblem, RunRecord, RunSpec, SweepTrial, WorkspaceInfo, WorkspaceItem } from "./protocol";
 import type { Recording } from "./recording";
-import { COMPARE_DASHES, forgetTelemetry, MAX_COMPARED, openLog, openRun, renamed, shortName } from "./recording";
+import { COMPARE_DASHES, forgetTelemetry, MAX_COMPARED, openLog, openRun, openWorstCase, renamed, shortName } from "./recording";
 import type { RunForm } from "./runform";
 import { emptyForm, formToSpec, loadForm, reconcile, saveForm, sameRun, specToForm } from "./runform";
 import { isLive, SessionStore } from "./session";
@@ -32,8 +32,24 @@ import { useController } from "./useController";
 import { useStore } from "./useStore";
 import { canRecordVideo, VideoExport } from "./video";
 
-// The editors (and CodeMirror) load when a config is first opened
+// The editors (and CodeMirror) load when a config is first opened, the pages when first shown
 const ConfigEditor = lazy(() => import("./components/ConfigEditor").then((m) => ({ default: m.ConfigEditor })));
+const SweepsPage = lazy(() => import("./pages/SweepsPage").then((m) => ({ default: m.SweepsPage })));
+const BenchPage = lazy(() => import("./pages/BenchPage").then((m) => ({ default: m.BenchPage })));
+const CalibratePage = lazy(() => import("./pages/CalibratePage").then((m) => ({ default: m.CalibratePage })));
+const AnalyzePage = lazy(() => import("./pages/AnalyzePage").then((m) => ({ default: m.AnalyzePage })));
+const BuildPage = lazy(() => import("./pages/BuildPage").then((m) => ({ default: m.BuildPage })));
+
+type PageId = "simulate" | "sweeps" | "bench" | "calibrate" | "analyze" | "build";
+const PAGES: [PageId, string, string][] = [
+  ["simulate", "Simulate", "Run a robot on the field"],
+  ["sweeps", "Sweeps", "Run saved runs many times over, and measure them"],
+  ["bench", "Bench", "Benchmark scenarios: localizers and controllers over many seeds"],
+  ["calibrate", "Calibrate", "Fit the simulator to a real robot's log"],
+  ["analyze", "Analyze", "Motor curves, drift and odometry"],
+  ["build", "Build", "Build PROS projects; check the compiler"],
+];
+const PAGE_IDS: readonly string[] = PAGES.map(([id]) => id);
 
 const THEME_LABEL: Record<Theme, string> = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
 const EDITOR_KEY = "vexsim.editor";
@@ -84,12 +100,21 @@ export function App() {
   const [closedRun, setClosedRun] = useState(false); // the ended live run was put away
   const [video, setVideo] = useState<VideoExport | null>(null);
   const [openConfigs, setOpenConfigs] = useState<string[]>([]); // configs open in editors
-  const [page, setPage] = useState("simulate"); // "simulate", or an open config's path
+  const [page, setPage] = useState<string>("simulate"); // a PageId, or an open config's path
+  const [visited, setVisited] = useState<string[]>(["simulate"]); // pages made so far (they stay)
+  const [analyzeRobot, setAnalyzeRobot] = useState("");
+  const [benchScenario, setBenchScenario] = useState("");
+  const [calibration, setCalibration] = useState({ robot: "", log: "", project: "" });
+  const [buildProject, setBuildProject] = useState<string | null>(null);
+  const [overrideRequests, setOverrideRequests] = useState<Record<string, { id: number; overrides: Record<string, number> }>>({});
   const [unsaved, setUnsaved] = useState<Record<string, boolean>>({});
   const [closing, setClosing] = useState<string | null>(null); // asking before closing it
   const playhead = useMemo(() => new Playhead(), []);
   usePlayheadClock(playhead);
   useStore(store);
+  useEffect(() => {
+    if (PAGE_IDS.includes(page)) setVisited((pages) => (pages.includes(page) ? pages : [...pages, page]));
+  }, [page]);
 
   const root = info?.workspace ?? "";
   const rootRef = useRef(root);
@@ -262,30 +287,49 @@ export function App() {
     [playhead],
   );
 
+  /** Start a run of `spec` (replacing any other), called `name` in the run history. */
+  const startRun = useCallback(
+    async (spec: RunSpec, name: string | null) => {
+      setStarting(true);
+      setProblem(null);
+      video?.cancel();
+      try {
+        const started = await api.startSession(spec, name);
+        if ("problem" in started) setProblem(started.problem);
+        else {
+          attach(started.session.id, speed);
+          document.getElementById("field-canvas")?.focus(); // so Space pauses, not runs again
+        }
+      } catch (error) {
+        setProblem({ error: (error as Error).message, issues: [] });
+      } finally {
+        setStarting(false);
+      }
+    },
+    [attach, speed, video],
+  );
+
   const run = useCallback(async () => {
     const result = formToSpec(form);
     if ("error" in result) {
       setProblem({ error: result.error, issues: [] });
       return;
     }
-    setStarting(true);
-    setProblem(null);
-    video?.cancel();
-    try {
-      const chosen = configurations.find((c) => c.name === form.config);
-      const name = chosen && sameRun(form, chosen) ? chosen.name : null; // as saved: its name
-      const started = await api.startSession(result.spec, name);
-      if ("problem" in started) setProblem(started.problem);
-      else {
-        attach(started.session.id, speed);
-        document.getElementById("field-canvas")?.focus(); // so Space pauses, not runs again
-      }
-    } catch (error) {
-      setProblem({ error: (error as Error).message, issues: [] });
-    } finally {
-      setStarting(false);
-    }
-  }, [attach, configurations, form, speed, video]);
+    const chosen = configurations.find((c) => c.name === form.config);
+    const name = chosen && sameRun(form, chosen) ? chosen.name : null; // as saved: its name
+    await startRun(result.spec, name);
+  }, [configurations, form, startRun]);
+
+  /** A sweep's trial, run again on the field (it's deterministic: the same run). */
+  const watchTrial = useCallback(
+    async (trial: SweepTrial, name: string) => {
+      setShown(null);
+      setForm(specToForm(trial.spec));
+      setPage("simulate");
+      await startRun(trial.spec, name);
+    },
+    [startRun],
+  );
 
   const changeSpeed = useCallback(
     (value: number) => {
@@ -333,6 +377,31 @@ export function App() {
     } finally {
       setOpening(null);
     }
+  };
+
+  /** A benchmark's worst case on the field, with its scenario's robot and field. */
+  const watchWorstCase = async (result: string, file: string, robot: string, field: string) => {
+    try {
+      const next = await openWorstCase(result, file, robot, field);
+      video?.cancel();
+      if (await leaveSession()) loadRuns();
+      setForm((current) => ({ ...current, config: "", robot, field }));
+      show(next);
+      setPage("simulate");
+    } catch (error) {
+      setProblem({ error: `Couldn't open that worst case: ${(error as Error).message}`, issues: [] });
+      setPage("simulate");
+    }
+  };
+
+  const pickCalibrationRobot = useCallback((robot: string) => setCalibration((c) => ({ ...c, robot })), []);
+  const pickCalibrationLog = useCallback((log: string) => setCalibration((c) => ({ ...c, log })), []);
+  const pickCalibrationProject = useCallback((project: string) => setCalibration((c) => ({ ...c, project })), []);
+
+  /** A calibration's fitted values, added to a robot config in its editor (to save there). */
+  const applyOverrides = async (robot: string, overrides: Record<string, number>) => {
+    openConfig(robot);
+    setOverrideRequests((all) => ({ ...all, [robot]: { id: (all[robot]?.id ?? 0) + 1, overrides } }));
   };
 
   const toggleCompare = async (record: RunRecord) => {
@@ -427,18 +496,46 @@ export function App() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [anyUnsaved]);
 
+  /** A workspace item clicked in the sidebar: for the page on show where it's of use there,
+   * else for a run on the Simulate page. */
   const pick = (item: WorkspaceItem) => {
-    if (item.kind === "log") {
-      openTelemetryLog(item.path);
-      return;
-    }
     if (item.kind === "invalid") {
       openConfig(item.path); // to fix it
+      return;
+    }
+    if (item.kind === "scenario") {
+      setBenchScenario(item.path);
+      setPage("bench");
+      return;
+    }
+    if (item.kind === "robotlog") {
+      setCalibration((c) => ({ ...c, log: item.path }));
+      setPage("calibrate");
+      return;
+    }
+    if (page === "analyze" && item.kind === "robot") return setAnalyzeRobot(item.path);
+    if (page === "calibrate" && item.kind === "robot") return setCalibration((c) => ({ ...c, robot: item.path }));
+    if (page === "calibrate" && item.kind === "project") return setCalibration((c) => ({ ...c, project: item.path }));
+    if (page === "build" && item.kind === "project") return setBuildProject(item.path);
+    setPage("simulate");
+    if (item.kind === "log") {
+      openTelemetryLog(item.path);
       return;
     }
     const key = item.kind === "project" ? "program" : (item.kind as keyof RunForm);
     if (key in form && key !== "config") setForm({ ...form, [key]: item.path });
   };
+  // what the page on show has picked from the sidebar, to mark there
+  const picked: string[] | null =
+    page === "analyze"
+      ? [analyzeRobot]
+      : page === "bench"
+        ? [benchScenario]
+        : page === "calibrate"
+          ? [calibration.robot, calibration.log, calibration.project]
+          : page === "build"
+            ? [buildProject ?? ""]
+            : null;
 
   const moveStart = useCallback((pose: Pose) => {
     setForm((current) => ({ ...current, x: formatStart(pose[0]), y: formatStart(pose[1]), heading: formatStart(pose[2]) }));
@@ -581,6 +678,8 @@ export function App() {
         <Sidebar
           workspace={workspace}
           form={form}
+          page={page}
+          picked={picked}
           onPick={pick}
           onEdit={(item) => openConfig(item.path)}
           loading={scanning}
@@ -604,29 +703,30 @@ export function App() {
           }
         />
         <main className="main">
-          {openConfigs.length > 0 && (
-            <div className="pagetabs" role="tablist" aria-label="Pages">
-              <button role="tab" aria-selected={page === "simulate"} className={`pagetab${page === "simulate" ? " on" : ""}`} onClick={() => setPage("simulate")} data-testid="page-simulate">
-                Simulate
+          <div className="pagetabs" role="tablist" aria-label="Pages">
+            {PAGES.map(([id, label, hint]) => (
+              <button key={id} role="tab" aria-selected={page === id} className={`pagetab${page === id ? " on" : ""}`} onClick={() => setPage(id)} title={hint} data-testid={`page-${id}`}>
+                {label}
               </button>
-              {openConfigs.map((path) => (
-                <span key={path} className={`pagetab${page === path ? " on" : ""}`}>
-                  <button role="tab" aria-selected={page === path} onClick={() => setPage(path)} title={path} data-testid={`page-${path}`}>
-                    {fileName(path)}
-                    {unsaved[path] && (
-                      <span className="unsaved" title="Unsaved changes" aria-label="unsaved changes">
-                        {" "}
-                        ●
-                      </span>
-                    )}
-                  </button>
-                  <button type="button" className="close" onClick={() => askToClose(path)} aria-label={`Close ${path}`} title="Close">
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+            ))}
+            {openConfigs.length > 0 && <span className="pagetabs-gap" aria-hidden="true" />}
+            {openConfigs.map((path) => (
+              <span key={path} className={`pagetab config${page === path ? " on" : ""}`}>
+                <button role="tab" aria-selected={page === path} onClick={() => setPage(path)} title={path} data-testid={`page-${path}`}>
+                  {fileName(path)}
+                  {unsaved[path] && (
+                    <span className="unsaved" title="Unsaved changes" aria-label="unsaved changes">
+                      {" "}
+                      ●
+                    </span>
+                  )}
+                </button>
+                <button type="button" className="close" onClick={() => askToClose(path)} aria-label={`Close ${path}`} title="Close">
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
           <div className="simulate" hidden={page !== "simulate"}>
             <RunBar
               workspace={workspace}
@@ -703,8 +803,45 @@ export function App() {
                 onKeepOpen={() => setClosing(null)}
                 onDirty={markUnsaved}
                 onSaved={() => info && scan(info, false)}
+                request={overrideRequests[path] ?? null}
               />
             ))}
+          </Suspense>
+          <Suspense fallback={<p className="muted pad">Opening the page…</p>}>
+            {visited.includes("sweeps") && (
+              <div className="pagebox" hidden={page !== "sweeps"}>
+                <SweepsPage configurations={configurations} onWatch={watchTrial} />
+              </div>
+            )}
+            {visited.includes("bench") && (
+              <div className="pagebox" hidden={page !== "bench"}>
+                <BenchPage workspace={workspace} scenario={benchScenario} onScenario={setBenchScenario} onWorstCase={watchWorstCase} />
+              </div>
+            )}
+            {visited.includes("calibrate") && (
+              <div className="pagebox" hidden={page !== "calibrate"}>
+                <CalibratePage
+                  workspace={workspace}
+                  robot={calibration.robot}
+                  onRobot={pickCalibrationRobot}
+                  log={calibration.log}
+                  onLog={pickCalibrationLog}
+                  project={calibration.project}
+                  onProject={pickCalibrationProject}
+                  onApply={applyOverrides}
+                />
+              </div>
+            )}
+            {visited.includes("analyze") && (
+              <div className="pagebox" hidden={page !== "analyze"}>
+                <AnalyzePage workspace={workspace} robot={analyzeRobot || form.robot} onRobot={setAnalyzeRobot} active={page === "analyze"} />
+              </div>
+            )}
+            {visited.includes("build") && (
+              <div className="pagebox" hidden={page !== "build"}>
+                <BuildPage workspace={workspace} root={root} editor={editor} project={buildProject} onProject={setBuildProject} />
+              </div>
+            )}
           </Suspense>
         </main>
       </div>

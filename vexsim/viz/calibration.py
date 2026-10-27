@@ -10,7 +10,7 @@ from vexsim.config.robot import RobotConfig
 from vexsim.viz.odometry import GRID, SERIES, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY
 
 
-def _panels(config: RobotConfig, log: RobotLog) -> list[tuple[str, Channel]]:
+def panels(config: RobotConfig, log: RobotLog) -> list[tuple[str, Channel]]:
     """One motor per gear group, then every tracking wheel and IMU."""
     chans = {c.name: c for c in channels(config, log)}
     out = []
@@ -40,13 +40,13 @@ def plot(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    panels = _panels(config, log)
+    shown = panels(config, log)
     fig, axes = plt.subplots(
-        len(panels), 1, figsize=(8.0, 1.9 * len(panels) + 0.8), sharex=True, facecolor=SURFACE
+        len(shown), 1, figsize=(8.0, 1.9 * len(shown) + 0.8), sharex=True, facecolor=SURFACE
     )
-    axes = [axes] if len(panels) == 1 else list(axes)
+    axes = [axes] if len(shown) == 1 else list(axes)
     t = log.time_s
-    for ax, (label, ch) in zip(axes, panels, strict=True):
+    for ax, (label, ch) in zip(axes, shown, strict=True):
         ax.set_facecolor(SURFACE)
         ax.grid(True, color=GRID, linewidth=0.8)
         ax.set_axisbelow(True)

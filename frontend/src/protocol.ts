@@ -1,10 +1,12 @@
 // Generated from vexsim/ui/protocol.py: python -m vexsim.ui.protocol frontend/src/protocol.ts
 // Don't edit by hand; a test fails when this file is stale.
 
-export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "input" | "log" | "invalid";
+export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "input" | "log" | "robotlog" | "invalid";
 export type SessionState = "building" | "starting" | "running" | "paused" | "finished" | "error" | "stopped";
 export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type ConfigKind = "robot" | "field";
+export type ResultKind = "bench" | "sweeps" | "calibrations";
+export type StartJob = BuildJob | DoctorJob | MotorCurvesJob | DriftJob | OdometryJob | BenchJob | CalibrateJob | SweepJob;
 export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
 export type ClientCommand = SimpleCommand | StepCommand | SpeedCommand | InputCommand;
 
@@ -61,13 +63,18 @@ export interface SessionInfo {
   run_id: string | null;
 }
 
+/** A long task (`GET /api/jobs/{id}?since=n&items_since=k`): its log from line n on, its items (parts of its result that came early) from k on, and once it's done, its result. Listed jobs (`GET /api/jobs`) carry neither, nor their result. */
 export interface JobInfo {
   id: string;
   kind: string;
   title: string;
+  params: Record<string, unknown>;
   state: JobState;
   log: string[];
   log_size: number;
+  progress: [number, number] | null;
+  items: Record<string, unknown>[];
+  items_size: number;
   result: Record<string, unknown> | null;
   error: string | null;
   created: number;
@@ -81,9 +88,85 @@ export interface StartSession {
   name?: string | null;
 }
 
-export interface StartJob {
+/** `vexsim build`. */
+export interface BuildJob {
   kind: "build";
   project: string;
+  debug?: boolean;
+}
+
+/** `vexsim doctor`: is there a compiler that builds and runs PROS projects? */
+export interface DoctorJob {
+  kind: "doctor";
+}
+
+/** `vexsim motor-curves`; its result is a `MotorCurves`. */
+export interface MotorCurvesJob {
+  kind: "motor_curves";
+  cartridge?: "red" | "green" | "blue";
+  supply_voltage?: number;
+  points?: number;
+}
+
+/** `vexsim drift`; its result is a `Drift`. */
+export interface DriftJob {
+  kind: "drift";
+  robot: string;
+  left?: number;
+  right?: number;
+  seconds?: number;
+  lateral_mu?: number[];
+}
+
+/** `vexsim odometry`; its result is an `Odometry`. */
+export interface OdometryJob {
+  kind: "odometry";
+  robot: string;
+  script?: "gentle" | "aggressive";
+  noise?: "ideal" | "default" | "harsh" | null;
+  seed?: number;
+}
+
+/** `vexsim bench`; its result is the id of a `BenchResult`. */
+export interface BenchJob {
+  kind: "bench";
+  scenario: string;
+  seeds?: number;
+  first_seed?: number;
+  workers?: number | null;
+  localizers?: string[] | null;
+  controllers?: string[] | null;
+  worst_cases?: boolean;
+}
+
+/** `vexsim calibrate`; its result is the id of a `CalibrationResult`. */
+export interface CalibrateJob {
+  kind: "calibrate";
+  robot: string;
+  log: string;
+  fit?: string[] | null;
+  compare_only?: boolean;
+  max_iterations?: number;
+  workers?: number | null;
+}
+
+/** A sweep, as .vexsim/sweeps.yaml keeps it. */
+export interface Sweep {
+  name: string;
+  description?: string;
+  runs: string[];
+  vary?: Record<string, string[]>;
+  seeds?: number;
+  first_seed?: number;
+  placement_sd?: [number, number, number];
+  max_seconds?: number;
+}
+
+/** A sweep (saved or not); its result is the id of a `SweepResult`. */
+export interface SweepJob {
+  kind: "sweep";
+  sweep: Sweep;
+  workers?: number | null;
 }
 
 /** Why a run can't start (HTTP 422). */
@@ -558,6 +641,294 @@ export interface ConfigSave {
 
 export interface ConfigSaved {
   version: string;
+}
+
+export interface MotorCurve {
+  command: string;
+  label: string;
+  speed_rpm: number[];
+  torque_nm: number[];
+  current_a: number[];
+  power_w: number[];
+}
+
+/** A motor on the simulated dynamometer, under each command. */
+export interface MotorCurves {
+  cartridge: string;
+  supply_voltage: number;
+  current_limit_a: number;
+  curves: MotorCurve[];
+}
+
+export interface DriftRun {
+  lateral_mu: number;
+  true: [number, number][];
+  odometry: [number, number][];
+  final_error_in: number;
+}
+
+/** An arc at fixed side speeds, for each roller friction: the true path against what drive-encoder odometry believes. */
+export interface Drift {
+  left: number;
+  right: number;
+  seconds: number;
+  runs: DriftRun[];
+}
+
+export interface OdometryEstimate {
+  name: string;
+  path: [number, number, number][];
+  position_error_in: number[];
+  heading_error_deg: number[];
+  final_in: number;
+  final_deg: number;
+  worst_in: number;
+}
+
+/** A scripted drive, and each baseline localizer's estimate against the truth. */
+export interface Odometry {
+  script: string;
+  noise: string | null;
+  seed: number;
+  time_s: number[];
+  truth: [number, number, number][];
+  estimates: OdometryEstimate[];
+}
+
+/** A saved result of a benchmark, a sweep or a calibration (`GET /api/results/{kind}`). */
+export interface ResultAbout {
+  id: string;
+  kind: ResultKind;
+  title: string;
+  created: number;
+  summary: string;
+}
+
+export interface ScenarioController {
+  name: string;
+  kind: string;
+  project: string | null;
+}
+
+/** A benchmark scenario, described (`GET /api/bench/scenario?path=`). */
+export interface ScenarioInfo {
+  name: string;
+  description: string;
+  path: string;
+  robot: string;
+  field: string | null;
+  task: string;
+  tolerance_in: number | null;
+  time_limit_s: number;
+  noise: string | null;
+  disturbances: string[];
+  randomized: string[];
+  localizers: string[];
+  controllers: ScenarioController[];
+}
+
+export interface Metric {
+  key: string;
+  label: string;
+}
+
+export interface Combination {
+  localizer: string;
+  controller: string;
+}
+
+export interface Stats {
+  mean: number;
+  median: number;
+  p95: number;
+  max: number;
+}
+
+export interface BenchSummary {
+  localizer: string;
+  controller: string;
+  trials: number;
+  success_rate: number | null;
+  timeouts: number;
+  stats: Record<string, Stats | null>;
+}
+
+export interface WorstCase {
+  localizer: string;
+  controller: string;
+  seed: number;
+  file: string;
+}
+
+/** A benchmark's result (`GET /api/results/bench/{id}`). `rows` are the trials, as trials.csv has them. */
+export interface BenchResult {
+  about: ResultAbout;
+  scenario: ScenarioInfo;
+  first_seed: number;
+  seeds: number;
+  workers: number;
+  wall_time_s: number;
+  metrics: Metric[];
+  combos: Combination[];
+  summary: BenchSummary[];
+  rows: Record<string, unknown>[];
+  worst: WorstCase[];
+  report: string | null;
+  files: string[];
+  command: string;
+}
+
+export interface ResultReplayRequest {
+  file: string;
+}
+
+/** The workspace's sweeps (`.vexsim/sweeps.yaml`); `error` if that file can't be read. */
+export interface SweepsFile {
+  file: string;
+  sweeps: Sweep[];
+  error?: string | null;
+}
+
+export interface SaveSweeps {
+  sweeps: Sweep[];
+}
+
+export interface SweepVariation {
+  label: string;
+  env: Record<string, string>;
+}
+
+/** One run of a sweep: what ran (`spec`, to run it again exactly), whether its program finished, and how far the robot code's pose was from the truth (None without one). */
+export interface SweepTrial {
+  index: number;
+  run: string;
+  variation: string;
+  env: Record<string, string>;
+  seed: number;
+  start: [number, number, number];
+  spec: RunSpec;
+  finished: boolean;
+  error: string | null;
+  seconds: number | null;
+  end: [number, number, number] | null;
+  end_estimate: [number, number, number] | null;
+  mean_in: number | null;
+  max_in: number | null;
+  final_in: number | null;
+  max_deg: number | null;
+  trace: (number | null)[];
+  wall_s: number;
+}
+
+/** A sweep's result (`GET /api/results/sweeps/{id}`); live, its trials arrive one by one as the job's items. */
+export interface SweepResult {
+  about: ResultAbout;
+  sweep: Sweep;
+  variations: SweepVariation[];
+  trace_step_s: number;
+  workers: number;
+  wall_time_s: number;
+  trials: SweepTrial[];
+  files: string[];
+}
+
+export interface FitParameter {
+  name: string;
+  value: number;
+  overridden: boolean;
+}
+
+/** What a fit adjusts unless told otherwise (`GET /api/calibrate/parameters?robot=`). */
+export interface CalibrationSetup {
+  robot: string;
+  parameters: FitParameter[];
+}
+
+export interface RoutineRequest {
+  robot: string;
+  project: string;
+  write?: boolean;
+}
+
+export interface RoutineFile {
+  path: string;
+  state: "new" | "same" | "different";
+}
+
+export interface RoutineStep {
+  name: string;
+  start_s: number;
+  seconds: number;
+}
+
+/** The calibration routine in a PROS project (`POST /api/calibrate/routine`). */
+export interface RoutinePlan {
+  project: string;
+  files: RoutineFile[];
+  seconds: number;
+  steps: RoutineStep[];
+}
+
+export interface LogFacts {
+  rows: number;
+  seconds: number;
+  found: string;
+  skipped_lines: number;
+  ignored_motors: number[];
+}
+
+export interface FittedParameter {
+  name: string;
+  before: number;
+  after: number;
+  uncertainty: number;
+}
+
+export interface DirectParameter {
+  name: string;
+  before: number | null;
+  after: number;
+}
+
+export interface RmsGroup {
+  group: string;
+  unit: string;
+  before: number | null;
+  after: number;
+}
+
+export interface PanelSeries {
+  name: string;
+  values: (number | null)[];
+}
+
+export interface CalibrationPanel {
+  title: string;
+  unit: string;
+  time_s: number[];
+  series: PanelSeries[];
+}
+
+/** A calibration's result (`GET /api/results/calibrations/{id}`). */
+export interface CalibrationResult {
+  about: ResultAbout;
+  robot: string;
+  log: string;
+  log_facts: LogFacts;
+  compare_only: boolean;
+  parameters: FittedParameter[];
+  direct: DirectParameter[];
+  rms: RmsGroup[];
+  overrides: Record<string, number>;
+  replays: number;
+  panels: CalibrationPanel[];
+  files: string[];
+}
+
+/** Set `overrides` in a robot config's text (`POST /api/config/overrides`). */
+export interface ConfigOverridesRequest {
+  text: string;
+  values: Record<string, number>;
 }
 
 export interface ConsoleMessage {

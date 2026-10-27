@@ -50,6 +50,23 @@ export async function openLog(log: string, robot: string, field: string): Promis
   };
 }
 
+/** A benchmark's worst case (a telemetry log in its result), drawn with the scenario's
+ * robot on its field. */
+export async function openWorstCase(result: string, file: string, robot: string, field: string): Promise<Recording> {
+  const replay = await api.benchReplay(result, file);
+  return {
+    key: `bench:${result}/${file}`,
+    name: replay.name,
+    label: replay.name,
+    run: null,
+    playback: new Playback(replay.tape),
+    telemetry: replay.telemetry,
+    console: [],
+    robot,
+    field,
+  };
+}
+
 /** When a run was made: the time today (to the second: runs come quickly), the day and
  * time before. */
 export function when(created: number, now = Date.now()): string {

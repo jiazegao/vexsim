@@ -28,7 +28,6 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Callable, Sequence
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -37,6 +36,7 @@ from vexsim.calibration.log import RobotLog
 from vexsim.calibration.replay import AGES_MS, LEADS_MS, at_age, commands_logged, simulate
 from vexsim.config.robot import RobotConfig
 from vexsim.physics.params import PARAM_GROUPS, check_overrides, resolve_params
+from vexsim.workers import process_pool
 
 RATE_SAMPLES = 3  # rates from differences over 3 samples (30 ms)
 STEP = 0.02  # finite-difference step in log-parameter space (2%)
@@ -235,7 +235,7 @@ def fit(
     config = config.model_copy(update={"overrides": base})
     start = np.log([current_value(config, n) for n in names])
     lower, upper = start - math.log(20.0), start + math.log(20.0)
-    pool = ProcessPoolExecutor(workers) if workers > 1 and names else None
+    pool = process_pool(workers) if workers > 1 and names else None
     count = 0
     age = 10
     lead = 0

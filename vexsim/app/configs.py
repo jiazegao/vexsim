@@ -14,7 +14,7 @@ import hashlib
 import math
 import re
 import shutil
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -324,7 +324,75 @@ def _same(node: ScalarNode, value: float) -> bool:
     return abs(written - value) <= 1e-9 * max(1.0, abs(value))
 
 
-def _insertion(text: str, found: _Found, edit: Edit) -> tuple[int, int, str]:
+def set_overrides(text: str, values: dict[str, float]) -> str:
+    """A robot config's ``text`` with each of ``values`` under its ``overrides`` (a
+    calibration's fitted parameters): changed where the key is written, added to the
+    mapping where it isn't, and the mapping added at the end when there's none. Raises
+    PatchError."""
+    try:
+        root, shared = _compose(text)
+    except yaml.YAMLError:
+        raise PatchError("the YAML doesn't read: fix it in the text first") from None
+    if not isinstance(root, MappingNode):
+        raise PatchError("a robot config is a mapping of keys")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = [f"  {name}: {format_override(value)}" for name, value in values.items()]
+    node = next(
+        (v for k, v in root.value if isinstance(k, ScalarNode) and k.value == "overrides"), None
+    )
+    if node is None:  # a new mapping, at the end
+        end = len(text.rstrip("\r\n"))
+        return text[:end] + newline + newline.join(["overrides:", *lines]) + newline
+    if id(node) in shared:
+        raise PatchError("overrides comes from an anchor or an alias: change it in the text")
+    if isinstance(node, ScalarNode) and node.tag.endswith(":null"):  # `overrides:`, empty
+        key = next(k for k, v in root.value if v is node)
+        indent = " " * key.start_mark.column
+        line_end = _line_end(text, key.end_mark.index)
+        if text[key.end_mark.index : line_end].split("#")[0].strip(" :~") not in ("", "null"):
+            raise PatchError("overrides isn't a mapping")
+        written = "".join(newline + indent + line for line in lines)
+        return text[: key.end_mark.index] + ":" + written + text[line_end:]
+    if not isinstance(node, MappingNode):
+        raise PatchError("overrides isn't a mapping")
+    if node.flow_style and not node.value:  # `overrides: {}`
+        pairs = ", ".join(line.strip() for line in lines)
+        return text[: node.start_mark.index] + "{" + pairs + "}" + text[node.end_mark.index :]
+    changes: list[tuple[int, int, str]] = []
+    for name, value in values.items():
+        present = next(
+            (v for k, v in node.value if isinstance(k, ScalarNode) and k.value == name), None
+        )
+        if present is None:
+            edit = Edit(f"overrides.{name}", value)
+            changes.append(_insertion(text, _Found([root, node], [name]), edit, format_override))
+        elif not isinstance(present, ScalarNode) or id(present) in shared:
+            raise PatchError(f"overrides.{name} isn't written as a plain number")
+        elif not _same(present, value):
+            changes.append(
+                (present.start_mark.index, present.end_mark.index, format_override(value))
+            )
+    # from the end back; added keys keep their order at the same place
+    order = sorted(range(len(changes)), key=lambda i: (changes[i][0], i), reverse=True)
+    for i in order:
+        start, end, new = changes[i]
+        text = text[:start] + new + text[end:]
+    return text
+
+
+def format_override(value: float) -> str:
+    """A fitted value as ``vexsim calibrate`` prints it: six significant digits."""
+    if not math.isfinite(value):
+        raise PatchError(f"{value} isn't a number a config can hold")
+    text = f"{value:g}"
+    if "e" in text and "." not in text:  # YAML reads 1e-05 as text, 1.0e-05 as a number
+        text = text.replace("e", ".0e")
+    return text
+
+
+def _insertion(
+    text: str, found: _Found, edit: Edit, number: Callable[[float], str] | None = None
+) -> tuple[int, int, str]:
     """Where and what to add for an edit whose key isn't in the file yet."""
     parent = found.chain[-1]
     if len(found.missing) != 1 or not isinstance(found.missing[0], str):
@@ -333,10 +401,11 @@ def _insertion(text: str, found: _Found, edit: Edit) -> tuple[int, int, str]:
         raise PatchError(f"{edit.location} isn't in a mapping")
     key = found.missing[0]
     value = edit.value
+    number = number or format_number
     written = (
-        "[" + ", ".join(format_number(v) for v in value) + "]"
+        "[" + ", ".join(number(v) for v in value) + "]"
         if isinstance(value, list)
-        else format_number(value)
+        else number(value)
     )
     if parent.flow_style:  # {a: 1, b: 2} -> {a: 1, b: 2, key: value}
         if parent.value:
@@ -354,6 +423,14 @@ def _insertion(text: str, found: _Found, edit: Edit) -> tuple[int, int, str]:
     elif line_end > 0 and text[line_end - 1] == "\r":
         line_end -= 1
     return line_end, line_end, f"{newline}{indent}{key}: {written}"
+
+
+def _line_end(text: str, index: int) -> int:
+    """Where the line with ``index`` on it ends (before its line break)."""
+    end = text.find("\n", index)
+    if end < 0:
+        return len(text)
+    return end - 1 if end > 0 and text[end - 1] == "\r" else end
 
 
 def _text_end(node: Node) -> int:

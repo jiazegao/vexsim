@@ -178,6 +178,8 @@ Results with 6 seeds and all four modes (`--seeds 6 --tracking rcl+mcl,mcl,rcl,o
 
 The plot at the top shows seed 0 in every mode. The 216 runs take about 3 minutes on 4 cores.
 
+The browser app (`vexsim ui`) has this evaluation saved as sweeps, on its *Sweeps* page: *1239E: localization* is the 216 runs above, and *1239E: RCL + MCL vs odometry* the script's default. A sweep gives the script's numbers exactly, and shows each routine's error over time beside the table; any of its runs can be watched again on the field ([README, section 7](../README.md#7-the-browser-app-vexsim-ui)).
+
 ## 8. Read the results with their limits in mind
 - **Assumed robot and field.** The mass, wheel spacing and element heights are guesses (steps 4 and 5). How far an omni-wheel robot slides in a hard turn depends on them, so the odometry errors are this simulated robot's, not the real one's.
 - **The distance sensor is a ray.** The real sensor has a cone of view, so it catches edges the ray misses. Its confidence reads 63 whenever it sees something; RCL rejects readings below 60, and MCL widens its error model as confidence drops, so on the robot both see fewer, noisier readings at long range and steep angles.

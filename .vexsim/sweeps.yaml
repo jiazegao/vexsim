@@ -1,0 +1,42 @@
+# Sweeps for `vexsim ui`: each runs saved runs (.vexsim/launch.yaml) once per variation of
+# their environment variables and per seed, puts the robot down a little off its start
+# (placement_sd: x, y in inches, heading in degrees), and measures how far the robot
+# code's pose is from the truth. The app rewrites this file when you save from it
+# (comments here aren't kept).
+version: 1
+sweeps:
+  - name: '1239E: localization'
+    description: 'docs/porting_1239e.md, step 7: every routine in every localization mode'
+    runs:
+      - '1239E: Left 40'
+      - '1239E: Left 30'
+      - '1239E: Left 30_10'
+      - '1239E: skills'
+      - '1239E: Right 40'
+      - '1239E: Right 30'
+      - '1239E: Right 30_10'
+      - '1239E: Right 20_10'
+      - '1239E: alliance1pin'
+    vary:
+      VEXSIM_TRACKING: [rcl+mcl, mcl, rcl, odom]
+    seeds: 6
+    placement_sd: [0.5, 0.5, 1]
+    max_seconds: 75
+
+  - name: '1239E: RCL + MCL vs odometry'
+    description: 'evaluate_1239e.py''s default: RCL + MCL against odometry alone'
+    runs:
+      - '1239E: Left 40'
+      - '1239E: Left 30'
+      - '1239E: Left 30_10'
+      - '1239E: skills'
+      - '1239E: Right 40'
+      - '1239E: Right 30'
+      - '1239E: Right 30_10'
+      - '1239E: Right 20_10'
+      - '1239E: alliance1pin'
+    vary:
+      VEXSIM_TRACKING: [rcl+mcl, odom]
+    seeds: 3
+    placement_sd: [0.5, 0.5, 1]
+    max_seconds: 75

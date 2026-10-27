@@ -54,6 +54,35 @@ def test_left_40_runs_and_localizes(port_exe, in_cache):
     assert odometry.final_in > 2 * result.final_in  # MCL corrects what odometry alone misses
 
 
+def test_the_evaluation_runs_as_a_sweep(port_exe, in_cache):
+    """The sweeps saved in .vexsim/sweeps.yaml are evaluate_1239e.py: the same runs, from the
+    same hand placements, measured the same way."""
+    from vexsim.app.launch import read_configurations
+    from vexsim.app.sweeps import expand, read_sweeps, run_trial
+
+    evaluate = load_script()
+    sweep = next(s for s in read_sweeps(ROOT) if s.name == "1239E: localization")
+    trials = expand(sweep, read_configurations(ROOT))
+    assert {t.run.removeprefix("1239E: ") for t in trials} == set(evaluate.AUTONS)
+    assert {t.variation["VEXSIM_TRACKING"] for t in trials} == set(evaluate.TRACKING)
+    assert sweep.max_seconds == evaluate.MAX_SECONDS
+    for t in trials:
+        auton = t.run.removeprefix("1239E: ")
+        assert t.spec.env["VEXSIM_AUTON"] == auton
+        assert t.spec.start == pytest.approx(evaluate.placement(auton, t.seed))
+    trial = next(
+        t
+        for t in trials
+        if t.run == "1239E: Left 30" and t.variation["VEXSIM_TRACKING"] == "mcl" and t.seed == 1
+    )
+    with in_cache():
+        swept = run_trial(trial.index, trial.spec.model_dump(), str(ROOT), port_exe, 75)
+        script = evaluate.run_one(("Left 30", "mcl", 1, port_exe))
+    assert swept["error"] is None and swept["finished"] == script.finished
+    for key in ("seconds", "mean_in", "max_in", "final_in", "max_deg"):
+        assert swept[key] == pytest.approx(getattr(script, key), abs=1e-9), key
+
+
 def test_routines_are_picked_by_name(port_exe):
     program = CppProgram(port_exe, env={"VEXSIM_AUTON": "Left 99"})
     sim = Simulation(load_robot(ROBOT), program=program, field=load_field(FIELD),

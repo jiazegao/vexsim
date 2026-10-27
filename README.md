@@ -155,6 +155,8 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 | `examples/pros_projects/` | `minimal_pros4` (its own tracking-wheel odometry, driving a square), `lemlib_template` (LemLib's own example program), `lemlib_bench` (LemLib motions as benchmark controllers), `calibration` (the calibration routine for `full_omni_6m`), `1239e_2026-27` (a real team's code) |
 | `examples/scenarios/` | benchmark scenarios: `s_curve`, `pose_approach`, `lemlib_vs_python` |
 | `examples/scripts/` | `evaluate_1239e.py`: runs every 1239E routine and measures its localization; `replay_1239e_mcl_log.py`: drives a real 1239E MCL log's path in the simulator and compares the two robots' MCL |
+| `examples/logs/` | `full_omni_routine.csv`: the calibration routine as a robot logs it, recorded in the simulator by `full_omni_6m` with its wheels' friction and its battery changed, to fit the parameters back ([section 12](#12-calibrating-to-your-robot)) |
+| `.vexsim/` | for `vexsim ui` ([section 7](#7-the-browser-app-vexsim-ui)): `launch.yaml`, the saved runs (every example and 1239E routine), and `sweeps.yaml`, the 1239E evaluation as sweeps |
 
 ---
 
@@ -430,7 +432,7 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 
 **Running something:**
 1. Pick a **saved run** from the first list to fill in everything at once, start pose and environment included. This repository comes with runs for its examples, every 1239E routine among them. Saved runs live in the folder's `.vexsim/launch.yaml`, so a team can commit them; *Save*, *Save as…* and *Delete* change them. (The app rewrites that file when it saves, so comments in it aren't kept.)
-2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs and telemetry logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file, environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
+2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs, telemetry logs and robot logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. (A scenario opens on the *Bench* page and a robot log on *Calibrate*; on those pages, and on *Analyze* and *Build*, a robot or project you click is for the page.) *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. *More* holds the noise preset, a scripted input file, environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
 3. **Drag the robot to where it starts.** Before a run, the field shows the robot at its start: drag it to move it (to half inches), and drag the round handle ahead of it to turn it (to 15°; hold Shift for 0.1 in and 1°). It stays inside the walls, and turns red, with a note, if it would start on top of a field element (`vexsim run` warns about that too).
 4. **Run** checks the files first; if something is wrong, the console says what, with the same messages as `vexsim validate-config`. A PROS project is built first, with the build's output in the *Build* tab. Starting a run stops the one before it.
 
@@ -475,11 +477,32 @@ Each run executes in a process of its own, so a program that crashes or hangs ne
 - **Only the numbers you change are rewritten.** A drop rewrites just those numbers in the text, in place: every comment, blank line, alignment and key order stays as it was, and a coordinate you didn't move keeps its exact value (dragging `4.656207, 5.6937585` along x leaves `5.6937585` alone). A key the file doesn't have yet, such as a sensor's `heading_deg`, is added in the mapping's own style. A value that comes from a YAML anchor or alias can only be changed in the text. Ctrl+Z undoes a drag like any edit, from the text or the diagram.
 - **Saving:** nothing is written until *Save* (Ctrl+S). A tab with unsaved changes has a dot, and closing it (or the page) asks first. Saving keeps the file's line endings. If the file changed on disk since you opened it, the app says so and lets you keep yours or load the file's. The workspace list and the field view pick the change up at once.
 
+The tabs along the top hold a page for each of the other commands: *Sweeps*, *Bench*, *Calibrate*, *Analyze* and *Build*.
+
+**Sweeps: saved runs, many times over, measured**
+
+![The 1239E evaluation as a sweep: every routine with RCL + MCL and with odometry alone, 3 seeds each; the position error averaged over the seeds, and over time for seed 0](docs/img/ui_sweeps.png)
+
+**Sweeps** runs saved runs many times over: each one once per *variation* (values of environment variables its program reads) and per *seed*, with the robot put down a little off its start each time, as a hand does. Every trial runs headless, in parallel, until its program finishes or the time limit passes, and is measured by how far the robot code's pose was from the truth while the program ran (autonomous and driver control): the mean, the maximum and the error at the end, the worst heading error, and how long the program ran.
+- **This repository's sweeps are team 1239E's evaluation** ([docs/porting_1239e.md](docs/porting_1239e.md#7-evaluate-the-localization)): *1239E: localization* runs every routine in each of the four localization modes (`VEXSIM_TRACKING`) with 6 seeds, the 216 runs behind that page's table (a few minutes on a 4-core computer); *1239E: RCL + MCL vs odometry* is `evaluate_1239e.py`'s default, 54 runs. Their numbers are the script's, exactly: the same runs, from the same placements, measured the same way.
+- **Making one:** pick a sweep, or *New sweep…*: a name, the saved runs (*Filter*, *All*, *None*), and under *Vary environment variables* one row per variable with its values separated by commas (every combination runs). Then the seeds (and the first one), the placement error (standard deviations in x and y, inches, and heading, degrees; a seed puts the robot down the same way for every run and variation), the time limit and the worker processes (all but one core by default). The count below says how many trials that makes. *Save* keeps it in the folder's `.vexsim/sweeps.yaml`, for a team to commit; *Run* runs what the form says, saved or not.
+- **The results** fill in as trials finish: a table with a row per saved run and a column per variation (the mean / max / final error averaged over the seeds; the lowest mean in each row in bold); the error over time, a chart per saved run with a line per variation, for one seed at a time, all on one scale; and *Every trial*, with its numbers. *Watch* runs a trial again on the *Simulate* page, exactly (same seed, same placement), recorded like any run. *trials.csv* downloads the table of trials.
+
+**Bench: benchmarks** (`vexsim bench`, [section 11](#11-benchmarking-algorithms-vexsim-bench)). Pick a scenario (or click one in the workspace list) and the page describes it: the task, the robot, what goes wrong, what each seed changes. Choose the localizers and controllers to compare, the seeds and the workers, and *Run*; a bar counts the trials. The result: each combination's success rate, final position error and localization error at the end (mean and 95th percentile), completion time and path error; a chart per metric of how often each combination does at least that well; and each combination's worst trial, which *Watch on the field* plays back on the *Simulate* page with the scenario's robot and field, plots and all. *Open the report* opens the HTML report `vexsim bench` writes (it needs matplotlib: `pip install -e ".[viz]"`), and the CSVs download. The command line that runs the same benchmark is at the bottom.
+
+**Calibrate** (`vexsim calibration-routine` and `vexsim calibrate`, [section 12](#12-calibrating-to-your-robot)). *1. Log the routine on the robot:* pick the robot and its PROS project; the page lists the routine's maneuvers and the two files it adds (new, already there, or replacing what's there), and *Add the routine* writes them. *2. Fit the simulator to the log:* robot logs in the folder are listed under *Robot logs* in the workspace list (the CSV from the SD card, or a saved terminal capture, `.txt` or `.log`, with one inside). Pick one and the parameters to fit (the wheel parameters by default, with their values now), or *Only compare*, and *Fit*. The result: the fitted values and how sure the fit is of each, the battery's resistance read off the log, the difference between simulated and logged readings before and after, and charts of each logged reading against the simulation's replay. *Add the fitted values* opens the robot's config with them under `overrides`, written in place (comments kept), for you to look over and save. To try it, `examples/logs/full_omni_routine.csv` is the routine logged in the simulator by the example full-omni robot with its wheels and battery changed (longitudinal μ 0.75, lateral μ 0.28, rolling resistance 0.14, 0.15 Ω): fitting all three wheel parameters finds them again in about half a minute.
+
+**Analyze** (`vexsim motor-curves`, `drift` and `odometry`, [section 10](#10-analysis-commands-motor-curves-drift-odometry)): a motor's torque, current (with its limit) and output power against speed, under `move_velocity` and `move_voltage`; a differential robot's arc at fixed side speeds for up to three roller frictions, its true path beside what drive-encoder odometry believes; and a scripted drive, gentle or aggressive, with each baseline localizer's path and its position and heading errors over time.
+
+**Build** (`vexsim build` and `vexsim doctor`): every PROS project in the folder, with *Build* and *Debug build* (`-O0 -g`, for a debugger); the compiler's errors and warnings are links, as in *Problems*. *Check the compiler* runs `vexsim doctor`.
+
+Benchmarks, sweeps, fits and builds run as jobs, each in a process of its own (and its own worker processes), so the app stays responsive; *Cancel* stops one. They go on while you use other pages, and a page you reload picks its job up again. Their results are kept in the folder's `.vexsim/bench/`, `.vexsim/sweeps/` and `.vexsim/calibrations/` (the newest 20 of each), listed on the right of each page: click one to see it again. Set `VEXSIM_RESULTS_DIR` to keep them somewhere else.
+
 The recordings live in the folder's `.vexsim/runs/`, one folder per run: `run.json` (what was run and how it ended), the tape the timeline plays (a frame every 50 ms of simulated time), `telemetry.csv.gz` (every 10 ms), `console.txt`, and `sd/`, the run's SD card (`/usd/`). Set `VEXSIM_RUNS_DIR` to keep them somewhere else.
 
 **Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie. Keep the terminal open while you use the app; Ctrl+C stops it. The browser only reaches files inside the folder.
 
-The app is new. It runs, drives, replays and compares simulations, and edits robot and field configs, so far; pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
+Every command has a page in the app now. Next come real robots' logs played beside their replay, and robot code that draws on the field ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). The commands and the pygame viewer work as before.
 
 ---
 
@@ -674,6 +697,8 @@ if (const char* name = std::getenv("AUTON")) selected = find_routine(name);
 ---
 
 ## 10. Analysis commands: motor curves, drift, odometry
+These three are also the browser app's *Analyze* page ([section 7](#7-the-browser-app-vexsim-ui)).
+
 **`vexsim motor-curves`** measures the simulated V5 motor on a dynamometer, under `move_velocity(max)` and `move_voltage(12000)`:
 ```
 vexsim motor-curves --cartridge red --out red.png      # torque, current, power vs. speed
@@ -708,7 +733,7 @@ Options: `--script gentle|aggressive`, `--noise`, `--seed`, `--out`, `--csv`.
 ---
 
 ## 11. Benchmarking algorithms: `vexsim bench`
-A benchmark runs one task many times (seeds) for every combination of the localizers and controllers a scenario lists, in parallel processes, and writes CSVs and a self-contained HTML report.
+A benchmark runs one task many times (seeds) for every combination of the localizers and controllers a scenario lists, in parallel processes, and writes CSVs and a self-contained HTML report. (The browser app's *Bench* page runs it too, and plays each combination's worst trial back on the field: [section 7](#7-the-browser-app-vexsim-ui).)
 ```
 vexsim bench examples/scenarios/s_curve.yaml --seeds 100
 ```
@@ -822,7 +847,7 @@ The built-in Python controllers drive the `left` and `right` sides (differential
 ---
 
 ## 12. Calibrating to your robot
-Most physics parameters are estimates: how well your wheels grip your tiles, how freely the rollers turn, how much a coasting robot slows. Calibration measures them on your robot, with no extra equipment:
+Most physics parameters are estimates: how well your wheels grip your tiles, how freely the rollers turn, how much a coasting robot slows. Calibration measures them on your robot, with no extra equipment (the steps below are also the browser app's *Calibrate* page: [section 7](#7-the-browser-app-vexsim-ui)):
 
 1. **Generate** a drive routine for your robot and add it to your PROS project:
    ```
@@ -1021,6 +1046,7 @@ vexsim/
 | `__main__.py` | Makes `python -m vexsim` work. |
 | `units.py` | Conversions between VEX units and SI (`in_to_m`, `rpm_to_rad_s`, `mv_to_v`, ...). The simulator computes in SI and converts only at its boundaries. |
 | `v5.py` | V5 constants: 21 smart ports, cartridge speeds (100/200/600 rpm), ±12000 mV, 11 W per motor, the 88 W motor budget, the 18 in starting size. |
+| `workers.py` | `process_pool`: worker processes for the benchmark, the calibration fit and sweeps, each of which exits when the process that made the pool ends (a cancelled job's workers don't go on simulating for nobody). |
 
 ### `config/`: robot and field configs
 | Module | What it does |
@@ -1136,18 +1162,22 @@ vexsim/
 |---|---|
 | `runspec.py` | `RunSpec`: everything `vexsim run` takes, converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files (and warns, through `start_blocked`, when the robot would start on top of a field element), `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
 | `launch.py` | Saved runs: the workspace's `.vexsim/launch.yaml`, named run specs the app's *Saved run* list reads and writes (`read_configurations`, `write_configurations`). |
-| `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects, inputs, logs), and refuses paths outside it. |
-| `jobs.py` | `JobManager`: long tasks (builds, so far), each in a process of its own, with their output as it comes, cancel, and one job at a time per key (a second build of a project joins the first). |
+| `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects, inputs, telemetry logs, robot logs), and refuses paths outside it. |
+| `jobs.py` | `JobManager`: long tasks (builds, analyses, benchmarks, fits, sweeps; `JOB_KINDS` names each kind's function), each in a process of its own, with their output, progress and the parts of their result that come early (a sweep's finished trials), cancel, and one job at a time per key (a second build of a project joins the first). |
+| `results.py` | What the long jobs found, kept in the workspace's `.vexsim/bench/`, `sweeps/` and `calibrations/`: a folder per result with its `result.json` and files; the newest 20 of each kind stay. |
+| `sweeps.py` | Sweeps: `.vexsim/sweeps.yaml` (`read_sweeps`, `write_sweeps`), a sweep's trials (`expand`: saved runs × variations × seeds, with placement errors drawn as `evaluate_1239e.py` draws them), one trial run headless and measured (`run_trial`, `measure`), and the sweep as a job (`run_sweep`). |
+| `benchmarks.py`, `calibrate.py`, `analyze.py` | The *Bench*, *Calibrate* and *Analyze* pages' jobs: `vexsim bench`, `calibration-routine`, `calibrate`, `motor-curves`, `drift` and `odometry`, returning what their charts draw (and saving their results), with `describe_scenario` and `routine_plan` for what the pages show before a run. |
+| `chartdata.py`, `jsonsafe.py` | Series thinned and rounded for the browser's charts; data made JSON-safe (no NaN, no numpy values). |
 | `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
 | `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay and the console. |
 | `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape. |
-| `configs.py` | Robot and field configs for the editors: `check_text` validates YAML text as `validate-config` does and places each issue at its line and column; `patch_text` rewrites numbers in place (or adds a missing key in its mapping's style) using PyYAML's node positions, and refuses values that come through anchors, aliases or merges; `read_config` and `write_config` keep a file's line endings and byte order mark. |
+| `configs.py` | Robot and field configs for the editors: `check_text` validates YAML text as `validate-config` does and places each issue at its line and column; `patch_text` rewrites numbers in place (or adds a missing key in its mapping's style) using PyYAML's node positions, and refuses values that come through anchors, aliases or merges; `set_overrides` writes a calibration's fitted values under `overrides` the same way; `read_config` and `write_config` keep a file's line endings and byte order mark. |
 | `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels and their forces, the controller, sensors, motors, mechanisms, pieces, screens, the period's time left) and the active motion's path and target. `preview_of` gives the robot and field before any run, to drag the robot to its start. |
 
 ### `ui/`: the browser app
 | Module | What it does |
 |---|---|
-| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs), config editing (open, check, patch, save, with a check for changes made on disk) and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
+| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs), config editing (open, check, patch, save, with a check for changes made on disk), jobs of every kind with their progress, the results they keep (and their files: a benchmark's report is served sandboxed), saved sweeps, scenarios and the calibration routine over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
 | `protocol.py` | Every message and request as a pydantic model. `python -m vexsim.ui.protocol frontend/src/protocol.ts` writes them as TypeScript for the page; a test fails while that file is stale. |
 | `static/` | The built page (from `frontend/`, by `npm run build`), shipped with the package. |
 

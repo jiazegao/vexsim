@@ -93,7 +93,7 @@ export function ConsolePanel(props: {
 }
 
 /** A file:line place: a link into the editor, or (with no editor) a button that copies it. */
-function PlaceLink(props: { place: Place; root: string; editor: Editor; children: ReactNode; testid?: string }) {
+export function PlaceLink(props: { place: Place; root: string; editor: Editor; children: ReactNode; testid?: string }) {
   const { place, root, editor } = props;
   const href = editorUrl(editor, root, place);
   const where = `${shortPath(root, place.file)}:${place.line}${place.column ? `:${place.column}` : ""}`;
@@ -111,7 +111,7 @@ function PlaceLink(props: { place: Place; root: string; editor: Editor; children
   );
 }
 
-function Problems(props: { problems: Problem[]; root: string; editor: Editor }) {
+export function Problems(props: { problems: Problem[]; root: string; editor: Editor; testid?: string }) {
   const { problems, root, editor } = props;
   if (problems.length === 0) {
     return (
@@ -121,7 +121,7 @@ function Problems(props: { problems: Problem[]; root: string; editor: Editor }) 
     );
   }
   return (
-    <ul className="lines problems" data-testid="problems">
+    <ul className="lines problems" data-testid={props.testid ?? "problems"}>
       {problems.map((p, i) => (
         <li key={i}>
           <span className={`badge ${p.severity}`}>{p.severity}</span>
@@ -136,7 +136,7 @@ function Problems(props: { problems: Problem[]; root: string; editor: Editor }) 
   );
 }
 
-function Lines(props: { lines: Line[]; root: string; editor: Editor; empty: string }) {
+export function Lines(props: { lines: Line[]; root: string; editor: Editor; empty: string; testid?: string }) {
   const box = useRef<HTMLPreElement>(null);
   const pinned = useRef(true); // follow new lines unless scrolled up
 
@@ -149,7 +149,7 @@ function Lines(props: { lines: Line[]; root: string; editor: Editor; empty: stri
     <pre
       className="lines"
       ref={box}
-      data-testid="console"
+      data-testid={props.testid ?? "console"}
       onScroll={(event) => {
         const element = event.currentTarget;
         pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;

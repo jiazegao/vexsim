@@ -1,14 +1,18 @@
-"""Long tasks, each in its own process, with a log, a result and cancel.
+"""Long tasks, each in its own process, with a log, progress, a result and cancel.
 
-Builds come first; benchmarks and calibration fits will follow. A job runs one of the
-functions in ``JOB_KINDS`` in a fresh process (so a crash or a cancel can't hurt the
-caller) and reports log lines and a result over a pipe. Jobs with the same ``key`` don't
-run twice at once: asking again while one runs returns the running one, which is how two
-runs of the same PROS project share one build.
+A job runs the function ``JOB_KINDS`` names for its kind in a fresh process (so a crash
+or a cancel can't hurt the caller), as ``function(params, report)``: ``report(line)``
+adds a line to its log, ``report.progress(done, total)`` says how far along it is, and
+``report.item(data)`` hands over part of the result early (each finished trial of a
+sweep, say). What the function returns is the job's result.
+
+Jobs with the same ``key`` don't run twice at once: asking again while one runs returns
+the running one, which is how two runs of the same PROS project share one build.
 """
 
 from __future__ import annotations
 
+import importlib
 import itertools
 import threading
 import time
@@ -16,47 +20,91 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from vexsim.app.jsonsafe import finite
+
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 ACTIVE: tuple[str, ...] = ("queued", "running")
+KEEP = 50  # finished jobs remembered (results that last are written to disk)
+
+# kind -> "module:function", imported in the job's process
+JOB_KINDS: dict[str, str] = {
+    "build": "vexsim.app.jobs:build",
+    "doctor": "vexsim.app.jobs:doctor",
+    "echo": "vexsim.app.jobs:echo",
+    "motor_curves": "vexsim.app.analyze:motor_curves",
+    "drift": "vexsim.app.analyze:drift",
+    "odometry": "vexsim.app.analyze:odometry",
+    "bench": "vexsim.app.benchmarks:run_benchmark",
+    "calibrate": "vexsim.app.calibrate:calibrate",
+    "sweep": "vexsim.app.sweeps:run_sweep",
+}
 
 
-def _build(params: dict, log: Callable[[str], None]) -> dict:
+class Report:
+    """How a job's function tells the UI how it's going."""
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def __call__(self, line: str) -> None:
+        """A line of the job's log."""
+        self._conn.send(("log", str(line)))
+
+    def progress(self, done: int, total: int) -> None:
+        self._conn.send(("progress", (int(done), int(total))))
+
+    def item(self, data: dict) -> None:
+        """Part of the result, ahead of the rest."""
+        self._conn.send(("item", finite(data)))
+
+
+def build(params: dict, report: Report) -> dict:
     from vexsim.bridge.build import build_project
 
-    result = build_project(params["project"], log=log)
+    result = build_project(params["project"], debug=params.get("debug", False), log=report)
     return {
         "executable": str(result.executable),
         "linked": result.linked,
         "compiled": result.compiled,
         "total": result.total,
         "seconds": round(result.seconds, 3),
+        "debug": params.get("debug", False),
     }
 
 
-def _echo(params: dict, log: Callable[[str], None]) -> dict:
-    """For tests: log lines, optionally wait or fail."""
+def doctor(params: dict, report: Report) -> dict:
+    """``vexsim doctor``: is there a compiler that builds and runs PROS projects?"""
+    from vexsim.bridge.doctor import run_doctor
+
+    return {"ok": run_doctor(params.get("cxx"), log=report)}
+
+
+def echo(params: dict, report: Report) -> dict:
+    """For tests: log lines, report progress and items, optionally wait or fail."""
     for line in params.get("lines", []):
-        log(line)
+        report(line)
+    items = params.get("items", [])
+    for i, item in enumerate(items):
+        report.item(item)
+        report.progress(i + 1, len(items))
     time.sleep(params.get("sleep_s", 0.0))
     if params.get("fail"):
         raise RuntimeError(params["fail"])
     return {"echo": params.get("result")}
 
 
-JOB_KINDS: dict[str, Callable[[dict, Callable[[str], None]], dict]] = {
-    "build": _build,
-    "echo": _echo,
-}
-
-
 def run_job(conn, kind: str, params: dict) -> None:
-    """The job's process: run it, sending ("log", line)s, then ("result" | "error", ...)."""
+    """The job's process: run it, sending ("log", line)s, ("progress", (done, total))es and
+    ("item", data)s, then ("result" | "error", ...)."""
+    import multiprocessing
 
-    def log(line: str) -> None:
-        conn.send(("log", str(line)))
-
+    # Worker pools start fresh interpreters on every system, as on Windows (forking a
+    # process that has threads, as this one does, can deadlock).
+    multiprocessing.set_start_method("spawn", force=True)
     try:
-        conn.send(("result", JOB_KINDS[kind](params, log)))
+        module, name = JOB_KINDS[kind].split(":")
+        function = getattr(importlib.import_module(module), name)
+        conn.send(("result", finite(function(params, Report(conn)))))
     except BaseException as exc:  # report everything, even KeyboardInterrupt
         conn.send(("error", str(exc) or type(exc).__name__))
 
@@ -72,6 +120,8 @@ class Job:
     log: list[str] = field(default_factory=list)
     result: dict | None = None
     error: str | None = None
+    progress: tuple[int, int] | None = None  # (done, total)
+    items: list[dict] = field(default_factory=list)  # parts of the result, as they came
     created: float = field(default_factory=time.time)
     started: float | None = None
     finished: float | None = None
@@ -83,16 +133,23 @@ class Job:
     def active(self) -> bool:
         return self.state in ACTIVE
 
-    def to_dict(self, since: int = 0) -> dict:
-        """The job as the UI shows it: its log from line ``since`` on."""
+    def to_dict(self, since: int = 0, items_since: int = 0, *, brief: bool = False) -> dict:
+        """The job as the UI shows it: its log from line ``since`` on, its items from
+        ``items_since`` on; ``brief``: neither, nor its result."""
+        if brief:
+            since, items_since = len(self.log), len(self.items)
         return {
             "id": self.id,
             "kind": self.kind,
             "title": self.title,
+            "params": self.params,
             "state": self.state,
             "log": self.log[since:],
             "log_size": len(self.log),
-            "result": self.result,
+            "progress": self.progress,
+            "items": self.items[items_since:],
+            "items_size": len(self.items),
+            "result": None if brief else self.result,
             "error": self.error,
             "created": self.created,
             "started": self.started,
@@ -100,7 +157,8 @@ class Job:
         }
 
 
-# A listener hears every change to a job: ("state", job), or ("log", job) with a new line.
+# A listener hears every change to a job: ("state", job), ("log", job) with the new line,
+# ("progress", job) or ("item", job).
 Listener = Callable[[str, Job, str | None], None]
 
 
@@ -137,6 +195,9 @@ class JobManager:
             job_id = f"job{next(self._ids)}"
             job = Job(job_id, kind, title or kind, dict(params), key or job_id)
             self._jobs[job_id] = job
+            finished = [j for j in self._jobs.values() if not j.active]
+            for old in finished[: max(0, len(finished) - KEEP)]:
+                del self._jobs[old.id]
         thread = threading.Thread(target=self._run, args=(job,), name=f"vexsim-{job_id}")
         thread.daemon = True
         thread.start()
@@ -179,6 +240,12 @@ class JobManager:
                     break
                 if kind == "log":
                     output(value)
+                elif kind == "progress":
+                    job.progress = (int(value[0]), int(value[1]))
+                    self._notify("progress", job)
+                elif kind == "item":
+                    job.items.append(value)
+                    self._notify("item", job)
                 elif kind == "result":
                     job.result, outcome = value, "succeeded"
                 elif kind == "error":
