@@ -13,6 +13,8 @@
 #include "pros/motors.h"
 
 #include "custom/lift_control.hpp"
+#include <cstdlib>  // vexsim
+#include <string>  // vexsim
 
 void initialize() {
 	// pros::lcd::initialize();
@@ -49,6 +51,13 @@ void autonomous() {
 void opcontrol() {
 
 	chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);
+#ifdef VEXSIM
+	// vexsim: VEXSIM_BRAKE=hold makes a replayed autonomous path stop as autonomous does
+	if (const char* brake = std::getenv("VEXSIM_BRAKE")) {
+		if (std::string(brake) == "hold") chassis.setBrakeMode(pros::E_MOTOR_BRAKE_HOLD);
+		if (std::string(brake) == "brake") chassis.setBrakeMode(pros::E_MOTOR_BRAKE_BRAKE);
+	}
+#endif
 	enableLiftPID = false;
 	startBrainFBDisplay();
 

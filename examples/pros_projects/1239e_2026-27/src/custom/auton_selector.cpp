@@ -72,6 +72,14 @@ void runAuton() {
     // vexsim: nobody taps the simulated brain screen, so the routine comes from the
     // VEXSIM_AUTON environment variable (vexsim run --env VEXSIM_AUTON="Left 40").
     if (const char* name = std::getenv("VEXSIM_AUTON")) {
+        // "startMcl x,y,theta,front,left,back,right" only starts MCL, as a routine would,
+        // for replaying a real MCL log (examples/scripts/replay_1239e_mcl_log.py).
+        float x, y, theta;
+        int f, l, b, r;
+        if (std::sscanf(name, "startMcl %f,%f,%f,%d,%d,%d,%d", &x, &y, &theta, &f, &l, &b, &r) == 7) {
+            startMcl(x, y, theta, f, l, b, r);
+            return;
+        }
         bool found = false;
         for (int i = 0; i < (int)AutonCollection.size(); i++) {
             if (AutonCollection[i].Name == name) autonCount = i, found = true;

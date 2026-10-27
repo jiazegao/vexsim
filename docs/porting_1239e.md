@@ -1,7 +1,7 @@
 # Porting a team's code: 1239E's RCL, MCL and autonomous routines
 
 This guide ports team 1239E's 2026-27 robot code ([jiazegao/1239e_2026-27](https://github.com/jiazegao/1239e_2026-27), commit `fb5a42a`) into vexsim, step by step. The same steps work for any PROS 4 project. The result:
-- the team's code, in `examples/pros_projects/1239e_2026-27`, with four marked edits;
+- the team's code, in `examples/pros_projects/1239e_2026-27`, with four marked edits (and three more for replaying the real robot's logs, [step 11](#11-compare-with-the-real-robot));
 - the robot, in `examples/robots/1239e_2026-27.yaml`;
 - the field as the team's localization models it, in `examples/fields/1239e_2026-27.yaml`;
 - `examples/scripts/evaluate_1239e.py`, which runs every routine and measures the localization against the simulated truth.
@@ -220,7 +220,10 @@ The port keeps the team's masks, since this is their call. The fix is worth tryi
 Ideas to try, in the simulator first: skip MCL updates (or LemLib syncing) while turning fast; inject a few random particles, or call `uniform_reset()`, when every particle's weight collapses. Also, nothing in RCL or MCL corrects the heading (`THETA_SYNC_PROP` and `IMU_VARIANCE` are 0), so a robot placed 1° off stays 1° off all routine; the front pair, both facing the wall at the start, could measure it.
 
 ## 10. Keep the port up to date
-The port is a copy of commit `fb5a42a`. To bring in newer code, copy the team's `src/` and `include/custom/` again, then reapply the four `// vexsim:` edits. Or apply them in the team's own repository: each is inert on the robot (`#ifdef VEXSIM`, or `pros::micros()`), so the team's code would then run in vexsim unchanged.
+The port is a copy of commit `fb5a42a`. To bring in newer code, copy the team's `src/` and `include/custom/` again, then reapply the `// vexsim:` edits (the four above, and the three for replays in [step 11](#11-compare-with-the-real-robot)). Or apply them in the team's own repository: each is inert on the robot (`#ifdef VEXSIM`, or `pros::micros()`), so the team's code would then run in vexsim unchanged.
+
+## 11. Compare with the real robot
+The team's code logs MCL to the SD card, and the simulated robot can do the same: `--env VEXSIM_SD_DIR=folder` stands in for the card. [1239e_real_vs_sim.md](1239e_real_vs_sim.md) replays five of the real robot's logs in the simulator and compares the two, with `examples/scripts/replay_1239e_mcl_log.py`. Three more `#ifdef VEXSIM` hooks make that possible (the port's [README](../examples/pros_projects/1239e_2026-27/README.md)).
 
 ## Porting your own team's code
 The same steps apply:

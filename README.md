@@ -147,7 +147,7 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 | `examples/inputs/` | `strafe_square.csv`: scripted controller input |
 | `examples/pros_projects/` | `minimal_pros4` (its own tracking-wheel odometry, driving a square), `lemlib_template` (LemLib's own example program), `lemlib_bench` (LemLib motions as benchmark controllers), `calibration` (the calibration routine for `full_omni_6m`), `1239e_2026-27` (a real team's code) |
 | `examples/scenarios/` | benchmark scenarios: `s_curve`, `pose_approach`, `lemlib_vs_python` |
-| `examples/scripts/` | `evaluate_1239e.py`: runs every 1239E routine and measures its localization |
+| `examples/scripts/` | `evaluate_1239e.py`: runs every 1239E routine and measures its localization; `replay_1239e_mcl_log.py`: drives a real 1239E MCL log's path in the simulator and compares the two robots' MCL |
 
 ---
 
@@ -812,6 +812,8 @@ python examples/scripts/evaluate_1239e.py --seeds 6 --tracking rcl+mcl,mcl,rcl,o
 ```
 `--env VEXSIM_TRACKING=odom|rcl|mcl|rcl+mcl` switches the team's localization layers (LemLib's odometry alone, RCL's start reset, MCL, or both; both by default), and the routine prints the `--start` that matches the pose it sets. The evaluation script runs every routine in each mode and measures LemLib's pose against the truth.
 
+[docs/1239e_real_vs_sim.md](docs/1239e_real_vs_sim.md) compares the real robot with the simulated one: `replay_1239e_mcl_log.py` drives the path a real MCL log (from the robot's SD card) records, has the simulated robot write the same kind of log, and compares them. On the same paths the simulated MCL stays closer to its map than the real one: the real distance sensors are far less noisy than the simulated ones, but they miss readings at glancing angles, see objects MCL's map doesn't have, and the real MCL's updates run late.
+
 ![1239E routines: LemLib's pose vs. the true pose](docs/img/1239e_localization.png)
 
 **The steps for any team's code:**
@@ -1059,7 +1061,7 @@ vexsim/
 | Folder | What it holds |
 |---|---|
 | `examples/` | robot and field configs, Python and C++ programs, inputs, scenarios, scripts ([the table above](#the-example-files)) |
-| `docs/` | deep dives: [models.md](docs/models.md) (every parameter's source, measurement experiments), [conventions.md](docs/conventions.md), [programming.md](docs/programming.md), [cpp.md](docs/cpp.md), [benchmarking.md](docs/benchmarking.md) (a worked 100-seed example), [calibration.md](docs/calibration.md), [porting_1239e.md](docs/porting_1239e.md); images and an example report |
+| `docs/` | deep dives: [models.md](docs/models.md) (every parameter's source, measurement experiments), [conventions.md](docs/conventions.md), [programming.md](docs/programming.md), [cpp.md](docs/cpp.md), [benchmarking.md](docs/benchmarking.md) (a worked 100-seed example), [calibration.md](docs/calibration.md), [porting_1239e.md](docs/porting_1239e.md), [1239e_real_vs_sim.md](docs/1239e_real_vs_sim.md); images and an example report |
 | `tests/` | the test suite, including a C++ test project for the bridge (`tests/cpp/bridge_test`) |
 | `PLAN.md` | the design plan and the phase history |
 

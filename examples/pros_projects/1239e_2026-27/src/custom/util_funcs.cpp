@@ -224,9 +224,17 @@ void startMcl(float x, float y, float vexTheta, bool resetFront, bool resetLeft,
 
 void initLog() {
     if (mclLogType == SDCARD) {
+#ifdef VEXSIM
+        // vexsim: the simulated brain has no SD card; VEXSIM_SD_DIR names a folder that
+        // stands in for it (vexsim run --env VEXSIM_SD_DIR=logs).
+        const char* sdDir = std::getenv("VEXSIM_SD_DIR");
+        const std::string usd = sdDir ? std::string(sdDir) + "/" : "/usd/";
+#else
+        const std::string usd = "/usd/";
+#endif
         // Retrive file count
         int fileCount = 0;
-        std::ifstream dataFileR("/usd/DATA.1239e");
+        std::ifstream dataFileR(usd + "DATA.1239e");
         // If file exist, read from it
         if (dataFileR.is_open()) {
             dataFileR >> fileCount;
@@ -235,10 +243,10 @@ void initLog() {
         // (Default is 1)
         fileCount++;
         
-        std::string mclFileName = "/usd/mcl_log" + std::to_string(fileCount) + ".1239e";
+        std::string mclFileName = usd + "mcl_log" + std::to_string(fileCount) + ".1239e";
         mclLog = new std::ofstream(mclFileName);
         
-        std::ofstream dataFileW("/usd/DATA.1239e");
+        std::ofstream dataFileW(usd + "DATA.1239e");
         dataFileW << fileCount;
         dataFileW.close();
 
@@ -252,6 +260,9 @@ void initLog() {
         else {
             mclLog->precision(8);
             MclMain.startAsyncLogger();
+#ifdef VEXSIM
+            std::printf("initLog: logging MCL to %s from %u ms\n", mclFileName.c_str(), (unsigned)pros::millis());
+#endif
         }
     }
 }

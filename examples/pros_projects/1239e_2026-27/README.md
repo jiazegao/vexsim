@@ -8,6 +8,11 @@ Four changes make it run in the simulator, each marked `// vexsim:` and harmless
 - `src/custom/MclTracking.cpp`: under `#ifdef VEXSIM`, MCL seeds its random numbers from `VEXSIM_SEED`.
 - `src/custom/util_funcs.cpp`: under `#ifdef VEXSIM`, `startMcl()` prints the `--start` matching the pose it sets, and `VEXSIM_TRACKING` (`odom`, `rcl`, `mcl` or the default `rcl+mcl`) chooses whether RCL's start reset and MCL run.
 
+Three more, also under `#ifdef VEXSIM`, let the simulated robot write MCL logs and replay a real one ([docs/1239e_real_vs_sim.md](../../../docs/1239e_real_vs_sim.md)):
+- `src/custom/util_funcs.cpp`: `initLog()` writes `mcl_log<N>.1239e` to the folder `VEXSIM_SD_DIR` names, which stands in for the SD card.
+- `src/custom/auton_selector.cpp`: `VEXSIM_AUTON="startMcl x,y,theta,front,left,back,right"` calls `startMcl()` with those arguments and nothing else.
+- `src/main.cpp`: `VEXSIM_BRAKE=hold` (or `brake`) sets the drive's brake mode in `opcontrol()`, which is otherwise coast.
+
 Left out: `firmware/`, the PROS and LVGL headers (`include/api.h`, `include/pros/`, `include/liblvgl/`) and LemLib's `include/fmt/`, which vexsim supplies. `include/lemlib/` is the team's copy, with their edit to `pid.hpp`.
 
 ```
@@ -15,6 +20,7 @@ vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1
     --field examples/fields/1239e_2026-27.yaml --start=60,0,0 --env "VEXSIM_AUTON=Left 40" \
     [--env VEXSIM_TRACKING=odom]
 python examples/scripts/evaluate_1239e.py [--tracking rcl+mcl,mcl,rcl,odom]
+python examples/scripts/replay_1239e_mcl_log.py mcl_log1040.1239e --out replays
 ```
 
 The whole port, step by step, and what the simulation found: [docs/porting_1239e.md](../../../docs/porting_1239e.md).
