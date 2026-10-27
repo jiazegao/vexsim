@@ -40,7 +40,9 @@ export function CalibratePage(props: {
   const [planProblem, setPlanProblem] = useState<RunProblem | null>(null);
   const [wrote, setWrote] = useState<string | null>(null);
   const [parameters, setParameters] = useState<FitParameter[]>([]);
-  const [chosen, setChosen] = useState<string[]>([]);
+  // the parameters not to fit: kept as the robot's list loads, so a box unticked meanwhile stays so
+  const [skipped, setSkipped] = useState<string[]>([]);
+  const chosen = parameters.map((p) => p.name).filter((name) => !skipped.includes(name));
   const [compareOnly, setCompareOnly] = useState(false);
   const [iterations, setIterations] = useState("12");
   const [problem, setProblem] = useState<RunProblem | null>(null);
@@ -101,7 +103,6 @@ export function CalibratePage(props: {
       .then((found) => {
         if (!current || "problem" in found) return;
         setParameters(found.ok.parameters);
-        setChosen(found.ok.parameters.map((p) => p.name));
       })
       .catch(() => {});
     return () => {
@@ -244,7 +245,7 @@ export function CalibratePage(props: {
               <legend>Parameters to fit (values now)</legend>
               {parameters.map((p) => (
                 <label key={p.name}>
-                  <input type="checkbox" checked={chosen.includes(p.name)} onChange={() => setChosen(chosen.includes(p.name) ? chosen.filter((n) => n !== p.name) : [...chosen, p.name])} />{" "}
+                  <input type="checkbox" checked={!skipped.includes(p.name)} onChange={() => setSkipped(skipped.includes(p.name) ? skipped.filter((n) => n !== p.name) : [...skipped, p.name])} />{" "}
                   <code>{p.name}</code> <span className="muted small">{+p.value.toPrecision(4)}{p.overridden ? ", from the config" : ""}</span>
                 </label>
               ))}
