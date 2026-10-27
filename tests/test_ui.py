@@ -36,18 +36,26 @@ MESSAGES = TypeAdapter(ServerMessage)
 @pytest.fixture(autouse=True)
 def runs_elsewhere(tmp_path, monkeypatch):
     """Runs these tests start are recorded in a temporary folder, not the repository's
-    .vexsim/runs (worker processes inherit the variable)."""
+    .vexsim/runs (worker processes inherit the variable). A worker or job process that's
+    still going after 15 s prints where it is, which a failed test's message shows."""
     monkeypatch.setenv("VEXSIM_RUNS_DIR", str(tmp_path / "recorded-runs"))
+    monkeypatch.setenv("VEXSIM_CHILD_DUMP_S", "15")
 
 
-def wait_for(predicate, timeout=20.0, interval=0.05):
-    """Wait until predicate() is true; fail after ``timeout`` seconds."""
+def wait_for(predicate, timeout=20.0, interval=0.05, about=None):
+    """Wait until predicate() is true; fail after ``timeout`` seconds, saying ``about()``."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
             return
         time.sleep(interval)
-    raise AssertionError(f"timed out after {timeout} s")
+    raise AssertionError(f"timed out after {timeout} s" + (f"; {about()}" if about else ""))
+
+
+def doing(session) -> str:
+    """What a session was doing, for a failed test's message."""
+    console = "\n".join(list(session.console)[-80:])
+    return f"state {session.state!r} ({session.message}); its console:\n{console}"
 
 
 # --- run specs ----------------------------------------------------------------------------
@@ -223,7 +231,10 @@ def test_a_session_runs_a_python_program_in_its_own_process():
     session = Session("s1", RunSpec(robot=ROBOT, program=TOUR), base=ROOT, listener=heard)
     session.start()
     try:
-        wait_for(lambda: session.frame is not None and session.frame["t"] > 0.5)
+        wait_for(
+            lambda: session.frame is not None and session.frame["t"] > 0.5,
+            about=lambda: doing(session),
+        )
         assert session.state == "running" and session.scene["robot"]["name"]
         session.command({"cmd": "pause"})
         wait_for(lambda: session.state == "paused")
@@ -260,7 +271,7 @@ def test_a_session_reports_a_program_that_fails(tmp_path):
     session = Session("s2", RunSpec(robot="robot.yaml", program="bad.py"), base=tmp_path)
     session.start()
     try:
-        wait_for(lambda: session.state == "error")
+        wait_for(lambda: session.state == "error", about=lambda: doing(session))
         assert "ZeroDivisionError" in session.message
         assert "1 / 0" in session.error["traceback"]
     finally:
@@ -273,7 +284,9 @@ def test_a_session_stops_a_program_that_never_yields(tmp_path):
     shutil.copy(ROOT / ROBOT, tmp_path / "robot.yaml")
     session = Session("s3", RunSpec(robot="robot.yaml", program="stuck.py"), base=tmp_path)
     session.start()
-    wait_for(lambda: session.frame is not None and session.frame["t"] > 1.5)
+    wait_for(
+        lambda: session.frame is not None and session.frame["t"] > 1.5, about=lambda: doing(session)
+    )
     time.sleep(1.0)  # autonomous starts at 2 s and never gives the simulation back
     stuck_at = session.frame["t"]
     time.sleep(0.3)
@@ -290,7 +303,10 @@ def test_a_session_takes_the_controller_and_times_a_match():
     session = Session("s4", spec, base=ROOT, listener=heard)
     session.start()
     try:
-        wait_for(lambda: session.frame is not None and session.frame["phase"] == "autonomous")
+        wait_for(
+            lambda: session.frame is not None and session.frame["phase"] == "autonomous",
+            about=lambda: doing(session),
+        )
         left = session.frame["period_left"]
         assert 0 < left <= 15
         session.command({"cmd": "speed", "value": 0})
@@ -315,7 +331,10 @@ def test_a_session_warns_when_its_robot_starts_on_an_obstacle():
     session = Session("s5", RunSpec(robot=ROBOT, field=PRACTICE), base=ROOT)
     session.start()
     try:
-        wait_for(lambda: any("starts on top of barrier" in line for line in session.console))
+        wait_for(
+            lambda: any("starts on top of barrier" in line for line in session.console),
+            about=lambda: doing(session),
+        )
     finally:
         session.stop()
 
@@ -338,7 +357,8 @@ def test_every_run_is_recorded(tmp_path):
     session.start()
     try:
         session.command({"cmd": "speed", "value": 0})  # as fast as possible
-        wait_for(lambda: heard.of("recorded"), timeout=60)  # it finished, and was written
+        # it finished, and was written
+        wait_for(lambda: heard.of("recorded"), timeout=60, about=lambda: doing(session))
         first = heard.of("recorded")[0]["run"]
         assert first["ended"] == "finished" and first["name"] == "The tour"
         assert first["id"] == heard.of("scene")[0]["run_id"] == session.info()["run_id"]
@@ -547,11 +567,17 @@ class Messages:
                 return item
 
     def lately(self) -> list[str]:
+        """The last few messages, and the last lines of output (they may say where a worker
+        or a build is stuck)."""
+
         def brief(m: dict) -> str:
-            detail = {k: m[k] for k in ("state", "message", "t", "lines") if k in m}
+            detail = {k: m[k] for k in ("state", "message", "t") if k in m}
             return f"{m['type']} {detail}"[:300]
 
-        return [brief(m) for m in self.seen[-8:]]
+        printed = ("console", "build")
+        output = [line for m in self.seen if m["type"] in printed for line in m["lines"]]
+        recent = [brief(m) for m in self.seen if m["type"] not in printed][-8:]
+        return recent + (["output:\n" + "\n".join(output[-80:])] if output else [])
 
 
 def test_the_server_streams_a_session_and_takes_commands(client):

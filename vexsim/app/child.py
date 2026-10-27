@@ -10,7 +10,12 @@ both sides exchange messages over the connection, and whatever the child writes 
 stdout or stderr (a Python program's ``print()``, say) reaches the parent's ``on_output``.
 
 Unlike ``multiprocessing``'s spawn, this never re-runs the parent's main script, and the
-child exits by itself if the parent dies (its stdin closes).
+child exits by itself if the parent dies: it watches its stdin for the end, or on Windows,
+where a thread blocked reading a pipe can stall other calls on it, the parent's process (the
+child's stdin is empty there).
+
+``VEXSIM_CHILD_DUMP_S=N`` makes a child print where each of its threads is after N seconds,
+for finding where one is stuck.
 """
 
 from __future__ import annotations
@@ -27,7 +32,10 @@ from pathlib import Path
 
 ADDRESS_PREFIX = "VEXSIM-CHILD-ADDRESS "
 AUTHKEY_ENV = "VEXSIM_CHILD_AUTHKEY"
+PARENT_ENV = "VEXSIM_CHILD_PARENT"
+DUMP_ENV = "VEXSIM_CHILD_DUMP_S"
 START_TIMEOUT_S = 60.0  # a fresh Python on a busy Windows machine can take a while
+WINDOWS = sys.platform == "win32"
 
 
 class ChildError(RuntimeError):
@@ -48,13 +56,14 @@ class ChildProcess:
         key = secrets.token_bytes(32)
         env = dict(os.environ)
         env[AUTHKEY_ENV] = key.hex()
+        env[PARENT_ENV] = str(os.getpid())
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         here = str(Path(__file__).resolve().parents[2])  # the folder vexsim is in
         env["PYTHONPATH"] = os.pathsep.join(p for p in (here, env.get("PYTHONPATH")) if p)
         self.process = subprocess.Popen(
             [sys.executable, "-u", "-m", "vexsim.app.child"],
-            stdin=subprocess.PIPE,
+            stdin=subprocess.DEVNULL if WINDOWS else subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env=env,
@@ -155,21 +164,37 @@ class ChildProcess:
         self._reader.join(timeout)
 
 
-def _exit_when_orphaned() -> None:
-    """Exit as soon as the parent closes our stdin (or dies)."""
-    try:
-        sys.stdin.read()
-    except (OSError, ValueError):
-        pass
+def _exit_when_orphaned(parent: int) -> None:
+    """Exit as soon as the parent is gone: its process ends (Windows), or it closes our
+    stdin (elsewhere)."""
+    if WINDOWS:
+        import _winapi
+
+        try:
+            handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, parent)
+        except OSError:
+            return  # it's gone already, or can't be watched: the closed connection ends us
+        _winapi.WaitForSingleObject(handle, _winapi.INFINITE)
+    else:
+        try:
+            sys.stdin.read()
+        except (OSError, ValueError):
+            pass
     os._exit(3)
 
 
 def main() -> None:
+    dump_after = float(os.environ.get(DUMP_ENV) or 0)
+    if dump_after > 0:
+        import faulthandler
+
+        faulthandler.dump_traceback_later(dump_after, file=sys.__stderr__)
     key = bytes.fromhex(os.environ.pop(AUTHKEY_ENV))
+    parent = int(os.environ.pop(PARENT_ENV, "0") or 0)
     with Listener(authkey=key) as listener:
         print(ADDRESS_PREFIX + str(listener.address), flush=True)
         conn = listener.accept()
-    threading.Thread(target=_exit_when_orphaned, daemon=True).start()
+    threading.Thread(target=_exit_when_orphaned, args=(parent,), daemon=True).start()
     code = 0
     try:
         function, kwargs = conn.recv()
@@ -182,8 +207,8 @@ def main() -> None:
         code = 1
     finally:
         conn.close()
-    # End now, without the interpreter's shutdown: on Windows that can wait forever on
-    # the thread above, which is blocked reading stdin.
+    # End now, without the interpreter's shutdown: that could wait forever on the thread
+    # above, which is blocked reading stdin (or waiting for the parent).
     for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
         try:
             if stream is not None:
