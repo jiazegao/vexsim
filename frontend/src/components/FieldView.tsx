@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { Layers, Picture, Shape, StartMarker } from "../draw";
+import type { Ghost, Layers, Picture, Shape, StartMarker } from "../draw";
 import { draw, HANDLE_GAP_PX, HANDLE_RADIUS_PX } from "../draw";
 import type { Palette } from "../palette";
 import { readPalette } from "../palette";
-import type { Preview } from "../protocol";
+import type { Playback } from "../playback";
+import type { Playhead } from "../playhead";
+import type { FrameMessage, Preview } from "../protocol";
 import type { SessionStore } from "../session";
 import type { Pose } from "../startpose";
 import { blockedBy, FINE, hitStart, moved, SNAP, turned } from "../startpose";
@@ -21,15 +23,30 @@ export interface StartEdit {
   editable: boolean; // false while a run is live
 }
 
+/** What the field shows: the live run, a recorded one at the playhead, or the robot and
+ * field before any run. */
+export type FieldSource =
+  | { kind: "live"; store: SessionStore }
+  | { kind: "recording"; playback: Playback; playhead: Playhead }
+  | { kind: "preview" };
+
+/** A recorded run drawn over the shown one, at the same moment. */
+export interface Compared {
+  playback: Playback;
+  label: string;
+  dash: readonly number[];
+}
+
 export interface FieldViewProps {
-  store: SessionStore | null;
-  showRun: boolean; // draw the session's run (else the preview)
+  source: FieldSource;
+  compared: Compared[];
   preview: Preview | null;
   start: StartEdit | null;
   onStart: (pose: Pose) => void;
   layers: Layers;
   follow: boolean;
   onFollow: (follow: boolean) => void;
+  stamp?: string | null; // written in the corner with the time, as when exporting a video
 }
 
 /** The field and the run on it, drawn every animation frame. Wheel: zoom; drag: pan, or
@@ -58,9 +75,20 @@ export function FieldView(props: FieldViewProps) {
     let drag: { kind: "pan" | "move" | "rotate"; x: number; y: number; id: number; offset: [number, number] } | null = null;
 
     const shape = (): Shape | null => {
-      const { store, showRun, preview } = live.current;
-      if (showRun && store?.scene) return store.scene;
+      const { source, preview } = live.current;
+      if (source.kind === "live" && source.store.scene) return source.store.scene;
+      if (source.kind === "recording") return source.playback.tape.scene;
       return preview ? { robot: preview.robot, field: preview.field } : null;
+    };
+    /** The run's frame now, and its time (null before any run). */
+    const now = (): { frame: FrameMessage | null; t: number | null } => {
+      const { source } = live.current;
+      if (source.kind === "live") return { frame: source.store.frame, t: source.store.frame?.t ?? null };
+      if (source.kind === "recording") {
+        const t = source.playhead.t;
+        return { frame: source.playback.frameAt(t), t };
+      }
+      return { frame: null, t: null };
     };
     const fieldSize = (): [number, number] => shape()?.field.size ?? [144, 144];
     const fit = () => {
@@ -89,37 +117,56 @@ export function FieldView(props: FieldViewProps) {
 
     /** The start marker, when there's a robot to drag. */
     const marker = (): StartMarker | null => {
-      const { start, preview, showRun, store } = live.current;
+      const { start, preview, source } = live.current;
       if (!start?.editable || !preview) return null;
       const blocked = blockedBy(start.pose, preview.robot.footprint, preview.field);
-      return { pose: start.pose, robot: preview.robot, outline: showRun && !!store?.frame, grabbed: grabbedRef.current, blocked };
+      const outline = source.kind === "recording" || (source.kind === "live" && !!source.store.frame);
+      return { pose: start.pose, robot: preview.robot, outline, grabbed: grabbedRef.current, blocked };
     };
 
     const render = () => {
       frameId = requestAnimationFrame(render);
-      const { store, showRun, preview, layers, follow } = live.current;
+      const { source, preview, layers, follow, compared, stamp } = live.current;
       const [w, h] = fieldSize();
       if (!view || (fittedTo !== `${w}x${h}` && !adjusted)) fit();
-      const run = showRun && store?.scene ? store : null;
-      if (follow && run?.frame) {
-        view = { ...view!, cx: run.frame.pose[0], cy: run.frame.pose[1] };
+      const { frame, t } = now();
+      if (follow && frame) {
+        view = { ...view!, cx: frame.pose[0], cy: frame.pose[1] };
         adjusted = true;
       }
-      const picture: Picture = run
-        ? { scene: run.scene, frame: run.frame, overlay: run.overlay, truth: run.truth, estimate: run.estimate, start: marker() }
-        : {
-            scene: shape(),
-            frame: null,
-            overlay: null,
-            truth: NO_TRAIL,
-            estimate: NO_TRAIL,
-            pieces: preview?.pieces ?? [],
-            start: marker(),
-          };
+      const ghosts: Ghost[] = [];
+      if (t !== null) {
+        for (const other of compared) {
+          const at = other.playback.frameAt(t);
+          if (at) ghosts.push({ label: other.label, dash: other.dash, robot: other.playback.tape.scene.robot, pose: at.pose, path: other.playback.trail("truth", t) });
+        }
+      }
+      let picture: Picture;
+      if (source.kind === "live" && source.store.scene) {
+        const store = source.store;
+        picture = { scene: store.scene, frame, overlay: store.overlay, truth: store.truth, estimate: store.estimate, start: marker(), ghosts };
+      } else if (source.kind === "recording") {
+        const { playback } = source;
+        picture = {
+          scene: playback.tape.scene,
+          frame,
+          overlay: playback.overlayAt(t ?? 0),
+          truth: playback.trail("truth", t ?? 0),
+          estimate: playback.trail("estimate", t ?? 0),
+          start: marker(),
+          ghosts,
+        };
+      } else {
+        picture = { scene: shape(), frame: null, overlay: null, truth: NO_TRAIL, estimate: NO_TRAIL, pieces: preview?.pieces ?? [], start: marker() };
+      }
+      if (stamp && t !== null) picture.stamp = `${stamp} · ${t.toFixed(2)} s`;
       draw(ctx, view!, colors, picture, layers);
-      // for tests and the curious: frames received, and the view (px per inch, center)
-      element.dataset.frames = String(store?.frames ?? 0);
+      // for tests and the curious: frames received, the time shown, the view (px per inch,
+      // center), and how many compared runs are drawn
+      element.dataset.frames = String(source.kind === "live" ? source.store.frames : 0);
+      element.dataset.time = t === null ? "" : t.toFixed(3);
       element.dataset.view = `${view!.scale.toFixed(4)},${view!.cx.toFixed(3)},${view!.cy.toFixed(3)}`;
+      element.dataset.ghosts = String(ghosts.length);
     };
 
     const observer = new ResizeObserver(sizeCanvas);
@@ -213,12 +260,13 @@ export function FieldView(props: FieldViewProps) {
     };
   }, []);
 
-  const { store, showRun, preview, start } = props;
-  const run = showRun && store ? store : null;
+  const { source, preview, start } = props;
+  const store = source.kind === "live" ? source.store : null;
+  const shownFrame = store ? store.frame : source.kind === "recording" ? source.playback.samples.length > 0 : null;
   let note: ReactNode = null;
-  if (run && !run.scene) {
-    note = run.state === "building" ? "Building the project…" : run.state === "error" ? "The run couldn't start: see the console below." : "Starting…";
-  } else if (!run && !preview) {
+  if (store && !store.scene) {
+    note = store.state === "building" ? "Building the project…" : store.state === "error" ? "The run couldn't start: see the console below." : "Starting…";
+  } else if (source.kind === "preview" && !preview) {
     note = (
       <>
         Pick a robot and a program, then press <b>Run</b>.
@@ -228,8 +276,10 @@ export function FieldView(props: FieldViewProps) {
   const savePicture = () => {
     const element = canvas.current;
     if (!element) return;
-    const robot = (run?.scene ?? preview)?.robot.name ?? "field";
-    const t = run?.frame ? `-${run.frame.t.toFixed(2)}s` : "";
+    const scene = store?.scene ?? (source.kind === "recording" ? source.playback.tape.scene : preview);
+    const robot = scene?.robot.name ?? "field";
+    const shownTime = element.dataset.time ? Number(element.dataset.time) : null;
+    const t = shownTime !== null ? `-${shownTime.toFixed(2)}s` : "";
     element.toBlob((blob) => {
       if (!blob) return;
       const link = document.createElement("a");
@@ -255,7 +305,7 @@ export function FieldView(props: FieldViewProps) {
           className={`ghost small${props.follow ? " on" : ""}`}
           aria-pressed={props.follow}
           onClick={() => props.onFollow(!props.follow)}
-          disabled={!run?.frame}
+          disabled={!shownFrame}
           title="Keep the robot in the middle of the view"
         >
           Follow
@@ -274,7 +324,7 @@ export function FieldView(props: FieldViewProps) {
         </div>
       )}
       {!note && start?.editable && preview && (
-        <StartHint start={start} preview={preview} grabbed={!!grabbed} showingRun={!!run?.frame} />
+        <StartHint start={start} preview={preview} grabbed={!!grabbed} showingRun={!!shownFrame} />
       )}
     </div>
   );
@@ -297,9 +347,25 @@ function StartHint(props: { start: StartEdit; preview: Preview; grabbed: boolean
   );
 }
 
-/** What the marks on the field mean, with switches for the ones that can be hidden. It sits
- * in the field's corner, beside the field itself when the view is wider than tall. */
-export function FieldKey(props: { layers: Layers; onLayers: (layers: Layers) => void }) {
+/** A line in a compared run's dashes, for keys and legends. */
+export function DashSwatch(props: { dash: readonly number[] }) {
+  return (
+    <svg className="dash" width="18" height="6" viewBox="0 0 18 6" aria-hidden="true">
+      <line x1="0" y1="3" x2="18" y2="3" strokeDasharray={props.dash.join(" ")} />
+    </svg>
+  );
+}
+
+export interface KeyedRun {
+  key: string;
+  name: string;
+  dash: readonly number[];
+}
+
+/** What the marks on the field mean, with switches for the ones that can be hidden, and the
+ * runs drawn over this one. It sits in the field's corner, beside the field itself when the
+ * view is wider than tall. */
+export function FieldKey(props: { layers: Layers; onLayers: (layers: Layers) => void; compared: KeyedRun[]; onUncompare: (key: string) => void }) {
   const { layers } = props;
   const [open, setOpen] = useState(true);
   const row = (swatch: string, text: string, layer?: keyof Layers, title?: string) =>
@@ -330,6 +396,18 @@ export function FieldKey(props: { layers: Layers; onLayers: (layers: Layers) => 
           {row("line beam", "Distance beams", "beams", "Show distance sensor beams (3)")}
           {row("line force", "Wheel side forces", "forces", "Show the sideways force on each wheel (4)")}
           {row("slip", "Wheel grip used")}
+          {props.compared.length > 0 && <div className="keysub">Compared with</div>}
+          {props.compared.map((run) => (
+            <div className="keyrow" key={run.key} data-testid="compared-key">
+              <button type="button" className="unkey" onClick={() => props.onUncompare(run.key)} title={`Stop drawing ${run.name}`} aria-label={`Stop comparing with ${run.name}`}>
+                ×
+              </button>
+              <DashSwatch dash={run.dash} />
+              <span className="keyname" title={run.name}>
+                {run.name}
+              </span>
+            </div>
+          ))}
         </>
       )}
     </div>

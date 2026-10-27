@@ -1,7 +1,8 @@
 import type { ControllerInput } from "../controller";
+import { usePlayhead } from "../playhead";
 import { fixed, lemlibTheta, poseError } from "../pose";
-import type { SessionStore } from "../session";
 import { ControllerPad } from "./ControllerPad";
+import type { FieldSource } from "./FieldView";
 
 function PoseRows(props: { pose: readonly [number, number, number] }) {
   const [x, y, heading] = props.pose;
@@ -21,16 +22,21 @@ function PoseRows(props: { pose: readonly [number, number, number] }) {
   );
 }
 
+/** The readings of what the field shows: the live run's latest, or a recorded run's at the
+ * playhead. */
 export function Readout(props: {
-  store: SessionStore | null;
+  source: FieldSource;
   driving: boolean; // the controller takes your input now
   scripted: boolean; // a recorded input file drives instead
   gamepad: string | null;
   onScreen: ControllerInput;
   onInput: (input: ControllerInput) => void;
 }) {
-  const frame = props.store?.frame ?? null;
-  const scene = props.store?.scene ?? null;
+  const { source } = props;
+  usePlayhead(source.kind === "recording" ? source.playhead : null);
+  const frame =
+    source.kind === "live" ? source.store.frame : source.kind === "recording" ? source.playback.frameAt(source.playhead.t) : null;
+  const scene = source.kind === "live" ? source.store.scene : source.kind === "recording" ? source.playback.tape.scene : null;
   if (!frame || !scene) {
     return (
       <aside className="readout" aria-label="Readings">
@@ -49,11 +55,13 @@ export function Readout(props: {
       <h3>Controller</h3>
       <ControllerPad state={frame.controller} onScreen={props.onScreen} onInput={props.onInput} enabled={props.driving} />
       <p className="muted small">
-        {props.scripted
-          ? "Recorded input drives this run."
-          : props.driving
-            ? `Keys W A S D and the arrows drive${props.gamepad ? `; so does ${shorten(props.gamepad)}` : ", or plug in a gamepad"}. ? lists every key.`
-            : "Drive while a run is live."}
+        {source.kind === "recording"
+          ? "As it was at this moment of the run."
+          : props.scripted
+            ? "Recorded input drives this run."
+            : props.driving
+              ? `Keys W A S D and the arrows drive${props.gamepad ? `; so does ${shorten(props.gamepad)}` : ", or plug in a gamepad"}. ? lists every key.`
+              : "Drive while a run is live."}
       </p>
     </section>
   );

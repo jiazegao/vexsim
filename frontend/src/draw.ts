@@ -5,7 +5,6 @@ import type { Palette } from "./palette";
 import { mix, withAlpha } from "./palette";
 import type { FieldScene, FrameMessage, OverlayMessage, RobotScene } from "./protocol";
 import { handlePoint } from "./startpose";
-import type { Trail } from "./trail";
 import type { View } from "./view";
 import { toScreen } from "./view";
 
@@ -32,14 +31,33 @@ export interface StartMarker {
   blocked: string[]; // what it would start on top of (drawn red)
 }
 
+/** Another run drawn over this one, at the same moment: its path (in its dashes) and its
+ * robot, labelled with its name. */
+export interface Ghost {
+  label: string;
+  dash: readonly number[];
+  robot: RobotScene;
+  pose: readonly [number, number, number];
+  path: TrailLike;
+}
+
+/** A path: the first `length` points of `xs`, `ys`. */
+export interface TrailLike {
+  xs: number[];
+  ys: number[];
+  length: number;
+}
+
 export interface Picture {
   scene: Shape | null;
   frame: FrameMessage | null;
   overlay: OverlayMessage | null;
-  truth: Trail;
-  estimate: Trail;
+  truth: TrailLike;
+  estimate: TrailLike;
   pieces?: [number, number][]; // with no frame: where the field config puts the pieces
   start?: StartMarker | null;
+  ghosts?: Ghost[];
+  stamp?: string | null; // written in the corner (a video's run and time)
 }
 
 export const HANDLE_GAP_PX = 18; // from the robot's front edge to its rotate handle
@@ -64,6 +82,7 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
     if (layers.estimate) drawTrail(ctx, view, picture.estimate, colors.estimate);
   }
   if (picture.overlay) drawOverlay(ctx, view, colors, picture.overlay);
+  for (const ghost of picture.ghosts ?? []) drawGhostRun(ctx, view, colors, ghost);
   const start = picture.start;
   if (start && !start.outline) drawRobot(ctx, view, colors, start.robot, start.pose, mounted(start.robot, start.pose), false);
   if (scene && frame) {
@@ -73,6 +92,8 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
     for (const [x, y] of frame.contacts) dot(ctx, view, x, y, 4, colors.slip);
   }
   if (start) drawStart(ctx, view, colors, start);
+  for (const ghost of picture.ghosts ?? []) drawLabel(ctx, view, colors, ghost);
+  if (picture.stamp) drawStamp(ctx, view, colors, picture.stamp);
   ctx.restore();
 }
 
@@ -142,7 +163,7 @@ function drawElements(ctx: CanvasRenderingContext2D, view: View, colors: Palette
   });
 }
 
-function drawTrail(ctx: CanvasRenderingContext2D, view: View, trail: Trail, color: string): void {
+function drawTrail(ctx: CanvasRenderingContext2D, view: View, trail: TrailLike, color: string): void {
   if (trail.length < 2) return;
   ctx.beginPath();
   for (let i = 0; i < trail.length; i++) {
@@ -374,6 +395,54 @@ function drawStart(ctx: CanvasRenderingContext2D, view: View, colors: Palette, s
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.stroke();
+}
+
+/** A compared run: its path so far, in its dashes, and its robot's outline, in grey ink. */
+function drawGhostRun(ctx: CanvasRenderingContext2D, view: View, colors: Palette, ghost: Ghost): void {
+  ctx.setLineDash([...ghost.dash]);
+  drawTrail(ctx, view, ghost.path, colors.ink2);
+  ctx.setLineDash([]);
+  const corners = footprint(ghost.robot, ghost.pose, view);
+  ctx.beginPath();
+  corners.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.closePath();
+  ctx.fillStyle = withAlpha(colors.ink2, 0.08);
+  ctx.fill();
+  ctx.strokeStyle = colors.ink2;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(corners[0][0], corners[0][1]);
+  ctx.lineTo(corners[1][0], corners[1][1]);
+  ctx.lineWidth = 3.5;
+  ctx.stroke();
+}
+
+/** A compared run's name, above its robot (drawn last, so nothing covers it). */
+function drawLabel(ctx: CanvasRenderingContext2D, view: View, colors: Palette, ghost: Ghost): void {
+  const corners = footprint(ghost.robot, ghost.pose, view);
+  const x = corners.reduce((sum, [cx]) => sum + cx, 0) / corners.length;
+  const top = Math.min(...corners.map(([, cy]) => cy));
+  ctx.font = "12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = colors.surface;
+  ctx.strokeText(ghost.label, x, top - 4);
+  ctx.fillStyle = colors.ink2;
+  ctx.fillText(ghost.label, x, top - 4);
+  ctx.textAlign = "start";
+  ctx.textBaseline = "alphabetic";
+}
+
+/** A line of text in the bottom-left corner, on a plate. */
+function drawStamp(ctx: CanvasRenderingContext2D, view: View, colors: Palette, text: string): void {
+  ctx.font = "13px system-ui, -apple-system, 'Segoe UI', sans-serif";
+  const width = ctx.measureText(text).width;
+  ctx.fillStyle = withAlpha(colors.surface, 0.85);
+  ctx.fillRect(8, view.height - 30, width + 16, 22);
+  ctx.fillStyle = colors.ink;
+  ctx.fillText(text, 16, view.height - 14);
 }
 
 function drawGhost(ctx: CanvasRenderingContext2D, view: View, colors: Palette, robot: RobotScene, pose: readonly [number, number, number]): void {

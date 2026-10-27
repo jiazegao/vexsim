@@ -5,21 +5,23 @@ import { EDITORS, editorUrl, linkSegments, shortPath } from "../problems";
 import type { RunProblem } from "../protocol";
 import type { Line, SessionStore } from "../session";
 
-type Tab = "console" | "build" | "problems";
+type Tab = "console" | "build" | "problems" | "plots";
 
 export function ConsolePanel(props: {
   store: SessionStore | null;
+  history: string[] | null; // a recorded run's console, shown instead of the live session's
+  plots: ReactNode | null; // the shown recording's plots
   problem: RunProblem | null;
   root: string;
   editor: Editor;
   onEditor: (editor: Editor) => void;
 }) {
-  const { store, problem, root, editor } = props;
+  const { store, history, problem, root, editor } = props;
   const [tab, setTab] = useState<Tab>("console");
-  const lines = store?.lines ?? [];
+  const lines: Line[] = history ? history.map((text) => ({ kind: "console", text })) : (store?.lines ?? []);
   const build = lines.filter((line) => line.kind === "build");
   const output = lines.filter((line) => line.kind !== "build");
-  const problems = store?.problems ?? [];
+  const problems = history ? [] : (store?.problems ?? []);
   const errors = problems.filter((p) => p.severity === "error").length;
   const state = store?.state;
 
@@ -61,6 +63,7 @@ export function ConsolePanel(props: {
         {tabButton("console", "Console", output.length)}
         {tabButton("build", "Build", build.length)}
         {tabButton("problems", "Problems", problems.length, "problems-tab")}
+        {tabButton("plots", "Plots", 0, "plots-tab")}
         <span className="spacer" />
         <label className="editor" title="Where file:line links open">
           Open files in
@@ -73,7 +76,9 @@ export function ConsolePanel(props: {
           </select>
         </label>
       </div>
-      {tab === "problems" ? (
+      {tab === "plots" ? (
+        (props.plots ?? <div className="plots-empty">Plots of a run appear once it's recorded: when it ends, or when you open one from Runs.</div>)
+      ) : tab === "problems" ? (
         <Problems problems={problems} root={root} editor={editor} />
       ) : (
         <Lines

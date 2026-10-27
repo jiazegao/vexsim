@@ -31,10 +31,12 @@ class Session:
         *,
         base: str | Path | None = None,
         listener: Listener | None = None,
+        name: str | None = None,
     ):
         self.id = session_id
         self.spec = spec
-        self.base = None if base is None else str(base)
+        self.base = None if base is None else str(base)  # the workspace; runs record there
+        self.name = name  # what to call its recorded runs
         self.listener = listener
         self.created = time.time()
         self.state = "starting"
@@ -47,6 +49,7 @@ class Session:
         self.build_log: list[str] = []
         self.console: deque[str] = deque(maxlen=CONSOLE_LINES)
         self.child = None
+        self.run_id: str | None = None  # where its current (or last) run is recorded
         self.seq = 0  # number of the last message published
         self._lock = threading.RLock()
         self._stopped = False
@@ -62,6 +65,7 @@ class Session:
             "message": self.message,
             "mode": self.mode,
             "created": self.created,
+            "run_id": self.run_id,
         }
 
     def catch_up(self) -> tuple[list[dict], int]:
@@ -136,6 +140,7 @@ class Session:
             "spec": self.spec.model_dump(mode="json"),
             "base": self.base,
             "executable": None if executable is None else str(executable),
+            "name": self.name,
         }
         try:
             child = ChildProcess(
@@ -179,6 +184,7 @@ class Session:
             elif kind == "scene":
                 self.scene, self.overlay, self.frame, self.error = message, None, None, None
                 self.console.clear()
+                self.run_id = message.get("run_id")
             elif kind == "frame":
                 self.frame = message
             elif kind == "overlay":

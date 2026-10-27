@@ -13,6 +13,16 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    title: "A recorded run (once it ends, or opened from Runs)",
+    keys: [
+      ["Space", "play or pause"],
+      ["← / →", "half a second back / on (Shift: 5 s)"],
+      [", / .", "one 50 ms frame back / on"],
+      ["Home / End", "its start / end"],
+      ["Click a plot", "that moment"],
+    ],
+  },
+  {
     title: "Driving (while a run is live)",
     keys: [
       ["W / S", "left stick up / down (arcade throttle)"],

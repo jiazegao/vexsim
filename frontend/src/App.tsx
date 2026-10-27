@@ -2,19 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { ConsolePanel } from "./components/ConsolePanel";
 import { Controls, SPEEDS } from "./components/Controls";
+import type { Compared, FieldSource } from "./components/FieldView";
 import { FieldKey, FieldView } from "./components/FieldView";
 import { KeysHelp } from "./components/KeysHelp";
+import { Plots } from "./components/Plots";
 import { Readout } from "./components/Readout";
 import { RunBar } from "./components/RunBar";
+import { RunsList } from "./components/RunsList";
 import { Sidebar } from "./components/Sidebar";
+import { Timeline } from "./components/Timeline";
 import type { ControllerInput } from "./controller";
 import { NEUTRAL } from "./controller";
 import type { Layers } from "./draw";
+import { Playhead, usePlayheadClock } from "./playhead";
 import type { Editor } from "./problems";
 import { EDITORS } from "./problems";
-import type { AppInfo, Preview, RunConfiguration, RunProblem, WorkspaceInfo, WorkspaceItem } from "./protocol";
+import type { AppInfo, Preview, RunConfiguration, RunProblem, RunRecord, WorkspaceInfo, WorkspaceItem } from "./protocol";
+import type { Recording } from "./recording";
+import { COMPARE_DASHES, forgetTelemetry, MAX_COMPARED, openLog, openRun, renamed, shortName } from "./recording";
 import type { RunForm } from "./runform";
-import { emptyForm, formToSpec, loadForm, reconcile, saveForm, specToForm } from "./runform";
+import { emptyForm, formToSpec, loadForm, reconcile, saveForm, sameRun, specToForm } from "./runform";
 import { isLive, SessionStore } from "./session";
 import type { Pose } from "./startpose";
 import { formatStart } from "./startpose";
@@ -22,10 +29,12 @@ import type { Theme } from "./theme";
 import { applyTheme, loadTheme, nextTheme } from "./theme";
 import { useController } from "./useController";
 import { useStore } from "./useStore";
+import { canRecordVideo, VideoExport } from "./video";
 
 const THEME_LABEL: Record<Theme, string> = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
 const EDITOR_KEY = "vexsim.editor";
 const BUSY: readonly string[] = ["building", "starting", "running", "paused"]; // the run is on the field
+const SEEK_S = 0.5; // the arrow keys move a recorded run this far (Shift: ten times)
 
 function loadEditor(): Editor {
   try {
@@ -64,22 +73,55 @@ export function App() {
   const [onScreen, setOnScreen] = useState<ControllerInput>(NEUTRAL);
   const [editor, setEditor] = useState<Editor>(loadEditor);
   const [help, setHelp] = useState(false);
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [shown, setShown] = useState<Recording | null>(null); // the recorded run on the field
+  const [compared, setCompared] = useState<Recording[]>([]); // drawn over it
+  const [opening, setOpening] = useState<string | null>(null); // the run (or log) being fetched
+  const [closedRun, setClosedRun] = useState(false); // the ended live run was put away
+  const [video, setVideo] = useState<VideoExport | null>(null);
+  const playhead = useMemo(() => new Playhead(), []);
+  usePlayheadClock(playhead);
   useStore(store);
 
   const root = info?.workspace ?? "";
   const rootRef = useRef(root);
   rootRef.current = root;
   const storeRef = useRef<SessionStore | null>(null);
-  const attach = useCallback((id: string, speedNow: number) => {
-    storeRef.current?.close();
-    const next = new SessionStore(id, rootRef.current);
-    if (speedNow !== 1) next.send({ cmd: "speed", value: speedNow });
-    next.connect();
-    storeRef.current = next;
-    setStore(next);
-    setOnScreen(NEUTRAL);
+  const attach = useCallback(
+    (id: string, speedNow: number) => {
+      storeRef.current?.close();
+      const next = new SessionStore(id, rootRef.current);
+      if (speedNow !== 1) next.send({ cmd: "speed", value: speedNow });
+      next.connect();
+      storeRef.current = next;
+      setStore(next);
+      setOnScreen(NEUTRAL);
+      setShown(null); // the new run takes the field
+      setClosedRun(false);
+      playhead.pause();
+    },
+    [playhead],
+  );
+  /** Leave the live session (stopping it first if it's still going). */
+  const leaveSession = useCallback(async () => {
+    const live = storeRef.current;
+    if (!live) return false;
+    const going = BUSY.includes(live.state);
+    if (going) await api.stopSession(live.id).catch(() => {});
+    live.close();
+    storeRef.current = null;
+    setStore(null);
+    return going;
   }, []);
   useEffect(() => () => storeRef.current?.close(), []);
+
+  const loadRuns = useCallback(async () => {
+    try {
+      setRuns(await api.runs());
+    } catch {
+      // the list stays as it was
+    }
+  }, []);
 
   const loadConfigurations = useCallback(async () => {
     try {
@@ -127,6 +169,7 @@ export function App() {
         setInfo(about);
         document.title = `vexsim · ${about.workspace_name}`;
         await scan(about, true);
+        loadRuns();
         const running = (await api.sessions())
           .filter((s) => s.state !== "stopped")
           .sort((a, b) => b.created - a.created)[0];
@@ -135,7 +178,7 @@ export function App() {
         setLoadError((error as Error).message);
       }
     })();
-  }, [attach, scan]);
+  }, [attach, scan, loadRuns]);
 
   useEffect(() => {
     if (info) saveForm(info.workspace, form);
@@ -159,16 +202,57 @@ export function App() {
 
   const state = store?.state ?? null;
   const live = state !== null && isLive(state);
+  const busy = BUSY.includes(state ?? "");
   const spec = store?.scene?.spec ?? store?.info?.spec ?? null;
   const scripted = !!spec?.input;
   const driving = live && !scripted;
   const gamepad = useController(store, driving, onScreen);
-  // The field shows the run while it's on, and afterwards while the form names the same
-  // robot and field; otherwise the preview of what the form names.
-  const showRun =
-    !!store && (BUSY.includes(state ?? "") || (!!spec && spec.robot === form.robot && (spec.field ?? "") === form.field));
+
+  // Every run is recorded when it ends; the live run's recording then takes its place on the
+  // field, to scrub.
+  const recorded = store?.recorded ?? null;
+  const sceneRun = store?.scene?.run_id ?? null;
+  const autoOpened = useRef<string | null>(null);
+  useEffect(() => {
+    if (recorded) loadRuns();
+  }, [recorded, loadRuns]);
+  useEffect(() => {
+    if (!recorded || recorded.id !== sceneRun || busy || autoOpened.current === recorded.id) return;
+    autoOpened.current = recorded.id;
+    let current = true;
+    openRun(recorded.id, true)
+      .then((recording) => {
+        if (!current) return;
+        setShown(recording);
+        playhead.load(recording.playback.start, recording.playback.end);
+      })
+      .catch(() => {}); // the live run's last frame stays on the field
+    return () => {
+      current = false;
+    };
+  }, [recorded, sceneRun, busy, playhead]);
+
+  // What the field shows: the run while it's on; afterwards its recording (or any opened one)
+  // while the form names the same robot and field; otherwise the preview of what the form names.
+  const formNames = (robot: string, field: string) => robot === form.robot && field === form.field;
+  let source: FieldSource = { kind: "preview" };
+  if (store && busy) source = { kind: "live", store };
+  else if (shown && formNames(shown.robot, shown.field)) source = { kind: "recording", playback: shown.playback, playhead };
+  else if (store && !closedRun && spec && formNames(spec.robot, spec.field ?? "")) source = { kind: "live", store };
+  const recording = source.kind === "recording" ? shown : null;
+  const onField: Compared[] = compared.map((r, i) => ({ playback: r.playback, label: shortName(r.label), dash: COMPARE_DASHES[i] }));
   const startPose = useMemo(() => startOf(form), [form]);
-  const start = startPose ? { pose: startPose, editable: !BUSY.includes(state ?? "") } : null;
+  const start = startPose ? { pose: startPose, editable: !busy } : null;
+
+  const show = useCallback(
+    (next: Recording) => {
+      setShown(next);
+      setCompared((list) => list.filter((r) => r.key !== next.key));
+      playhead.load(next.playback.start, next.playback.end);
+      setProblem(null);
+    },
+    [playhead],
+  );
 
   const run = useCallback(async () => {
     const result = formToSpec(form);
@@ -178,8 +262,11 @@ export function App() {
     }
     setStarting(true);
     setProblem(null);
+    video?.cancel();
     try {
-      const started = await api.startSession(result.spec);
+      const chosen = configurations.find((c) => c.name === form.config);
+      const name = chosen && sameRun(form, chosen) ? chosen.name : null; // as saved: its name
+      const started = await api.startSession(result.spec, name);
       if ("problem" in started) setProblem(started.problem);
       else {
         attach(started.session.id, speed);
@@ -190,7 +277,7 @@ export function App() {
     } finally {
       setStarting(false);
     }
-  }, [attach, form, speed]);
+  }, [attach, configurations, form, speed, video]);
 
   const changeSpeed = useCallback(
     (value: number) => {
@@ -204,7 +291,110 @@ export function App() {
     if (store) api.stopSession(store.id).catch(() => {});
   }, [store]);
 
+  /** A run from the history on the field (the live one stopped), its spec in the form. */
+  const openRecorded = async (record: RunRecord) => {
+    setOpening(record.id);
+    try {
+      const next = await openRun(record.id);
+      video?.cancel();
+      if (await leaveSession()) loadRuns(); // the stopped run was recorded too
+      const saved = configurations.find((c) => c.name === record.name && sameRun(specToForm(record.spec), c));
+      setForm(specToForm(record.spec, saved?.name ?? ""));
+      show(next);
+    } catch (error) {
+      setProblem({ error: `Couldn't open ${record.name}: ${(error as Error).message}`, issues: [] });
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  /** A telemetry log from the workspace, played back with the robot and field the form names. */
+  const openTelemetryLog = async (path: string) => {
+    if (!form.robot) {
+      setProblem({ error: "Pick the robot this log was recorded with, then click the log again.", issues: [] });
+      return;
+    }
+    setOpening(`log:${path}`);
+    try {
+      const next = await openLog(path, form.robot, form.field);
+      video?.cancel();
+      if (await leaveSession()) loadRuns();
+      show(next);
+    } catch (error) {
+      setProblem({ error: `Couldn't play ${path} back: ${(error as Error).message}`, issues: [] });
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  const toggleCompare = async (record: RunRecord) => {
+    if (compared.some((r) => r.key === record.id)) {
+      setCompared((list) => list.filter((r) => r.key !== record.id));
+      return;
+    }
+    setOpening(record.id);
+    try {
+      const next = await openRun(record.id);
+      setCompared((list) => (list.length < MAX_COMPARED && !list.some((r) => r.key === next.key) ? [...list, next] : list));
+    } catch (error) {
+      setProblem({ error: `Couldn't open ${record.name}: ${(error as Error).message}`, issues: [] });
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  const changeRun = async (record: RunRecord, update: { kept?: boolean; name?: string }) => {
+    try {
+      const saved = await api.updateRun(record.id, update);
+      setRuns((list) => list.map((r) => (r.id === saved.id ? saved : r)));
+      const rename = (r: Recording) => (r.key === saved.id ? renamed(r, saved) : r);
+      setShown((current) => current && rename(current));
+      setCompared((list) => list.map(rename));
+    } catch (error) {
+      setProblem({ error: `Couldn't change ${record.name}: ${(error as Error).message}`, issues: [] });
+    }
+  };
+
+  const deleteRun = async (record: RunRecord) => {
+    try {
+      await api.deleteRun(record.id);
+      forgetTelemetry(record.id);
+      setRuns((list) => list.filter((r) => r.id !== record.id));
+      setCompared((list) => list.filter((r) => r.key !== record.id));
+      if (shown?.key === record.id) closeRecording();
+    } catch (error) {
+      setProblem({ error: `Couldn't delete ${record.name}: ${(error as Error).message}`, issues: [] });
+    }
+  };
+
+  /** Back to the robot as the form sets it up. */
+  const closeRecording = () => {
+    video?.cancel();
+    playhead.pause();
+    setShown(null);
+    setClosedRun(true);
+  };
+
+  const toggleVideo = () => {
+    if (video) {
+      video.cancel();
+      return;
+    }
+    const canvas = document.getElementById("field-canvas");
+    if (!(canvas instanceof HTMLCanvasElement) || !recording) return;
+    const exporter = new VideoExport(canvas, playhead, `vexsim-${recording.name}`, (_saved, error) => {
+      setVideo(null);
+      if (error) setProblem({ error, issues: [] });
+    });
+    setVideo(exporter);
+    exporter.start();
+  };
+
   const pick = (item: WorkspaceItem) => {
+    if (item.kind === "log") {
+      openTelemetryLog(item.path);
+      return;
+    }
     const key = item.kind === "project" ? "program" : (item.kind as keyof RunForm);
     if (key in form && key !== "config") setForm({ ...form, [key]: item.path });
   };
@@ -245,7 +435,9 @@ export function App() {
   };
 
   // Keys, as in the pygame viewer: Space pause, . step, R restart, +/- speed; 1-4 what the
-  // field shows; ? the list of keys. Driving keys are useController's.
+  // field shows; ? the list of keys. Driving keys are useController's. A recorded run: Space
+  // play, arrows (Shift: farther), Home/End and , . move through it.
+  const scrubbing = recording !== null;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -256,15 +448,36 @@ export function App() {
       if (event.ctrlKey || event.metaKey || event.altKey || typing || pressingButton) return;
       const index = SPEEDS.indexOf(speed);
       const toggle = (key: keyof Layers) => setLayers((l) => ({ ...l, [key]: !l[key] }));
+      const seekBy = (seconds: number) => {
+        event.preventDefault();
+        playhead.seek(playhead.t + seconds);
+      };
       switch (event.key) {
         case " ":
           if (store && state && isLive(state)) {
             event.preventDefault();
             store.send({ cmd: state === "paused" ? "resume" : "pause" });
+          } else if (scrubbing) {
+            event.preventDefault();
+            playhead.toggle();
           }
           break;
         case ".":
           if (state === "paused") store?.send({ cmd: "step", ms: 10 });
+          else if (scrubbing) seekBy(0.05);
+          break;
+        case ",":
+          if (scrubbing) seekBy(-0.05);
+          break;
+        case "ArrowLeft":
+        case "ArrowRight":
+          if (scrubbing && !driving) seekBy((event.key === "ArrowLeft" ? -1 : 1) * SEEK_S * (event.shiftKey ? 10 : 1));
+          break;
+        case "Home":
+          if (scrubbing) seekBy(-Infinity);
+          break;
+        case "End":
+          if (scrubbing) seekBy(Infinity);
           break;
         case "r":
         case "R":
@@ -297,7 +510,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [changeSpeed, help, speed, state, store]);
+  }, [changeSpeed, driving, help, playhead, scrubbing, speed, state, store]);
 
   return (
     <div className="app">
@@ -323,7 +536,30 @@ export function App() {
         </div>
       )}
       <div className="workarea">
-        <Sidebar workspace={workspace} form={form} onPick={pick} loading={scanning} onRefresh={() => info && scan(info, false)} />
+        <Sidebar
+          workspace={workspace}
+          form={form}
+          onPick={pick}
+          loading={scanning}
+          onRefresh={() => info && scan(info, false)}
+          shownLog={recording?.key.startsWith("log:") ? recording.key.slice(4) : null}
+          runCount={runs.length}
+          onRunsTab={loadRuns}
+          runs={
+            <RunsList
+              runs={runs}
+              shown={recording?.run?.id ?? null}
+              compared={compared.map((r) => r.key)}
+              opening={opening}
+              canCompare={source.kind !== "preview"}
+              onOpen={openRecorded}
+              onCompare={toggleCompare}
+              onKeep={(record, kept) => changeRun(record, { kept })}
+              onRename={(record, name) => changeRun(record, { name })}
+              onDelete={deleteRun}
+            />
+          }
+        />
         <main className="main">
           <RunBar
             workspace={workspace}
@@ -338,24 +574,56 @@ export function App() {
             onSave={saveConfiguration}
             onDelete={deleteConfiguration}
           />
-          <Controls store={store} speed={speed} onSpeed={changeSpeed} onStop={stop} command={store?.info?.command ?? store?.scene?.command ?? null} />
+          <Controls
+            store={store}
+            speed={speed}
+            onSpeed={changeSpeed}
+            onStop={stop}
+            command={store?.info?.command ?? store?.scene?.command ?? recording?.run?.command ?? null}
+          />
           <div className="stage">
             <div className="fieldcol">
               <FieldView
-                store={store}
-                showRun={showRun}
+                source={source}
+                compared={onField}
                 preview={preview}
                 start={start}
                 onStart={moveStart}
                 layers={layers}
                 follow={follow}
                 onFollow={setFollow}
+                stamp={video && recording ? recording.name : null}
               />
-              <FieldKey layers={layers} onLayers={setLayers} />
+              <FieldKey
+                layers={layers}
+                onLayers={setLayers}
+                compared={compared.map((r, i) => ({ key: r.key, name: r.label, dash: COMPARE_DASHES[i] }))}
+                onUncompare={(key) => setCompared((list) => list.filter((r) => r.key !== key))}
+              />
+              {recording && (
+                <Timeline
+                  playback={recording.playback}
+                  playhead={playhead}
+                  name={recording.name}
+                  run={recording.run}
+                  csv={recording.run ? api.csvUrl(recording.run.id) : null}
+                  video={video ? "recording" : canRecordVideo() ? "off" : "unsupported"}
+                  onVideo={toggleVideo}
+                  onClose={closeRecording}
+                />
+              )}
             </div>
-            <Readout store={showRun ? store : null} driving={driving} scripted={scripted} gamepad={gamepad} onScreen={onScreen} onInput={setOnScreen} />
+            <Readout source={source} driving={driving} scripted={scripted} gamepad={gamepad} onScreen={onScreen} onInput={setOnScreen} />
           </div>
-          <ConsolePanel store={store} problem={problem} root={root} editor={editor} onEditor={setEditor} />
+          <ConsolePanel
+            store={store}
+            history={recording?.console ?? null}
+            plots={recording ? <Plots shown={recording} compared={compared} playhead={playhead} /> : null}
+            problem={problem}
+            root={root}
+            editor={editor}
+            onEditor={setEditor}
+          />
         </main>
       </div>
       {help && <KeysHelp onClose={() => setHelp(false)} />}

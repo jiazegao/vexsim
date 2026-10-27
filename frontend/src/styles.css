@@ -15,6 +15,9 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
   --series-8: #e34948;
   --wheel: #6f6e69;
   --obstacle: #9a9a96;
@@ -44,6 +47,9 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
     --series-8: #e66767;
     --wheel: #8d8c86;
     --obstacle: #6b6b67;
@@ -68,6 +74,9 @@
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
   --series-8: #e66767;
   --wheel: #8d8c86;
   --obstacle: #6b6b67;
@@ -254,16 +263,25 @@ textarea {
 .sidebar-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 6px 6px;
+  gap: 2px;
+  padding: 0 4px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
 }
 
-.eyebrow {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+.sidebar-head [role="tab"] {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.sidebar-head [role="tab"].on {
+  color: var(--text-primary);
+  border-bottom-color: var(--series-1);
 }
 
 .pad {
@@ -518,7 +536,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 270px;
   gap: 10px;
-  flex: 1 0 320px;
+  flex: 1 0 380px;
   min-height: 320px;
 }
 
@@ -741,7 +759,7 @@ label.keyrow {
 
 /* --- console ----------------------------------------------------------------------- */
 
-.console {
+section.console {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
@@ -1114,6 +1132,283 @@ button.danger {
   margin: 0;
   font-size: 12px;
   color: var(--critical);
+}
+
+/* --- recorded runs: the list, the timeline, the plots -------------------------------- */
+
+.runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.runs li {
+  padding: 2px 0 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.runs .item-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.runs li.shown .item {
+  background: var(--accent-wash);
+  border-left-color: var(--series-1);
+}
+
+.tag {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding-left: 8px;
+}
+
+.run-actions button.small {
+  padding: 1px 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.run-actions button.ghost.on {
+  color: var(--series-1);
+}
+
+button.ghost.danger {
+  background: var(--critical);
+  color: #ffffff;
+}
+
+.rename {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.rename input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+}
+
+svg.dash line,
+svg.line-swatch line {
+  stroke: var(--text-secondary);
+  stroke-width: 2;
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.timeline-row.secondary {
+  gap: 6px;
+}
+
+.timeline .play {
+  min-width: 62px;
+}
+
+.timeline .time {
+  min-width: 0;
+}
+
+.timeline .speed {
+  margin-left: 0;
+}
+
+.scrub {
+  flex: 1;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.scrub input[type="range"] {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--focus);
+}
+
+/* the phases, lined up with the slider's track (inset by half its thumb) */
+.phases {
+  position: relative;
+  height: 15px;
+  margin: 0 8px;
+}
+
+.phases button {
+  position: absolute;
+  top: 0;
+  height: 15px;
+  padding: 0 4px;
+  border: none;
+  border-left: 2px solid var(--surface-1);
+  border-radius: 0;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.phases button:first-child {
+  border-left: none;
+}
+
+.run-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+a.button {
+  display: inline-block;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.button:hover {
+  background: var(--surface-2);
+}
+
+.plots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 6px 14px;
+  height: 260px;
+  min-height: 160px;
+  padding: 8px 12px;
+  overflow: auto;
+  resize: vertical;
+}
+
+.plots-empty {
+  padding: 8px 12px;
+  min-height: 80px;
+  color: var(--text-muted);
+}
+
+.plot {
+  margin: 0;
+  min-width: 0;
+}
+
+.plot figcaption {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.plot-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plot-value,
+.plot-key b {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.plot-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.plot-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plot-canvas {
+  min-width: 0;
+  cursor: pointer;
+}
+
+.plot-canvas .u-over {
+  cursor: pointer;
+}
+
+.playhead-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-left: 1.5px solid var(--text-primary);
+  pointer-events: none;
+}
+
+.fieldkey .keysub {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.fieldkey .unkey {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  line-height: 12px;
+}
+
+.fieldkey .keyname {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- narrow screens ---------------------------------------------------------------- */

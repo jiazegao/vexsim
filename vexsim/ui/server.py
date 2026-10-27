@@ -34,13 +34,15 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from vexsim import __version__
+from vexsim.app import runs
 from vexsim.app.frames import preview_of
 from vexsim.app.jobs import JobManager
 from vexsim.app.launch import (
@@ -59,8 +61,12 @@ from vexsim.ui.protocol import (
     JobInfo,
     Preview,
     PreviewRequest,
+    ReplayRequest,
     RunConfigurations,
+    RunDetails,
     RunProblem,
+    RunRecord,
+    RunUpdate,
     SaveConfigurations,
     SessionInfo,
     StartJob,
@@ -192,7 +198,11 @@ class UIServer:
             for other in list(self.sessions.values()):
                 other.stop()
         session = Session(
-            f"s{next(self._ids)}", spec, base=self.workspace.root, listener=self._publish
+            f"s{next(self._ids)}",
+            spec,
+            base=self.workspace.root,
+            listener=self._publish,
+            name=request.name,
         )
         with self._lock:
             self.sessions[session.id] = session
@@ -391,6 +401,91 @@ def create_app(
             return JSONResponse({"detail": f"can't save {LAUNCH_FILE}: {exc}"}, status_code=500)
         return RunConfigurations(file=LAUNCH_FILE, configurations=read_configurations(root))
 
+    # --- recorded runs (.vexsim/runs) ------------------------------------------------------
+
+    def _runs_root() -> Path:
+        return runs.runs_root(server.workspace.root)
+
+    def _missing(run_id: str) -> JSONResponse:
+        return JSONResponse({"detail": f"no run {run_id}"}, status_code=404)
+
+    @app.get("/api/runs")
+    def list_runs() -> list[RunRecord]:
+        return runs.list_runs(_runs_root())
+
+    @app.get("/api/runs/{run_id}", responses={404: {}})
+    def run_details(run_id: str):
+        try:
+            record = runs.read_record(_runs_root(), run_id)
+        except (OSError, ValueError):
+            return _missing(run_id)
+        return RunDetails(run=record, console=runs.read_console(_runs_root(), run_id))
+
+    @app.patch("/api/runs/{run_id}", responses={404: {}})
+    def update_run(run_id: str, update: RunUpdate):
+        try:
+            return runs.update_record(_runs_root(), run_id, kept=update.kept, name=update.name)
+        except (OSError, ValueError):
+            return _missing(run_id)
+
+    @app.delete("/api/runs/{run_id}", status_code=204, responses={404: {}})
+    def delete_run(run_id: str) -> Response:
+        try:
+            runs.delete_run(_runs_root(), run_id)
+        except (OSError, ValueError):
+            return _missing(run_id)
+        return Response(status_code=204)
+
+    @app.get("/api/runs/{run_id}/tape", responses={404: {}})
+    def run_tape(run_id: str) -> Response:
+        """The run to scrub (``Tape``), passed through from its file unchecked: it's big."""
+        try:
+            tape = runs.read_tape(_runs_root(), run_id)
+        except (OSError, ValueError):
+            return _missing(run_id)
+        return Response(dumps(tape), media_type="application/json")
+
+    @app.get("/api/runs/{run_id}/telemetry", responses={404: {}})
+    def run_telemetry(run_id: str) -> Response:
+        """The run's telemetry for plots (``Telemetry``)."""
+        try:
+            columns = runs.telemetry_columns(runs.telemetry_path(_runs_root(), run_id))
+        except (OSError, ValueError):
+            return _missing(run_id)
+        return Response(dumps(columns), media_type="application/json")
+
+    @app.get("/api/runs/{run_id}/telemetry.csv", responses={404: {}})
+    def run_csv(run_id: str) -> Response:
+        """The 10 ms telemetry log, as ``vexsim run --record`` writes it."""
+        import gzip
+
+        try:
+            path = runs.telemetry_path(_runs_root(), run_id)
+            text = gzip.decompress(path.read_bytes()).decode("utf-8")
+        except (OSError, ValueError):
+            return _missing(run_id)
+        name = f"{run_id}.csv"
+        return PlainTextResponse(
+            text,
+            media_type="text/csv",
+            headers={"content-disposition": f'attachment; filename="{name}"'},
+        )
+
+    @app.post("/api/replay", responses={422: {"model": RunProblem}})
+    def replay(request: ReplayRequest) -> Response:
+        """A telemetry log from the workspace as a tape (``Replay``), drawn with a robot."""
+        try:
+            prepared = server.check(RunSpec(robot=request.robot, field=request.field))
+            log = server.workspace.path(request.log)
+            result = runs.replay_of(
+                log, prepared.config, prepared.field or FieldConfig(), request.robot, request.log
+            )
+        except RunError as exc:
+            return _problem(exc)
+        except (OSError, ValueError) as exc:
+            return JSONResponse(RunProblem(error=str(exc), issues=[]).model_dump(), 422)
+        return Response(dumps(result), media_type="application/json")
+
     @app.post("/api/sessions", responses={422: {"model": RunProblem}})
     def start_session(request: StartSession):
         try:
@@ -497,6 +592,7 @@ def create_app(
                 "<code>npm ci && npm run build</code> in <code>frontend/</code>.</p>"
             )
 
+    app.add_middleware(GZipMiddleware, minimum_size=2048)  # tapes and telemetry are big
     hosts = hosts or {f"127.0.0.1:{port}", f"localhost:{port}"}
     origins = origins or {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     app.add_middleware(

@@ -1,8 +1,9 @@
-"""Telemetry log: one row every 10 ms, written as CSV."""
+"""Telemetry log: one row every 10 ms, written as CSV (gzipped when the name ends .gz)."""
 
 from __future__ import annotations
 
 import csv
+import gzip
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -112,7 +113,7 @@ class Recorder:
 
     def write_csv(self, path: str | Path) -> Path:
         path = Path(path)
-        with path.open("w", newline="", encoding="utf-8") as f:
+        with _open_text(path, "w") as f:
             writer = csv.writer(f)
             writer.writerow(self.columns)
             for row in self.rows:
@@ -131,7 +132,7 @@ class Log:
 
     @classmethod
     def read(cls, path: str | Path) -> Log:
-        with Path(path).open(newline="", encoding="utf-8") as f:
+        with _open_text(Path(path), "r") as f:
             reader = csv.reader(f)
             columns = next(reader)
             rows = list(reader)
@@ -151,3 +152,10 @@ class Log:
     @property
     def motor_ports(self) -> list[int]:
         return sorted({int(c[5:].split("_")[0]) for c in self.columns if c.startswith("motor")})
+
+
+def _open_text(path: Path, mode: str):
+    """A CSV file to read or write, gzipped if its name ends .gz."""
+    if path.suffix == ".gz":
+        return gzip.open(path, mode + "t", newline="", encoding="utf-8")
+    return path.open(mode, newline="", encoding="utf-8")

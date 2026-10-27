@@ -10,6 +10,7 @@ import type {
   ErrorMessage,
   FrameMessage,
   OverlayMessage,
+  RunRecord,
   SceneMessage,
   ServerMessage,
   SessionInfo,
@@ -42,6 +43,7 @@ export class SessionStore {
   truth = new Trail();
   estimate = new Trail();
   frames = 0; // frames received, all told
+  recorded: RunRecord | null = null; // the last of its runs written to the run history
   buildProblems: Problem[] = []; // the compiler's errors and warnings
   runProblems: Problem[] = []; // where the program failed
   connected = false;
@@ -105,6 +107,9 @@ export class SessionStore {
         break;
       case "console":
         this.addLines("console", message.lines);
+        break;
+      case "recorded":
+        this.recorded = message.run;
         break;
       case "build":
         this.addLines("build", message.lines);

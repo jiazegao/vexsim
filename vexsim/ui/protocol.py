@@ -21,6 +21,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, Field
 
 from vexsim.app.launch import RunConfiguration
+from vexsim.app.runs import PoseErrorSummary, RunRecord
 from vexsim.app.runspec import RunSpec
 
 ItemKind = Literal["robot", "field", "scenario", "program", "project", "input", "log", "invalid"]
@@ -71,6 +72,7 @@ class SessionInfo(_Message):
     message: str | None
     mode: str
     created: float
+    run_id: str | None  # where its current (or last) run is recorded
 
 
 class JobInfo(_Message):
@@ -90,6 +92,7 @@ class JobInfo(_Message):
 class StartSession(_Message):
     spec: RunSpec
     replace: bool = True  # stop the other sessions first
+    name: str | None = None  # what to call its recorded runs (a saved run's name)
 
 
 class StartJob(_Message):
@@ -206,10 +209,9 @@ class StatusMessage(_Message):
     mode: str
 
 
-class SceneMessage(_Message):
-    """Sent when a run starts or restarts."""
+class Scene(_Message):
+    """What doesn't move in a run: the robot and field, and what was asked for."""
 
-    type: Literal["scene"]
     robot: RobotScene
     field: FieldScene
     mode: str
@@ -217,6 +219,13 @@ class SceneMessage(_Message):
     seed: int
     spec: RunSpec
     command: str
+    run_id: str | None  # where the run is recorded: .vexsim/runs/<run_id>
+
+
+class SceneMessage(Scene):
+    """Sent when a run starts or restarts."""
+
+    type: Literal["scene"]
 
 
 class ControllerState(_Message):
@@ -224,15 +233,11 @@ class ControllerState(_Message):
     digital: list[str]  # pressed buttons: L1 L2 R1 R2 UP DOWN LEFT RIGHT X B Y A
 
 
-class FrameMessage(_Message):
-    """Where everything is, about 60 times a second while running."""
+class FrameState(_Message):
+    """Where everything is at one moment (a recorded run's tape keeps these)."""
 
-    type: Literal["frame"]
     t: float  # simulated time
     phase: str  # initialize, autonomous, opcontrol, done, ...
-    state: SessionState
-    speed: float | None  # asked-for speed; None = as fast as possible
-    rate: float  # simulated seconds per real second, lately
     pose: tuple[float, float, float]  # where the robot really is: x, y, heading
     estimate: tuple[float, float, float] | None  # where the robot code thinks it is
     speed_in_s: float
@@ -244,8 +249,6 @@ class FrameMessage(_Message):
     pieces: list[tuple[float, float]]
     contacts: list[tuple[float, float]]  # where the robot touches a wall
     motors: list[tuple[int, float, float, bool]]  # port, current (A), temperature (C), hot
-    lcd: list[str]  # brain screen lines
-    controller_screen: list[str]
     controller: ControllerState  # what the robot's controller reads
     # IMU port -> heading (0-360, clockwise, as get_heading()) and rotation; None while
     # it calibrates
@@ -257,12 +260,87 @@ class FrameMessage(_Message):
     period_left: float | None  # seconds left in a timed period (match, skills)
 
 
-class OverlayMessage(_Message):
-    """A Python program's chassis motion: its path and target (when they change)."""
+class FrameMessage(FrameState):
+    """Where everything is, about 60 times a second while running."""
 
-    type: Literal["overlay"]
+    type: Literal["frame"]
+    state: SessionState
+    speed: float | None  # asked-for speed; None = as fast as possible
+    rate: float  # simulated seconds per real second, lately
+    lcd: list[str]  # brain screen lines
+    controller_screen: list[str]
+
+
+class Overlay(_Message):
+    """A Python program's chassis motion: its path and target."""
+
     path: list[tuple[float, float]] | None
     target: tuple[float, float, float | None] | None
+
+
+class OverlayMessage(Overlay):
+    """Sent when the motion's path or target changes."""
+
+    type: Literal["overlay"]
+
+
+class RecordedMessage(_Message):
+    """A run ended (finished, stopped, restarted, failed) and was recorded."""
+
+    type: Literal["recorded"]
+    run: RunRecord
+
+
+# --- recorded runs -----------------------------------------------------------------------------
+
+
+class TapeEvents(_Message):
+    """When what changes seldom changed: [time, the new value]."""
+
+    overlay: list[tuple[float, Overlay]]
+    lcd: list[tuple[float, list[str]]]
+    controller_screen: list[tuple[float, list[str]]]
+
+
+class Tape(_Message):
+    """A recorded run to scrub: its scene, and a frame every 50 ms of simulated time."""
+
+    scene: Scene
+    samples: list[FrameState]
+    events: TapeEvents
+
+
+class Telemetry(_Message):
+    """A run's 10 ms telemetry log as columns (at most 5000 rows), for plots: the log's
+    columns (time_s, x_in, motor1_current_a, ...) plus error_in and error_deg, the robot
+    code's pose error; and when each phase begins."""
+
+    columns: dict[str, list[float | None]]
+    phases: list[tuple[float, str]]
+
+
+class RunDetails(_Message):
+    run: RunRecord
+    console: list[str]
+
+
+class RunUpdate(_Message):
+    kept: bool | None = None  # keep it when old runs are cleared out
+    name: str | None = None
+
+
+class ReplayRequest(_Message):
+    """Open a telemetry log (vexsim run --record) from the workspace, drawn with a robot."""
+
+    log: str
+    robot: str
+    field: str | None = None
+
+
+class Replay(_Message):
+    name: str
+    tape: Tape
+    telemetry: Telemetry
 
 
 class ConsoleMessage(_Message):
@@ -292,6 +370,7 @@ ServerMessage = Annotated[
         ConsoleMessage,
         BuildMessage,
         ErrorMessage,
+        RecordedMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -356,10 +435,23 @@ MODELS: list[type[BaseModel]] = [
     FieldScene,
     SessionMessage,
     StatusMessage,
+    Scene,
     SceneMessage,
     ControllerState,
+    FrameState,
     FrameMessage,
+    Overlay,
     OverlayMessage,
+    PoseErrorSummary,
+    RunRecord,
+    RecordedMessage,
+    TapeEvents,
+    Tape,
+    Telemetry,
+    RunDetails,
+    RunUpdate,
+    ReplayRequest,
+    Replay,
     ConsoleMessage,
     BuildMessage,
     ErrorMessage,

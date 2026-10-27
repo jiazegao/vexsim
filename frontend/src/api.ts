@@ -5,11 +5,17 @@ import type {
   AppInfo,
   JobInfo,
   Preview,
+  Replay,
   RunConfiguration,
   RunConfigurations,
+  RunDetails,
   RunProblem,
+  RunRecord,
   RunSpec,
+  RunUpdate,
   SessionInfo,
+  Tape,
+  Telemetry,
   WorkspaceInfo,
 } from "./protocol";
 
@@ -60,6 +66,16 @@ export const api = {
   stopSession: (id: string) => request<void>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
   jobs: () => request<JobInfo[]>("/api/jobs"),
   configurations: () => request<RunConfigurations>("/api/configurations"),
+  runs: () => request<RunRecord[]>("/api/runs"),
+  run: (id: string) => request<RunDetails>(`/api/runs/${encodeURIComponent(id)}`),
+  tape: (id: string) => request<Tape>(`/api/runs/${encodeURIComponent(id)}/tape`),
+  telemetry: (id: string) => request<Telemetry>(`/api/runs/${encodeURIComponent(id)}/telemetry`),
+  updateRun: (id: string, update: RunUpdate) =>
+    request<RunRecord>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(update) }),
+  deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  csvUrl: (id: string) => `/api/runs/${encodeURIComponent(id)}/telemetry.csv`,
+  replay: (log: string, robot: string, field: string | null) =>
+    request<Replay>("/api/replay", { method: "POST", body: JSON.stringify({ log, robot, field }) }),
   saveConfigurations: (configurations: RunConfiguration[]) =>
     request<RunConfigurations>("/api/configurations", { method: "PUT", body: JSON.stringify({ configurations }) }),
 
@@ -77,13 +93,14 @@ export const api = {
     return { preview: body as Preview };
   },
 
-  /** Start a run (replacing any other); a RunProblem if it can't start. */
-  async startSession(spec: RunSpec): Promise<StartResult> {
+  /** Start a run (replacing any other), called `name` in the run history; a RunProblem
+   * if it can't start. */
+  async startSession(spec: RunSpec, name: string | null = null): Promise<StartResult> {
     const response = await fetch("/api/sessions", {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ spec, replace: true }),
+      body: JSON.stringify({ spec, replace: true, name }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 422) {

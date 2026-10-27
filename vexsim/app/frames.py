@@ -105,7 +105,9 @@ def preview_of(config, field) -> dict[str, Any]:
     return scene
 
 
-def scene_of(sim, *, mode: str, spec: dict, command: str) -> dict[str, Any]:
+def scene_of(
+    sim, *, mode: str, spec: dict, command: str, run_id: str | None = None
+) -> dict[str, Any]:
     """The parts of a run that don't move: the robot's shape and mounts, the field."""
     return {
         "type": "scene",
@@ -116,6 +118,7 @@ def scene_of(sim, *, mode: str, spec: dict, command: str) -> dict[str, Any]:
         "seed": spec["seed"],
         "spec": spec,
         "command": command,
+        "run_id": run_id,
     }
 
 

@@ -205,3 +205,83 @@ test("lists every key", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("keys-help")).toHaveCount(0);
 });
+
+test("records every run: scrub one, reopen an older one, overlay two", async ({ page }) => {
+  test.setTimeout(120_000);
+  const runCount = async () => ((await (await page.request.get("/api/runs")).json()) as unknown[]).length;
+  const before = await runCount();
+  await page.getByTestId("robot").selectOption(ROBOT);
+  await page.getByTestId("field-select").selectOption("examples/fields/v5rc_empty.yaml");
+  await page.getByTestId("program").selectOption(PROGRAM);
+  await page.locator(".controls .speed select").selectOption("0"); // as fast as it goes
+  for (const [i, y] of ["0", "24"].entries()) {
+    await page.getByLabel("Start y (in)").fill(y); // the second starts 24 in further up the field
+    await page.getByTestId("run").click();
+    await expect.poll(runCount, { timeout: 60_000 }).toBe(before + i + 1);
+  }
+
+  // The run that just ended is on the field to scrub, at its end; the field, its time
+  // and the readings follow the scrubber
+  const field = page.getByTestId("field");
+  const scrubber = page.getByTestId("scrubber");
+  await expect(page.getByTestId("timeline")).toBeVisible();
+  const [start, end] = [Number(await scrubber.getAttribute("min")), Number(await scrubber.getAttribute("max"))];
+  expect(end - start).toBeGreaterThan(5);
+  await expect(field).toHaveAttribute("data-time", end.toFixed(3));
+  const atEnd = await truePose(page);
+  await scrubber.fill("2");
+  await expect(field).toHaveAttribute("data-time", "2.000");
+  await expect(page.getByTestId("playhead-time")).toHaveAttribute("data-t", "2.000");
+  const atTwo = await truePose(page);
+  expect(Math.hypot(atTwo[0] - atEnd[0], atTwo[1] - atEnd[1])).toBeGreaterThan(5);
+  // Space plays it on from there and pauses it again; Home goes back to its start
+  await field.focus();
+  await page.keyboard.press("Space");
+  await expect.poll(async () => Number(await field.getAttribute("data-time"))).toBeGreaterThan(2.3);
+  await page.keyboard.press("Space");
+  const paused = await field.getAttribute("data-time");
+  await page.waitForTimeout(300);
+  await expect(field).toHaveAttribute("data-time", paused!);
+  await page.keyboard.press("Home");
+  await expect(field).toHaveAttribute("data-time", start.toFixed(3));
+
+  // Reopen the older run (newest first in the list): the form, the field and the console
+  // are that run's again
+  await page.getByTestId("tab-runs").click();
+  const runs = page.getByTestId("recorded-run");
+  await expect(runs).toHaveCount(before + 2);
+  const [newer, older] = [runs.nth(0), runs.nth(1)];
+  await older.getByTestId("open-run").click();
+  await expect(older).toHaveClass(/shown/);
+  expect(await startValue(page, "y")).toBe(0);
+  await expect(page.getByTestId("console")).toContainText("autonomous start");
+  await expect(page.getByTestId("status")).toHaveCount(0); // the live run is put away
+  const csv = await page.request.get((await page.getByRole("link", { name: "CSV" }).getAttribute("href"))!);
+  expect((await csv.text()).split("\n")[0]).toContain("time_s,phase,x_in");
+
+  // Overlay the newer run: drawn over it on the field, in the key and in the plots
+  await newer.getByTestId("compare-run").click();
+  await expect(page.getByTestId("compared-key")).toHaveCount(1);
+  await expect(field).toHaveAttribute("data-ghosts", "1");
+  await page.getByTestId("plots-tab").click();
+  await expect(page.getByTestId("plot-pose-error").locator(".plot-key")).toHaveCount(2);
+  await expect(page.getByTestId("plot-speed").locator(".plot-key")).toHaveCount(2);
+  await expect(page.getByTestId("plot-x").locator(".plot-key")).toHaveText([/^True/, /^Its code's estimate/]);
+  // a click on a plot goes to that moment
+  const plot = page.getByTestId("plot-pose-error").locator(".u-over");
+  const box = (await plot.boundingBox())!;
+  await plot.click({ position: { x: box.width * 0.25, y: box.height / 2 } });
+  await expect.poll(async () => Number(await field.getAttribute("data-time"))).toBeLessThan(start + (end - start) * 0.5);
+
+  // Keep it, rename it, and delete the other: the overlay goes with it
+  await older.getByRole("button", { name: "Keep" }).click();
+  await expect(older.locator(".tag")).toHaveText("kept");
+  await older.getByRole("button", { name: "Rename" }).click();
+  await older.getByLabel("New name").fill("from the middle");
+  await older.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("shown-run")).toHaveText("from the middle");
+  await newer.getByRole("button", { name: "Delete" }).click();
+  await newer.getByRole("button", { name: "Sure?" }).click();
+  await expect(runs).toHaveCount(before + 1);
+  await expect(page.getByTestId("compared-key")).toHaveCount(0);
+});

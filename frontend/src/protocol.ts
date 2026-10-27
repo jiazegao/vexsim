@@ -4,7 +4,7 @@
 export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "input" | "log" | "invalid";
 export type SessionState = "building" | "starting" | "running" | "paused" | "finished" | "error" | "stopped";
 export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | ConsoleMessage | BuildMessage | ErrorMessage;
+export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
 export type ClientCommand = SimpleCommand | StepCommand | SpeedCommand | InputCommand;
 
 /** Everything `vexsim run` takes that decides what is simulated. Paths are as given: relative to the working directory for the CLI, to the workspace for the UI (`resolved` makes them absolute). `start` is x, y (inches) and heading (degrees, counter-clockwise from +x). */
@@ -57,6 +57,7 @@ export interface SessionInfo {
   message: string | null;
   mode: string;
   created: number;
+  run_id: string | null;
 }
 
 export interface JobInfo {
@@ -76,6 +77,7 @@ export interface JobInfo {
 export interface StartSession {
   spec: RunSpec;
   replace?: boolean;
+  name?: string | null;
 }
 
 export interface StartJob {
@@ -199,9 +201,8 @@ export interface StatusMessage {
   mode: string;
 }
 
-/** Sent when a run starts or restarts. */
-export interface SceneMessage {
-  type: "scene";
+/** What doesn't move in a run: the robot and field, and what was asked for. */
+export interface Scene {
   robot: RobotScene;
   field: FieldScene;
   mode: string;
@@ -209,6 +210,20 @@ export interface SceneMessage {
   seed: number;
   spec: RunSpec;
   command: string;
+  run_id: string | null;
+}
+
+/** Sent when a run starts or restarts. */
+export interface SceneMessage {
+  robot: RobotScene;
+  field: FieldScene;
+  mode: string;
+  start: [number, number, number];
+  seed: number;
+  spec: RunSpec;
+  command: string;
+  run_id: string | null;
+  type: "scene";
 }
 
 export interface ControllerState {
@@ -216,14 +231,10 @@ export interface ControllerState {
   digital: string[];
 }
 
-/** Where everything is, about 60 times a second while running. */
-export interface FrameMessage {
-  type: "frame";
+/** Where everything is at one moment (a recorded run's tape keeps these). */
+export interface FrameState {
   t: number;
   phase: string;
-  state: SessionState;
-  speed: number | null;
-  rate: number;
   pose: [number, number, number];
   estimate: [number, number, number] | null;
   speed_in_s: number;
@@ -233,8 +244,6 @@ export interface FrameMessage {
   pieces: [number, number][];
   contacts: [number, number][];
   motors: [number, number, number, boolean][];
-  lcd: string[];
-  controller_screen: string[];
   controller: ControllerState;
   imu: Record<string, [number, number] | null>;
   gps: Record<string, [number, number, number, number, boolean] | null>;
@@ -242,11 +251,120 @@ export interface FrameMessage {
   period_left: number | null;
 }
 
-/** A Python program's chassis motion: its path and target (when they change). */
-export interface OverlayMessage {
-  type: "overlay";
+/** Where everything is, about 60 times a second while running. */
+export interface FrameMessage {
+  t: number;
+  phase: string;
+  pose: [number, number, number];
+  estimate: [number, number, number] | null;
+  speed_in_s: number;
+  battery: [number, number];
+  wheels: [number, number, number, number, number][];
+  distance: Record<string, number | null>;
+  pieces: [number, number][];
+  contacts: [number, number][];
+  motors: [number, number, number, boolean][];
+  controller: ControllerState;
+  imu: Record<string, [number, number] | null>;
+  gps: Record<string, [number, number, number, number, boolean] | null>;
+  mechanisms: number[];
+  period_left: number | null;
+  type: "frame";
+  state: SessionState;
+  speed: number | null;
+  rate: number;
+  lcd: string[];
+  controller_screen: string[];
+}
+
+/** A Python program's chassis motion: its path and target. */
+export interface Overlay {
   path: [number, number][] | null;
   target: [number, number, number | null] | null;
+}
+
+/** Sent when the motion's path or target changes. */
+export interface OverlayMessage {
+  path: [number, number][] | null;
+  target: [number, number, number | null] | null;
+  type: "overlay";
+}
+
+/** How far the robot code's pose was from the true one (see `Recorder.pose_error`). */
+export interface PoseErrorSummary {
+  mean_in: number;
+  max_in: number;
+  max_at_s: number;
+  final_in: number;
+  mean_deg: number;
+  max_deg: number;
+}
+
+/** A recorded run, as its run.json has it. */
+export interface RunRecord {
+  id: string;
+  name: string;
+  created: number;
+  spec: RunSpec;
+  command: string;
+  mode: string;
+  robot: string;
+  field: string;
+  duration: number;
+  ended: "finished" | "stopped" | "restarted" | "error";
+  message: string | null;
+  pose_error: PoseErrorSummary | null;
+  samples: number;
+  kept?: boolean;
+}
+
+/** A run ended (finished, stopped, restarted, failed) and was recorded. */
+export interface RecordedMessage {
+  type: "recorded";
+  run: RunRecord;
+}
+
+/** When what changes seldom changed: [time, the new value]. */
+export interface TapeEvents {
+  overlay: [number, Overlay][];
+  lcd: [number, string[]][];
+  controller_screen: [number, string[]][];
+}
+
+/** A recorded run to scrub: its scene, and a frame every 50 ms of simulated time. */
+export interface Tape {
+  scene: Scene;
+  samples: FrameState[];
+  events: TapeEvents;
+}
+
+/** A run's 10 ms telemetry log as columns (at most 5000 rows), for plots: the log's columns (time_s, x_in, motor1_current_a, ...) plus error_in and error_deg, the robot code's pose error; and when each phase begins. */
+export interface Telemetry {
+  columns: Record<string, (number | null)[]>;
+  phases: [number, string][];
+}
+
+export interface RunDetails {
+  run: RunRecord;
+  console: string[];
+}
+
+export interface RunUpdate {
+  kept?: boolean | null;
+  name?: string | null;
+}
+
+/** Open a telemetry log (vexsim run --record) from the workspace, drawn with a robot. */
+export interface ReplayRequest {
+  log: string;
+  robot: string;
+  field?: string | null;
+}
+
+export interface Replay {
+  name: string;
+  tape: Tape;
+  telemetry: Telemetry;
 }
 
 export interface ConsoleMessage {

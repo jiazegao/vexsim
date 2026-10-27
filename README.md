@@ -454,9 +454,21 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 
 Each run executes in a process of its own, so a program that crashes or hangs never takes the app down; *Stop* ends it. If you reload the page, it reconnects to the run in progress.
 
+**After a run: replay, plots and the run history**
+
+![Two runs of the tour compared: one from the middle of the field, the other from 24 in further up it (grey, dashed), scrubbed to 6 s, with their plots](docs/img/ui_compare.png)
+
+- **Every run is recorded** when it ends: when it finishes, or you stop or restart it, or it fails. Its recording then takes its place on the field, with a **timeline** under it: *Play* and *Pause*, *To start*, the scrubber with the run's phases beneath it (click one to go to its start), the time, and a playback speed. The field, the readings and the screens show the moment you scrub to. Once a run has ended, Space plays and pauses it, ← and → move half a second (with Shift, 5 s), `,` and `.` one 50 ms frame, Home and End to its start and end. *Close* goes back to the robot as the run bar sets it up.
+- **Plots** (the tab beside *Console*): one chart per unit, so no chart has two scales. Pose error and heading error; x, y and heading, true (green) beside the code's estimate (blue); speed, turn rate and the battery; each motor's current, temperature and voltage; and the mechanisms' angles. Hovering reads every chart at that moment; clicking goes there. The black line is the moment shown on the field.
+- **Runs** (the left panel's second tab) lists the recorded runs, newest first: when, how long, how each ended, and how far its code's pose was off on average. Click one to open it. That fills in the run bar as the run was set up, so *Run* repeats it, and it stops a run in progress first. *Compare* draws a run over the one on the field, in grey with its own dashes and its name, and adds it to the plots of a single quantity, up to three at once. (Grey because the field already uses as many colors as everyone, color blind or not, can tell apart.) *Keep* saves a run from the cleanup: the newest 50 stay, plus every kept one. *Rename* and *Delete* do what they say.
+- **Telemetry logs** in the workspace list (files from `vexsim run --record`) open the same way, drawn with the robot and field picked in the run bar, like `vexsim replay`.
+- **Exports:** *CSV* downloads the run's telemetry, in the `--record` format. *Video* plays the run from its start and saves the field as a WebM video, at the playback speed. *Save picture* saves the field as a PNG.
+
+The recordings live in the folder's `.vexsim/runs/`, one folder per run: `run.json` (what was run and how it ended), the tape the timeline plays (a frame every 50 ms of simulated time), `telemetry.csv.gz` (every 10 ms), `console.txt`, and `sd/`, the run's SD card (`/usd/`). Set `VEXSIM_RUNS_DIR` to keep them somewhere else.
+
 **Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie. Keep the terminal open while you use the app; Ctrl+C stops it. The browser only reaches files inside the folder.
 
-The app is new. It runs and drives simulations so far; a timeline and replays, config editors, and pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
+The app is new. It runs, drives, replays and compares simulations so far; config editors and pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
 
 ---
 
@@ -1117,12 +1129,13 @@ vexsim/
 | `jobs.py` | `JobManager`: long tasks (builds, so far), each in a process of its own, with their output as it comes, cancel, and one job at a time per key (a second build of a project joins the first). |
 | `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
 | `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay and the console. |
+| `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape. |
 | `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels and their forces, the controller, sensors, motors, mechanisms, pieces, screens, the period's time left) and the active motion's path and target. `preview_of` gives the robot and field before any run, to drag the robot to its start. |
 
 ### `ui/`: the browser app
 | Module | What it does |
 |---|---|
-| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, runs and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
+| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs) and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
 | `protocol.py` | Every message and request as a pydantic model. `python -m vexsim.ui.protocol frontend/src/protocol.ts` writes them as TypeScript for the page; a test fails while that file is stale. |
 | `static/` | The built page (from `frontend/`, by `npm run build`), shipped with the package. |
 

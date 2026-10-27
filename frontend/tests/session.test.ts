@@ -10,6 +10,7 @@ const INFO: SessionInfo = {
   message: null,
   mode: "autonomous",
   created: 0,
+  run_id: null,
 };
 
 const SCENE: SceneMessage = {
@@ -21,6 +22,7 @@ const SCENE: SceneMessage = {
   seed: 0,
   spec: { robot: "bot.yaml" },
   command: "vexsim run bot.yaml",
+  run_id: null,
 };
 
 function frame(t: number, x: number, estimate: [number, number, number] | null = null): FrameMessage {

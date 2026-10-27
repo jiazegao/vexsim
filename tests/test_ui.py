@@ -13,6 +13,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from tests.conftest import ROOT
+from vexsim.app import runs
 from vexsim.app.jobs import JobManager
 from vexsim.app.launch import (
     LaunchFileError,
@@ -24,12 +25,19 @@ from vexsim.app.runspec import RunError, RunSpec, check, quote_arg
 from vexsim.app.session import Session
 from vexsim.app.workspace import Workspace
 from vexsim.cli import build_parser, main
-from vexsim.ui.protocol import ServerMessage, typescript
+from vexsim.ui.protocol import ServerMessage, Tape, Telemetry, typescript
 
 ROBOT = "examples/robots/full_omni_6m.yaml"
 TOUR = "examples/programs/tour.py"
 PRACTICE = "examples/fields/practice_elements.yaml"
 MESSAGES = TypeAdapter(ServerMessage)
+
+
+@pytest.fixture(autouse=True)
+def runs_elsewhere(tmp_path, monkeypatch):
+    """Runs these tests start are recorded in a temporary folder, not the repository's
+    .vexsim/runs (worker processes inherit the variable)."""
+    monkeypatch.setenv("VEXSIM_RUNS_DIR", str(tmp_path / "recorded-runs"))
 
 
 def wait_for(predicate, timeout=20.0, interval=0.05):
@@ -312,6 +320,83 @@ def test_a_session_warns_when_its_robot_starts_on_an_obstacle():
         session.stop()
 
 
+# --- recorded runs --------------------------------------------------------------------------
+
+
+def tour_workspace(folder: Path) -> Path:
+    """A workspace with a robot, the tour, and an empty field: the tour's own."""
+    shutil.copy(ROOT / ROBOT, folder / "robot.yaml")
+    shutil.copy(ROOT / TOUR, folder / "tour.py")
+    return folder
+
+
+def test_every_run_is_recorded(tmp_path):
+    workspace = tour_workspace(tmp_path)
+    heard = Recorder()
+    spec = RunSpec(robot="robot.yaml", program="tour.py")
+    session = Session("s6", spec, base=workspace, listener=heard, name="The tour")
+    session.start()
+    try:
+        session.command({"cmd": "speed", "value": 0})  # as fast as possible
+        wait_for(lambda: heard.of("recorded"), timeout=60)  # it finished, and was written
+        first = heard.of("recorded")[0]["run"]
+        assert first["ended"] == "finished" and first["name"] == "The tour"
+        assert first["id"] == heard.of("scene")[0]["run_id"] == session.info()["run_id"]
+        session.command({"cmd": "restart"})
+        wait_for(lambda: session.frame is not None and session.frame["t"] > 1)
+    finally:
+        session.stop()
+    wait_for(lambda: len(heard.of("recorded")) == 2)
+    second = heard.of("recorded")[1]["run"]
+    assert second["ended"] == "stopped" and second["id"] != first["id"]
+
+    root = runs.runs_root(workspace)
+    assert [r.id for r in runs.list_runs(root)] == [second["id"], first["id"]]  # newest first
+    record = runs.read_record(root, first["id"])
+    assert record.duration > 10 and record.pose_error.final_in < 3
+    assert record.command == "vexsim run robot.yaml --program tour.py"
+    folder = root / first["id"]
+    assert {p.name for p in folder.iterdir()} == {
+        "run.json",
+        "tape.json.gz",
+        "telemetry.csv.gz",
+        "console.txt",
+        "sd",
+    }
+    tape = Tape.model_validate(runs.read_tape(root, first["id"]))
+    times = [s.t for s in tape.samples]
+    assert times[0] == 0 and times[-1] == record.duration and len(times) == record.samples
+    assert all(0.04 < b - a < 0.06 for a, b in zip(times[:-2], times[1:-1], strict=True))
+    assert tape.scene.run_id == first["id"] and tape.events.overlay  # the tour's motions
+    assert "autonomous start" in (folder / "console.txt").read_text(encoding="utf-8")
+    plots = Telemetry.model_validate(runs.telemetry_columns(folder / "telemetry.csv.gz"))
+    assert len(plots.columns["time_s"]) == len(plots.columns["error_in"]) > 1000
+    assert [name for _, name in plots.phases] == ["initialize", "autonomous"]
+    assert main(["plot", str(folder / "telemetry.csv.gz"), "--out", str(tmp_path / "p.png")]) == 0
+
+
+def test_old_runs_go_unless_kept(tmp_path):
+    root = tmp_path / "runs"
+    base = {"spec": RunSpec(robot="r.yaml"), "command": "vexsim run r.yaml", "mode": "driver"}
+    base |= {"robot": "r", "field": "f", "duration": 1.0, "ended": "stopped", "message": None}
+    for i in range(5):
+        record = runs.RunRecord(
+            id=f"20261027-00000{i}-000{i}",
+            name=f"run {i}",
+            created=1000.0 + i,
+            pose_error=None,
+            samples=1,
+            kept=i == 0,
+            **base,
+        )
+        (root / record.id).mkdir(parents=True)
+        runs._write_record(root / record.id, record)
+    assert runs.prune(root, keep=2) == ["20261027-000002-0002", "20261027-000001-0001"]
+    assert [r.name for r in runs.list_runs(root)] == ["run 4", "run 3", "run 0"]  # 0 is kept
+    with pytest.raises(ValueError, match="no run"):
+        runs.run_dir(root, "../elsewhere")
+
+
 def test_protocol_typescript_is_current():
     path = ROOT / "frontend" / "src" / "protocol.ts"
     assert path.read_text(encoding="utf-8") == typescript(), (
@@ -531,6 +616,56 @@ def test_a_failed_build_says_where(tmp_path, in_cache):
     line = next(t for t in error["message"].splitlines() if "error:" in t and "drive_in" in t)
     path = Path(line.split(f":{at + 1}:")[0])  # the project's own file, not a build copy
     assert path.is_absolute() and path.parts[-3:] == ("bot", "src", "main.cpp")
+
+
+def test_the_server_serves_recorded_runs(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from vexsim.ui.server import create_app
+
+    workspace = tour_workspace(tmp_path)
+    app = create_app(
+        workspace, token=TOKEN, port=8642, hosts={"testserver"}, origins={"http://testserver"}
+    )
+    with TestClient(app) as client:
+        authorized(client)
+        spec = {"robot": "robot.yaml", "program": "tour.py"}
+        started = client.post("/api/sessions", json={"spec": spec, "name": "Tour"}).json()
+        with client.websocket_connect(f"/api/sessions/{started['id']}/ws") as socket:
+            messages = Messages(socket)
+            socket.send_json({"cmd": "speed", "value": 0})
+            recorded = messages.until(lambda m: m["type"] == "recorded")["run"]
+        run_id = recorded["id"]
+        assert [r["id"] for r in client.get("/api/runs").json()] == [run_id]
+        details = client.get(f"/api/runs/{run_id}").json()
+        assert details["run"]["name"] == "Tour" and details["console"]
+        tape = client.get(f"/api/runs/{run_id}/tape", headers={"accept-encoding": "gzip"})
+        assert tape.headers["content-encoding"] == "gzip"
+        assert len(tape.json()["samples"]) == recorded["samples"]
+        plots = client.get(f"/api/runs/{run_id}/telemetry").json()
+        assert "error_in" in plots["columns"]
+        csv = client.get(f"/api/runs/{run_id}/telemetry.csv")
+        assert csv.text.startswith("time_s,phase,x_in,y_in,heading_deg")
+        kept = client.patch(f"/api/runs/{run_id}", json={"kept": True, "name": "Best"}).json()
+        assert kept["kept"] is True and kept["name"] == "Best"
+        assert client.get("/api/runs/..%2Fescape/tape").status_code == 404
+        assert client.delete(f"/api/runs/{run_id}").status_code == 204
+        assert client.get("/api/runs").json() == []
+        assert client.get(f"/api/runs/{run_id}").status_code == 404
+
+        # a telemetry log in the workspace opens as a replay
+        robot, log = str(workspace / "robot.yaml"), str(workspace / "log.csv")
+        argv = ["run", robot, "--program", str(workspace / "tour.py"), "--headless"]
+        assert main([*argv, "--seconds", "4", "--record", log]) == 0
+        replay = client.post("/api/replay", json={"log": "log.csv", "robot": "robot.yaml"})
+        body = replay.json()
+        Tape.model_validate(body["tape"])
+        assert body["name"] == "log.csv (replay)" and len(body["tape"]["samples"]) == 80
+        assert body["tape"]["scene"]["command"] == "vexsim replay robot.yaml log.csv"
+        assert body["telemetry"]["columns"]["time_s"][-1] == pytest.approx(4.0, abs=0.02)
+        not_a_log = client.post("/api/replay", json={"log": "tour.py", "robot": "robot.yaml"})
+        assert not_a_log.status_code == 422
 
 
 def test_vexsim_ui_needs_a_folder(capsys):
