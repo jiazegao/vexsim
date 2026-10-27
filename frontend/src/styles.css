@@ -19,6 +19,11 @@
   --series-6: #008300;
   --series-7: #6250d6;
   --series-8: #e34948;
+  --syntax-key: #1c5cab;
+  --syntax-value: #0b0b0b;
+  --syntax-string: #8a4b0f;
+  --syntax-comment: #6b6a66;
+  --syntax-anchor: #6250d6;
   --wheel: #6f6e69;
   --obstacle: #9a9a96;
   --good: #0ca30c;
@@ -51,6 +56,11 @@
     --series-6: #008300;
     --series-7: #9085e9;
     --series-8: #e66767;
+    --syntax-key: #86b6ef;
+    --syntax-value: #f0efec;
+    --syntax-string: #f0a36e;
+    --syntax-comment: #9a9890;
+    --syntax-anchor: #9085e9;
     --wheel: #8d8c86;
     --obstacle: #6b6b67;
     --focus: #3987e5;
@@ -78,6 +88,11 @@
   --series-6: #008300;
   --series-7: #9085e9;
   --series-8: #e66767;
+  --syntax-key: #86b6ef;
+  --syntax-value: #f0efec;
+  --syntax-string: #f0a36e;
+  --syntax-comment: #9a9890;
+  --syntax-anchor: #9085e9;
   --wheel: #8d8c86;
   --obstacle: #6b6b67;
   --focus: #3987e5;
@@ -1411,6 +1426,246 @@ a.button:hover {
   white-space: nowrap;
 }
 
+/* --- pages and config editors -------------------------------------------------------- */
+
+[hidden] {
+  display: none !important;
+}
+
+.simulate {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 0 auto;
+  min-height: 0;
+}
+
+.pagetabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin: -4px 0 0;
+}
+
+.pagetab,
+button.pagetab {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+button.pagetab,
+.pagetab > button:first-child {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.pagetab.on {
+  color: var(--text-primary);
+  border-bottom-color: var(--series-1);
+}
+
+.pagetab .close {
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.pagetab .unsaved {
+  color: var(--series-1);
+}
+
+.config-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 0 auto;
+  min-height: 0;
+}
+
+.editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.editor-path {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-state {
+  color: var(--text-secondary);
+}
+
+.editor-state.bad {
+  color: var(--critical);
+}
+
+.editor-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--series-1);
+  border-radius: 6px;
+  background: var(--surface-1);
+}
+
+.editor-ask.bad,
+.editor-notice.bad {
+  border-left-color: var(--critical);
+}
+
+.editor-notice {
+  padding: 4px 10px;
+  border-left: 4px solid var(--good);
+  color: var(--text-secondary);
+}
+
+.editor-notice.bad {
+  color: var(--text-primary);
+}
+
+.editor-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  flex: 1 0 420px;
+  min-height: 420px;
+}
+
+.editor-text {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.yaml-editor {
+  height: 100%;
+}
+
+.diagram {
+  position: relative;
+  min-width: 0;
+  min-height: 300px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--page);
+}
+
+.diagram canvas {
+  display: block;
+  touch-action: none;
+}
+
+.diagram > .hint {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.diagram-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.readout-tip {
+  position: absolute;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-1);
+  font: 12px var(--mono);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.editor-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.config-problems {
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px;
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  font-size: 12.5px;
+}
+
+.config-problems li + li {
+  margin-top: 4px;
+}
+
+.config-summary {
+  max-width: 560px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+
+.config-summary summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.config-summary pre {
+  margin: 6px 0 0;
+  overflow: auto;
+  font-size: 11.5px;
+}
+
+/* the sidebar's Edit buttons, beside robots and fields */
+.group li.editable {
+  position: relative;
+}
+
+.group li.editable > .item {
+  padding-right: 46px;
+}
+
+.item-edit {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  color: var(--text-secondary);
+}
+
 /* --- narrow screens ---------------------------------------------------------------- */
 
 @media (max-width: 1000px) {
@@ -1427,6 +1682,15 @@ a.button:hover {
 }
 
 @media (max-width: 760px) {
+  .editor-split,
+  .editor-foot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .editor-split {
+    grid-template-rows: minmax(300px, 1fr) minmax(300px, 1fr);
+  }
+
   .main {
     padding: 10px 16px 16px;
   }

@@ -4,6 +4,7 @@
 export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "input" | "log" | "invalid";
 export type SessionState = "building" | "starting" | "running" | "paused" | "finished" | "error" | "stopped";
 export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type ConfigKind = "robot" | "field";
 export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
 export type ClientCommand = SimpleCommand | StepCommand | SpeedCommand | InputCommand;
 
@@ -365,6 +366,198 @@ export interface Replay {
   name: string;
   tape: Tape;
   telemetry: Telemetry;
+}
+
+export interface RobotConfig {
+  version?: 1;
+  name?: string | null;
+  body: BodyConfig;
+  drivetrain: DrivetrainConfig;
+  mechanisms?: Record<string, MechanismConfig>;
+  sensors?: (ImuConfig | RotationConfig | DistanceConfig | GpsConfig)[];
+  overrides?: Record<string, boolean | number | string>;
+}
+
+export interface BodyConfig {
+  mass_kg: number;
+  inertia_kgm2?: "auto" | number;
+  footprint_in: [number, number];
+  cg_in: [number, number, number];
+  battery?: "v5_default";
+}
+
+export interface DrivetrainConfig {
+  type: "differential" | "xdrive" | "mecanum" | "hdrive";
+  wheels: WheelConfig[];
+  gearing: Record<string, GearGroupConfig>;
+}
+
+export interface WheelConfig {
+  name: string;
+  pos_in: [number, number];
+  heading_deg?: number;
+  type: "omni" | "traction" | "mecanum";
+  diameter_in: number;
+  drop_in?: number;
+  roller_angle_deg?: number | null;
+}
+
+export interface GearGroupConfig {
+  motors: number[];
+  cartridge: "red" | "green" | "blue";
+  ratio?: string | number;
+  wheels: string[];
+}
+
+/** Motors that drive something other than the wheels: a lift, an intake, an arm. The mechanism is one rotating output (a lift's spool, a roller, an arm's pivot) geared to its motors. Load values are at that output; positions are output degrees from where it starts, positive in its motors' positive direction (a negative port is reversed, as in the drive's gearing groups). */
+export interface MechanismConfig {
+  motors: number[];
+  cartridge: "red" | "green" | "blue";
+  ratio?: string | number;
+  inertia_kgm2?: number;
+  load_torque_nm?: number;
+  friction_nm?: number;
+  range_deg?: [number, number] | null;
+}
+
+export interface TrackingWheelConfig {
+  pos_in: [number, number];
+  heading_deg?: number;
+  diameter_in: number;
+}
+
+export interface ImuConfig {
+  type: "imu";
+  port: number;
+  pos_in?: [number, number];
+  mount_yaw_deg?: number;
+  noise?: "ideal" | "default" | "harsh";
+  scale_error?: number | null;
+}
+
+export interface RotationConfig {
+  type: "rotation";
+  port: number;
+  reversed?: boolean;
+  tracking_wheel?: TrackingWheelConfig | null;
+  noise?: "ideal" | "default" | "harsh";
+}
+
+export interface DistanceConfig {
+  type: "distance";
+  port: number;
+  pos_in: [number, number];
+  heading_deg?: number;
+  height_in?: number | null;
+  noise?: "ideal" | "default" | "harsh";
+}
+
+export interface GpsConfig {
+  type: "gps";
+  port: number;
+  pos_in: [number, number];
+  mount_yaw_deg?: number;
+  noise?: "ideal" | "default" | "harsh";
+}
+
+export interface FieldConfig {
+  version?: 1;
+  name?: string;
+  size_in?: [number, number];
+  elements?: (ObstacleConfig | PieceConfig)[];
+}
+
+/** A fixed field element. The robot and pieces can't pass through it unless it's low enough to drive over (`solid: false`); a distance sensor sees it unless the sensor's beam is above its `height_in`. */
+export interface ObstacleConfig {
+  type: "obstacle";
+  name?: string | null;
+  shape: "rect" | "circle";
+  pos_in: [number, number];
+  size_in?: [number, number] | null;
+  diameter_in?: number | null;
+  heading_deg?: number;
+  height_in?: number | null;
+  solid?: boolean;
+  color?: string | null;
+}
+
+/** A movable game piece, modeled as a disc that slides on the tiles. */
+export interface PieceConfig {
+  type: "piece";
+  name?: string | null;
+  pos_in: [number, number];
+  diameter_in: number;
+  mass_kg: number;
+  friction?: number;
+  restitution?: number;
+  color?: string | null;
+}
+
+/** Where something is written in a config: 1-based lines and columns, the end just past its last character. */
+export interface TextSpan {
+  line: number;
+  column: number;
+  end_line: number;
+  end_column: number;
+}
+
+export interface PlacedIssue {
+  severity: "error" | "warning";
+  location: string;
+  message: string;
+  span: TextSpan | null;
+}
+
+/** A config's text, checked as `vexsim validate-config` would: its issues where they're written, and when it parses, the config itself (`robot` or `field`), its summary, and where each part the editor's diagram draws is written (`sensors[1]`, `elements[3]`). */
+export interface ConfigCheck {
+  issues: PlacedIssue[];
+  robot?: RobotConfig | null;
+  field?: FieldConfig | null;
+  summary?: string[];
+  places?: Record<string, TextSpan>;
+}
+
+/** A robot or field config, opened for editing. `version` is of the bytes on disk. */
+export interface ConfigFile {
+  path: string;
+  kind: ConfigKind;
+  text: string;
+  version: string;
+  check: ConfigCheck;
+}
+
+export interface ConfigCheckRequest {
+  kind: ConfigKind;
+  text: string;
+}
+
+/** Write `value` where `location` is: one number, or a list of them (`pos_in`). */
+export interface ConfigEdit {
+  location: string;
+  value: number | number[];
+}
+
+export interface ConfigPatchRequest {
+  kind: ConfigKind;
+  text: string;
+  edits: ConfigEdit[];
+}
+
+/** The text with the edits made in place (nothing else in it changed), checked. */
+export interface ConfigPatched {
+  text: string;
+  check: ConfigCheck;
+}
+
+/** Write a config. `version`: the one it was opened at; the save is refused (409) if the file has changed since. None overwrites whatever is there. */
+export interface ConfigSave {
+  path: string;
+  text: string;
+  version?: string | null;
+}
+
+export interface ConfigSaved {
+  version: string;
 }
 
 export interface ConsoleMessage {

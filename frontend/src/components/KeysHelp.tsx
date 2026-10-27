@@ -45,6 +45,17 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    title: "Robot and field editors",
+    keys: [
+      ["Drag a part", "move it (to 1/8 in on a robot, 1/2 in on a field)"],
+      ["Drag its handle", "turn it, to 15°"],
+      ["Shift while dragging", "finer: 0.01 in (0.1 in), 1°"],
+      ["Arrows, [ ]", "move, turn the selected part"],
+      ["Ctrl+Z / Ctrl+Shift+Z", "undo / redo, in the text or the diagram"],
+      ["Ctrl+S", "save"],
+    ],
+  },
+  {
     title: "The field",
     keys: [
       ["Drag the robot", "where it starts (before a run), to half inches"],

@@ -3,6 +3,11 @@
 
 import type {
   AppInfo,
+  ConfigCheck,
+  ConfigEdit,
+  ConfigFile,
+  ConfigKind,
+  ConfigPatched,
   JobInfo,
   Preview,
   Replay,
@@ -78,6 +83,26 @@ export const api = {
     request<Replay>("/api/replay", { method: "POST", body: JSON.stringify({ log, robot, field }) }),
   saveConfigurations: (configurations: RunConfiguration[]) =>
     request<RunConfigurations>("/api/configurations", { method: "PUT", body: JSON.stringify({ configurations }) }),
+  config: (path: string) => request<ConfigFile>(`/api/config?path=${encodeURIComponent(path)}`),
+  checkConfig: (kind: ConfigKind, text: string) =>
+    request<ConfigCheck>("/api/config/check", { method: "POST", body: JSON.stringify({ kind, text }) }),
+  patchConfig: (kind: ConfigKind, text: string, edits: ConfigEdit[]) =>
+    request<ConfigPatched>("/api/config/patch", { method: "POST", body: JSON.stringify({ kind, text, edits }) }),
+
+  /** Write a config opened at `version` (null: whatever is on disk); a conflict if the
+   * file changed on disk since. */
+  async saveConfig(path: string, text: string, version: string | null): Promise<{ version: string } | { conflict: string; version: string }> {
+    const response = await fetch("/api/config", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, text, version }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 409) return { conflict: String(body.detail), version: String(body.version) };
+    if (!response.ok) throw new ApiError(response.status, describe(body.detail ?? response.statusText));
+    return { version: String(body.version) };
+  },
 
   /** The robot and field before a run; a RunProblem if their configs don't load. */
   async preview(robot: string, field: string | null): Promise<{ preview: Preview } | { problem: RunProblem }> {

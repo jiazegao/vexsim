@@ -312,7 +312,7 @@ Odometry offsets are measured from the footprint center: a vertical wheel by its
 The `sensor.*` values shown are the `default` preset's; an override applies on top of each sensor's own preset. [docs/models.md](docs/models.md) gives the source of every value, and simple experiments to measure them.
 
 ### Validation
-`vexsim validate-config ROBOT.yaml [--field FIELD.yaml] [--strict] [-q]` prints what the simulator will build, and every problem. Exit code 0 means valid and 1 means errors; `--strict` fails on warnings too, and `-q` prints only problems.
+`vexsim validate-config ROBOT.yaml [--field FIELD.yaml] [--strict] [-q]` prints what the simulator will build, and every problem. Exit code 0 means valid and 1 means errors; `--strict` fails on warnings too, and `-q` prints only problems. The browser app's editor ([section 7](#7-the-browser-app-vexsim-ui)) runs the same checks as you type and marks each problem at its line.
 - **Structure:** a misspelled key is an error that suggests the closest valid key, and duplicate keys are errors (plain YAML silently keeps the last one).
 - **Errors:** a port used twice (motors, mechanisms and sensors share ports 1–21); the CG, a wheel or a sensor outside the footprint; wheels all in a line, or the CG outside the polygon they form (the robot would tip over); a wheel in no gear group, or in two; unknown wheel names; a mecanum wheel without `roller_angle_deg`, or roller angles on other wheels; a differential drive without exactly `left` and `right`; an X-drive, mecanum or H-drive that can't strafe independently; mechanism stops that don't contain the start; unknown or inconsistent overrides.
 - **Warnings:** a footprint over the 18 in starting size; more than 88 W of drive motors; wheels geared together with different diameters (they scrub); unusual wheel types for the drivetrain.
@@ -464,11 +464,22 @@ Each run executes in a process of its own, so a program that crashes or hangs ne
 - **Telemetry logs** in the workspace list (files from `vexsim run --record`) open the same way, drawn with the robot and field picked in the run bar, like `vexsim replay`.
 - **Exports:** *CSV* downloads the run's telemetry, in the `--record` format. *Video* plays the run from its start and saves the field as a WebM video, at the playback speed. *Save picture* saves the field as a PNG.
 
+**Editing robots and fields**
+
+![The 1239E robot's config in the editor: its YAML beside the robot drawn from it, with the frontL distance sensor just dragged forward](docs/img/ui_editor.png)
+
+*Edit*, beside each robot and field in the workspace list, opens its config in a tab of its own, beside *Simulate*: the YAML on the left, the robot (or field) drawn from it on the right. A config that doesn't load opens the same way, from *Unreadable configs*, so you can fix it.
+- **The text:** a YAML editor with line numbers, folding, search and undo. What you type is checked as you go, with the same checks as `vexsim validate-config` (section 4), and each problem is marked at its line: underlined, with a dot in the margin, and listed below the editor, where a click goes to it. *Summary* shows what `validate-config` prints about the robot or field.
+- **The diagram:** a robot from above in its own frame (+x forward, to the right): its footprint, wheels, tracking wheels, distance sensors with their beams, the IMU and GPS, and its center of gravity, labelled with their names and ports. A field shows its walls, obstacles and pieces. A part with a problem is outlined red (an error) or yellow (a warning). Click a part to select its line in the text; put the cursor in a part's line to select the part.
+- **Dragging** a part moves it, in 1/8 in steps on a robot and 1/2 in steps on a field (hold Shift for 0.01 in and 0.1 in); the round handle of a selected sensor, wheel or rectangular obstacle turns it, in 15° steps (Shift: 1°). The arrow keys move the selected part a step, and `[` and `]` turn it. The numbers show beside the pointer as you drag.
+- **Only the numbers you change are rewritten.** A drop rewrites just those numbers in the text, in place: every comment, blank line, alignment and key order stays as it was, and a coordinate you didn't move keeps its exact value (dragging `4.656207, 5.6937585` along x leaves `5.6937585` alone). A key the file doesn't have yet, such as a sensor's `heading_deg`, is added in the mapping's own style. A value that comes from a YAML anchor or alias can only be changed in the text. Ctrl+Z undoes a drag like any edit, from the text or the diagram.
+- **Saving:** nothing is written until *Save* (Ctrl+S). A tab with unsaved changes has a dot, and closing it (or the page) asks first. Saving keeps the file's line endings. If the file changed on disk since you opened it, the app says so and lets you keep yours or load the file's. The workspace list and the field view pick the change up at once.
+
 The recordings live in the folder's `.vexsim/runs/`, one folder per run: `run.json` (what was run and how it ended), the tape the timeline plays (a frame every 50 ms of simulated time), `telemetry.csv.gz` (every 10 ms), `console.txt`, and `sd/`, the run's SD card (`/usd/`). Set `VEXSIM_RUNS_DIR` to keep them somewhere else.
 
 **Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie. Keep the terminal open while you use the app; Ctrl+C stops it. The browser only reaches files inside the folder.
 
-The app is new. It runs, drives, replays and compares simulations so far; config editors and pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
+The app is new. It runs, drives, replays and compares simulations, and edits robot and field configs, so far; pages for benchmarks and calibration come next ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)). Until then, those stay with the commands and the pygame viewer, which work as before.
 
 ---
 
@@ -1130,12 +1141,13 @@ vexsim/
 | `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
 | `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay and the console. |
 | `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape. |
+| `configs.py` | Robot and field configs for the editors: `check_text` validates YAML text as `validate-config` does and places each issue at its line and column; `patch_text` rewrites numbers in place (or adds a missing key in its mapping's style) using PyYAML's node positions, and refuses values that come through anchors, aliases or merges; `read_config` and `write_config` keep a file's line endings and byte order mark. |
 | `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels and their forces, the controller, sensors, motors, mechanisms, pieces, screens, the period's time left) and the active motion's path and target. `preview_of` gives the robot and field before any run, to drag the robot to its start. |
 
 ### `ui/`: the browser app
 | Module | What it does |
 |---|---|
-| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs) and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
+| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs), config editing (open, check, patch, save, with a check for changes made on disk) and jobs over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
 | `protocol.py` | Every message and request as a pydantic model. `python -m vexsim.ui.protocol frontend/src/protocol.ts` writes them as TypeScript for the page; a test fails while that file is stale. |
 | `static/` | The built page (from `frontend/`, by `npm run build`), shipped with the package. |
 

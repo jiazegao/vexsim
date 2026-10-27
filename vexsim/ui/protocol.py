@@ -23,10 +23,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from vexsim.app.launch import RunConfiguration
 from vexsim.app.runs import PoseErrorSummary, RunRecord
 from vexsim.app.runspec import RunSpec
+from vexsim.config.field import FIELD_MODELS, FieldConfig
+from vexsim.config.robot import ROBOT_MODELS, RobotConfig
 
 ItemKind = Literal["robot", "field", "scenario", "program", "project", "input", "log", "invalid"]
 SessionState = Literal["building", "starting", "running", "paused", "finished", "error", "stopped"]
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+ConfigKind = Literal["robot", "field"]
 
 
 class _Message(BaseModel):
@@ -343,6 +346,86 @@ class Replay(_Message):
     telemetry: Telemetry
 
 
+# --- config editors ---------------------------------------------------------------------------
+
+
+class TextSpan(_Message):
+    """Where something is written in a config: 1-based lines and columns, the end just past
+    its last character."""
+
+    line: int
+    column: int
+    end_line: int
+    end_column: int
+
+
+class PlacedIssue(_Message):
+    severity: Literal["error", "warning"]
+    location: str  # dotted path, as in Issue
+    message: str
+    span: TextSpan | None  # None: about the whole document
+
+
+class ConfigCheck(_Message):
+    """A config's text, checked as `vexsim validate-config` would: its issues where they're
+    written, and when it parses, the config itself (`robot` or `field`), its summary, and
+    where each part the editor's diagram draws is written (`sensors[1]`, `elements[3]`)."""
+
+    issues: list[PlacedIssue]
+    robot: RobotConfig | None = None
+    field: FieldConfig | None = None
+    summary: list[str] = []
+    places: dict[str, TextSpan] = {}
+
+
+class ConfigFile(_Message):
+    """A robot or field config, opened for editing. `version` is of the bytes on disk."""
+
+    path: str
+    kind: ConfigKind
+    text: str
+    version: str
+    check: ConfigCheck
+
+
+class ConfigCheckRequest(_Message):
+    kind: ConfigKind
+    text: str
+
+
+class ConfigEdit(_Message):
+    """Write `value` where `location` is: one number, or a list of them (`pos_in`)."""
+
+    location: str
+    value: float | list[float]
+
+
+class ConfigPatchRequest(_Message):
+    kind: ConfigKind
+    text: str
+    edits: list[ConfigEdit]
+
+
+class ConfigPatched(_Message):
+    """The text with the edits made in place (nothing else in it changed), checked."""
+
+    text: str
+    check: ConfigCheck
+
+
+class ConfigSave(_Message):
+    """Write a config. `version`: the one it was opened at; the save is refused (409) if
+    the file has changed since. None overwrites whatever is there."""
+
+    path: str
+    text: str
+    version: str | None = None
+
+
+class ConfigSaved(_Message):
+    version: str
+
+
 class ConsoleMessage(_Message):
     type: Literal["console"]
     lines: list[str]
@@ -452,6 +535,18 @@ MODELS: list[type[BaseModel]] = [
     RunUpdate,
     ReplayRequest,
     Replay,
+    *ROBOT_MODELS,
+    *FIELD_MODELS,
+    TextSpan,
+    PlacedIssue,
+    ConfigCheck,
+    ConfigFile,
+    ConfigCheckRequest,
+    ConfigEdit,
+    ConfigPatchRequest,
+    ConfigPatched,
+    ConfigSave,
+    ConfigSaved,
     ConsoleMessage,
     BuildMessage,
     ErrorMessage,
@@ -464,6 +559,7 @@ ALIASES: dict[str, Any] = {
     "ItemKind": ItemKind,
     "SessionState": SessionState,
     "JobState": JobState,
+    "ConfigKind": ConfigKind,
     "ServerMessage": ServerMessage,
     "ClientCommand": ClientCommand,
 }

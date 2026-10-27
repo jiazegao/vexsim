@@ -17,6 +17,9 @@ export interface Palette {
   wheel: string; // a wheel well within it
   obstacle: string;
   piece: string;
+  focus: string; // what's selected
+  critical: string; // something with an error
+  warning: string;
 }
 
 const TOKENS: Record<keyof Palette, string> = {
@@ -35,6 +38,9 @@ const TOKENS: Record<keyof Palette, string> = {
   wheel: "--wheel",
   obstacle: "--obstacle",
   piece: "--series-4",
+  focus: "--focus",
+  critical: "--critical",
+  warning: "--warning",
 };
 
 export function readPalette(element: Element = document.documentElement): Palette {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { ConsolePanel } from "./components/ConsolePanel";
 import { Controls, SPEEDS } from "./components/Controls";
@@ -11,6 +11,7 @@ import { RunBar } from "./components/RunBar";
 import { RunsList } from "./components/RunsList";
 import { Sidebar } from "./components/Sidebar";
 import { Timeline } from "./components/Timeline";
+import { fileName } from "./configdoc";
 import type { ControllerInput } from "./controller";
 import { NEUTRAL } from "./controller";
 import type { Layers } from "./draw";
@@ -30,6 +31,9 @@ import { applyTheme, loadTheme, nextTheme } from "./theme";
 import { useController } from "./useController";
 import { useStore } from "./useStore";
 import { canRecordVideo, VideoExport } from "./video";
+
+// The editors (and CodeMirror) load when a config is first opened
+const ConfigEditor = lazy(() => import("./components/ConfigEditor").then((m) => ({ default: m.ConfigEditor })));
 
 const THEME_LABEL: Record<Theme, string> = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
 const EDITOR_KEY = "vexsim.editor";
@@ -79,6 +83,10 @@ export function App() {
   const [opening, setOpening] = useState<string | null>(null); // the run (or log) being fetched
   const [closedRun, setClosedRun] = useState(false); // the ended live run was put away
   const [video, setVideo] = useState<VideoExport | null>(null);
+  const [openConfigs, setOpenConfigs] = useState<string[]>([]); // configs open in editors
+  const [page, setPage] = useState("simulate"); // "simulate", or an open config's path
+  const [unsaved, setUnsaved] = useState<Record<string, boolean>>({});
+  const [closing, setClosing] = useState<string | null>(null); // asking before closing it
   const playhead = useMemo(() => new Playhead(), []);
   usePlayheadClock(playhead);
   useStore(store);
@@ -390,9 +398,42 @@ export function App() {
     exporter.start();
   };
 
+  // --- config editors, in tabs beside Simulate ----------------------------------------------
+
+  const openConfig = (path: string) => {
+    setOpenConfigs((open) => (open.includes(path) ? open : [...open, path]));
+    setPage(path);
+  };
+  const closeConfig = (path: string) => {
+    setOpenConfigs((open) => open.filter((p) => p !== path));
+    setUnsaved(({ [path]: _, ...rest }) => rest);
+    setClosing(null);
+    setPage((current) => (current === path ? "simulate" : current));
+  };
+  const askToClose = (path: string) => {
+    if (unsaved[path]) {
+      setPage(path);
+      setClosing(path);
+    } else closeConfig(path);
+  };
+  const markUnsaved = useCallback((path: string, dirty: boolean) => {
+    setUnsaved((all) => (!!all[path] === dirty ? all : { ...all, [path]: dirty }));
+  }, []);
+  const anyUnsaved = Object.values(unsaved).some(Boolean);
+  useEffect(() => {
+    if (!anyUnsaved) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault(); // the browser asks first
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [anyUnsaved]);
+
   const pick = (item: WorkspaceItem) => {
     if (item.kind === "log") {
       openTelemetryLog(item.path);
+      return;
+    }
+    if (item.kind === "invalid") {
+      openConfig(item.path); // to fix it
       return;
     }
     const key = item.kind === "project" ? "program" : (item.kind as keyof RunForm);
@@ -446,6 +487,7 @@ export function App() {
       const pressingButton = tag === "BUTTON" && (event.key === " " || event.key === "Enter");
       if (event.key === "Escape" && help) setHelp(false);
       if (event.ctrlKey || event.metaKey || event.altKey || typing || pressingButton) return;
+      if (page !== "simulate" && event.key !== "?") return; // an editor's diagram has its own keys
       const index = SPEEDS.indexOf(speed);
       const toggle = (key: keyof Layers) => setLayers((l) => ({ ...l, [key]: !l[key] }));
       const seekBy = (seconds: number) => {
@@ -510,7 +552,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [changeSpeed, driving, help, playhead, scrubbing, speed, state, store]);
+  }, [changeSpeed, driving, help, page, playhead, scrubbing, speed, state, store]);
 
   return (
     <div className="app">
@@ -540,6 +582,7 @@ export function App() {
           workspace={workspace}
           form={form}
           onPick={pick}
+          onEdit={(item) => openConfig(item.path)}
           loading={scanning}
           onRefresh={() => info && scan(info, false)}
           shownLog={recording?.key.startsWith("log:") ? recording.key.slice(4) : null}
@@ -561,69 +604,108 @@ export function App() {
           }
         />
         <main className="main">
-          <RunBar
-            workspace={workspace}
-            form={form}
-            onChange={setForm}
-            onRun={run}
-            starting={starting}
-            configurations={configurations}
-            configFile={configFile}
-            configError={configError}
-            onPick={pickConfiguration}
-            onSave={saveConfiguration}
-            onDelete={deleteConfiguration}
-          />
-          <Controls
-            store={store}
-            speed={speed}
-            onSpeed={changeSpeed}
-            onStop={stop}
-            command={store?.info?.command ?? store?.scene?.command ?? recording?.run?.command ?? null}
-          />
-          <div className="stage">
-            <div className="fieldcol">
-              <FieldView
-                source={source}
-                compared={onField}
-                preview={preview}
-                start={start}
-                onStart={moveStart}
-                layers={layers}
-                follow={follow}
-                onFollow={setFollow}
-                stamp={video && recording ? recording.name : null}
-              />
-              <FieldKey
-                layers={layers}
-                onLayers={setLayers}
-                compared={compared.map((r, i) => ({ key: r.key, name: r.label, dash: COMPARE_DASHES[i] }))}
-                onUncompare={(key) => setCompared((list) => list.filter((r) => r.key !== key))}
-              />
-              {recording && (
-                <Timeline
-                  playback={recording.playback}
-                  playhead={playhead}
-                  name={recording.name}
-                  run={recording.run}
-                  csv={recording.run ? api.csvUrl(recording.run.id) : null}
-                  video={video ? "recording" : canRecordVideo() ? "off" : "unsupported"}
-                  onVideo={toggleVideo}
-                  onClose={closeRecording}
-                />
-              )}
+          {openConfigs.length > 0 && (
+            <div className="pagetabs" role="tablist" aria-label="Pages">
+              <button role="tab" aria-selected={page === "simulate"} className={`pagetab${page === "simulate" ? " on" : ""}`} onClick={() => setPage("simulate")} data-testid="page-simulate">
+                Simulate
+              </button>
+              {openConfigs.map((path) => (
+                <span key={path} className={`pagetab${page === path ? " on" : ""}`}>
+                  <button role="tab" aria-selected={page === path} onClick={() => setPage(path)} title={path} data-testid={`page-${path}`}>
+                    {fileName(path)}
+                    {unsaved[path] && (
+                      <span className="unsaved" title="Unsaved changes" aria-label="unsaved changes">
+                        {" "}
+                        ●
+                      </span>
+                    )}
+                  </button>
+                  <button type="button" className="close" onClick={() => askToClose(path)} aria-label={`Close ${path}`} title="Close">
+                    ×
+                  </button>
+                </span>
+              ))}
             </div>
-            <Readout source={source} driving={driving} scripted={scripted} gamepad={gamepad} onScreen={onScreen} onInput={setOnScreen} />
+          )}
+          <div className="simulate" hidden={page !== "simulate"}>
+            <RunBar
+              workspace={workspace}
+              form={form}
+              onChange={setForm}
+              onRun={run}
+              starting={starting}
+              configurations={configurations}
+              configFile={configFile}
+              configError={configError}
+              onPick={pickConfiguration}
+              onSave={saveConfiguration}
+              onDelete={deleteConfiguration}
+            />
+            <Controls
+              store={store}
+              speed={speed}
+              onSpeed={changeSpeed}
+              onStop={stop}
+              command={store?.info?.command ?? store?.scene?.command ?? recording?.run?.command ?? null}
+            />
+            <div className="stage">
+              <div className="fieldcol">
+                <FieldView
+                  source={source}
+                  compared={onField}
+                  preview={preview}
+                  start={start}
+                  onStart={moveStart}
+                  layers={layers}
+                  follow={follow}
+                  onFollow={setFollow}
+                  stamp={video && recording ? recording.name : null}
+                />
+                <FieldKey
+                  layers={layers}
+                  onLayers={setLayers}
+                  compared={compared.map((r, i) => ({ key: r.key, name: r.label, dash: COMPARE_DASHES[i] }))}
+                  onUncompare={(key) => setCompared((list) => list.filter((r) => r.key !== key))}
+                />
+                {recording && (
+                  <Timeline
+                    playback={recording.playback}
+                    playhead={playhead}
+                    name={recording.name}
+                    run={recording.run}
+                    csv={recording.run ? api.csvUrl(recording.run.id) : null}
+                    video={video ? "recording" : canRecordVideo() ? "off" : "unsupported"}
+                    onVideo={toggleVideo}
+                    onClose={closeRecording}
+                  />
+                )}
+              </div>
+              <Readout source={source} driving={driving} scripted={scripted} gamepad={gamepad} onScreen={onScreen} onInput={setOnScreen} />
+            </div>
+            <ConsolePanel
+              store={store}
+              history={recording?.console ?? null}
+              plots={recording ? <Plots shown={recording} compared={compared} playhead={playhead} /> : null}
+              problem={problem}
+              root={root}
+              editor={editor}
+              onEditor={setEditor}
+            />
           </div>
-          <ConsolePanel
-            store={store}
-            history={recording?.console ?? null}
-            plots={recording ? <Plots shown={recording} compared={compared} playhead={playhead} /> : null}
-            problem={problem}
-            root={root}
-            editor={editor}
-            onEditor={setEditor}
-          />
+          <Suspense fallback={<p className="muted pad">Opening the editor…</p>}>
+            {openConfigs.map((path) => (
+              <ConfigEditor
+                key={path}
+                path={path}
+                active={page === path}
+                closing={closing === path}
+                onClose={() => closeConfig(path)}
+                onKeepOpen={() => setClosing(null)}
+                onDirty={markUnsaved}
+                onSaved={() => info && scan(info, false)}
+              />
+            ))}
+          </Suspense>
         </main>
       </div>
       {help && <KeysHelp onClose={() => setHelp(false)} />}

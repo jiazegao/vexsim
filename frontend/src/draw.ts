@@ -97,7 +97,7 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
   ctx.restore();
 }
 
-function drawField(ctx: CanvasRenderingContext2D, view: View, colors: Palette, [w, h]: [number, number]): void {
+export function drawField(ctx: CanvasRenderingContext2D, view: View, colors: Palette, [w, h]: [number, number]): void {
   const [x0, y0] = toScreen(view, -w / 2, h / 2);
   const [x1, y1] = toScreen(view, w / 2, -h / 2);
   ctx.fillStyle = colors.surface;

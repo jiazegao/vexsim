@@ -694,6 +694,60 @@ def test_the_server_serves_recorded_runs(tmp_path):
         assert not_a_log.status_code == 422
 
 
+def test_the_server_edits_configs_in_place(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from vexsim.ui.server import create_app
+
+    shutil.copy(ROOT / "examples" / "robots" / "1239e_2026-27.yaml", tmp_path / "robot.yaml")
+    (tmp_path / "notes.txt").write_text("not a config\n")
+    app = create_app(
+        tmp_path, token=TOKEN, port=8642, hosts={"testserver"}, origins={"http://testserver"}
+    )
+    with TestClient(app) as client:
+        authorized(client)
+        opened = client.get("/api/config", params={"path": "robot.yaml"}).json()
+        assert opened["kind"] == "robot" and opened["check"]["issues"] == []
+        assert opened["check"]["robot"]["sensors"][1]["port"] == 1
+        assert opened["check"]["places"]["sensors[1]"]["line"] == 58
+
+        # a drag on the diagram: one number changes, in place
+        drag = {"location": "sensors[1].pos_in", "value": [5.25, 5.6937585]}
+        request = {"kind": "robot", "text": opened["text"], "edits": [drag]}
+        patched = client.post("/api/config/patch", json=request).json()
+        changed = [
+            (a, b)
+            for a, b in zip(opened["text"].splitlines(), patched["text"].splitlines(), strict=True)
+            if a != b
+        ]
+        assert len(changed) == 1 and changed[0][1].endswith("height_in: 9.12}  # frontL")
+        assert "pos_in: [ 5.25,  5.6937585]" in changed[0][1]
+        assert patched["check"]["robot"]["sensors"][1]["pos_in"] == [5.25, 5.6937585]
+        nowhere = {**request, "edits": [{"location": "sensors[9].pos_in", "value": [1, 2]}]}
+        refused = client.post("/api/config/patch", json=nowhere)
+        assert refused.status_code == 422 and "isn't in the file" in refused.json()["detail"]
+
+        # typing: checked as it goes, the issue at its line
+        typo = patched["text"].replace("height_in: 9.12}  # frontL", "hight_in: 9.12}  # frontL")
+        check = client.post("/api/config/check", json={"kind": "robot", "text": typo}).json()
+        assert check["robot"] is None
+        assert check["issues"][0]["span"]["line"] == 58
+
+        # saving writes the text; a save from an old version is refused
+        save = {"path": "robot.yaml", "text": patched["text"], "version": opened["version"]}
+        saved = client.put("/api/config", json=save)
+        assert saved.status_code == 200
+        assert (tmp_path / "robot.yaml").read_text(encoding="utf-8") == patched["text"]
+        stale = client.put("/api/config", json={**save, "text": opened["text"]})
+        assert stale.status_code == 409 and stale.json()["version"] == saved.json()["version"]
+
+        # only YAML files in the workspace
+        assert client.get("/api/config", params={"path": "../robot.yaml"}).status_code == 400
+        assert client.get("/api/config", params={"path": "notes.txt"}).status_code == 400
+        assert client.get("/api/config", params={"path": "gone.yaml"}).status_code == 404
+
+
 def test_vexsim_ui_needs_a_folder(capsys):
     assert main(["ui", "no/such/folder"]) == 1
     assert "is not a folder" in capsys.readouterr().out

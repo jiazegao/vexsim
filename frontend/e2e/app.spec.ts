@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { TOKEN } from "../playwright.config";
@@ -20,9 +20,10 @@ async function truePose(page: Page): Promise<[number, number, number]> {
   return [await read("x"), await read("y"), await read("heading")];
 }
 
-/** A point on the field (inches) as a point on the page. */
-async function onPage(page: Page, x: number, y: number): Promise<[number, number]> {
-  const field = page.getByTestId("field");
+/** A point on the field (inches) as a point on the page; or on another canvas with the
+ * same view (a config editor's diagram). */
+async function onPage(page: Page, x: number, y: number, canvas = "field"): Promise<[number, number]> {
+  const field = page.getByTestId(canvas);
   const box = (await field.boundingBox())!;
   const [scale, cx, cy] = ((await field.getAttribute("data-view")) ?? "1,0,0").split(",").map(Number);
   return [box.x + box.width / 2 + (x - cx) * scale, box.y + box.height / 2 - (y - cy) * scale];
@@ -284,4 +285,56 @@ test("records every run: scrub one, reopen an older one, overlay two", async ({ 
   await newer.getByRole("button", { name: "Sure?" }).click();
   await expect(runs).toHaveCount(before + 1);
   await expect(page.getByTestId("compared-key")).toHaveCount(0);
+});
+
+test("drags a sensor of the 1239E robot: its number changes and the comments stay", async ({ page }) => {
+  const path = "examples/robots/1239e_2026-27.yaml";
+  const file = resolve(WORKSPACE, path);
+  const original = readFileSync(file, "utf-8");
+  try {
+    await page.getByTestId(`edit-${path}`).click();
+    await expect(page.getByTestId("config-state")).toHaveText("no problems");
+    // frontL, the distance sensor on port 1: about an inch further forward, along x only
+    const from = await onPage(page, 4.656207, 5.6937585, "diagram");
+    const to = await onPage(page, 5.75, 5.6937585, "diagram");
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    await page.mouse.move(...to, { steps: 8 });
+    await expect(page.getByTestId("drag-readout")).toHaveText(/^D1: x 5\.75\s+y 5\.6937585 in$/);
+    await page.mouse.up();
+    await expect(page.getByTestId("config-state")).toHaveText("no problems · unsaved changes");
+    await expect(page.getByTestId(`page-${path}`)).toContainText("●");
+    await page.keyboard.press("Control+s"); // the diagram has the focus
+    await expect(page.getByTestId("config-notice")).toHaveText("Saved.");
+    await expect(page.getByTestId(`page-${path}`)).not.toContainText("●");
+
+    const before = original.split("\n");
+    const after = readFileSync(file, "utf-8").split("\n");
+    expect(after.length).toBe(before.length);
+    const changed = before.map((line, i) => [line, after[i]]).filter(([a, b]) => a !== b);
+    expect(changed).toEqual([
+      [
+        "  - {type: distance, port: 1,  pos_in: [ 4.656207,  5.6937585], heading_deg: 0,   height_in: 9.12}  # frontL",
+        "  - {type: distance, port: 1,  pos_in: [ 5.75,  5.6937585], heading_deg: 0,   height_in: 9.12}  # frontL",
+      ],
+    ]);
+  } finally {
+    writeFileSync(file, original);
+  }
+});
+
+test("marks a config's mistakes at their lines as you type", async ({ page }) => {
+  await page.getByTestId("edit-examples/fields/practice_elements.yaml").click();
+  await expect(page.getByTestId("config-state")).toHaveText("no problems");
+  await page.locator(".cm-line", { hasText: "size_in: [144, 144]" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type(", 12]"); // a third number
+  await expect(page.getByTestId("config-state")).toHaveText("1 error, 0 warnings · unsaved changes");
+  await expect(page.getByTestId("config-problems")).toContainText("size_in (line 8)");
+  await expect(page.locator(".cm-lint-marker-error")).toHaveCount(1);
+  await page.getByRole("button", { name: "Revert" }).click();
+  await expect(page.getByTestId("config-state")).toHaveText("no problems");
+  await page.getByRole("button", { name: "Close examples/fields/practice_elements.yaml" }).click();
+  await expect(page.getByTestId("config-editor")).toHaveCount(0);
 });

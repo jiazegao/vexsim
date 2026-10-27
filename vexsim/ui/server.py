@@ -42,7 +42,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from vexsim import __version__
-from vexsim.app import runs
+from vexsim.app import configs, runs
 from vexsim.app.frames import preview_of
 from vexsim.app.jobs import JobManager
 from vexsim.app.launch import (
@@ -55,10 +55,19 @@ from vexsim.app.runspec import RunError, RunSpec, check
 from vexsim.app.session import Session
 from vexsim.app.workspace import Workspace
 from vexsim.config.field import FieldConfig
+from vexsim.config.robot import RobotConfig
 from vexsim.ui.protocol import (
     AppInfo,
     ClientCommand,
+    ConfigCheck,
+    ConfigCheckRequest,
+    ConfigFile,
+    ConfigPatched,
+    ConfigPatchRequest,
+    ConfigSave,
+    ConfigSaved,
     JobInfo,
+    PlacedIssue,
     Preview,
     PreviewRequest,
     ReplayRequest,
@@ -71,6 +80,7 @@ from vexsim.ui.protocol import (
     SessionInfo,
     StartJob,
     StartSession,
+    TextSpan,
     WorkspaceInfo,
 )
 
@@ -166,6 +176,7 @@ class UIServer:
         self._waiting: dict[str, list[Session]] = {}  # build job id -> sessions
         self._ids = itertools.count(1)
         self._lock = threading.RLock()
+        self.saving = threading.Lock()  # one config save at a time
         self.jobs.add_listener(self._on_job)
 
     def info(self) -> AppInfo:
@@ -329,6 +340,37 @@ class Guard:
 # --- the app ----------------------------------------------------------------------------------
 
 
+def _checked(checked: configs.CheckedConfig) -> ConfigCheck:
+    """A checked config as the protocol has it."""
+
+    def span(place: configs.Span | None) -> TextSpan | None:
+        if place is None:
+            return None
+        return TextSpan(
+            line=place.line,
+            column=place.column,
+            end_line=place.end_line,
+            end_column=place.end_column,
+        )
+
+    config = checked.config
+    return ConfigCheck(
+        issues=[
+            PlacedIssue(
+                severity=issue.severity,
+                location=issue.location,
+                message=issue.message,
+                span=span(issue.span),
+            )
+            for issue in checked.issues
+        ],
+        robot=config if isinstance(config, RobotConfig) else None,
+        field=config if isinstance(config, FieldConfig) else None,
+        summary=checked.summary,
+        places={item: span(place) for item, place in checked.places.items()},
+    )
+
+
 def create_app(
     workspace: str | Path,
     *,
@@ -400,6 +442,80 @@ def create_app(
         except OSError as exc:
             return JSONResponse({"detail": f"can't save {LAUNCH_FILE}: {exc}"}, status_code=500)
         return RunConfigurations(file=LAUNCH_FILE, configurations=read_configurations(root))
+
+    # --- robot and field configs, for the editors ------------------------------------------
+
+    def _config_file(relative: str) -> Path:
+        path = server.workspace.path(relative)
+        if path.suffix.lower() not in (".yaml", ".yml"):
+            raise ValueError(f"{relative} isn't a YAML file")
+        return path
+
+    @app.get("/api/config", responses={400: {}, 404: {}, 422: {}})
+    def open_config(path: str):
+        """A robot or field config to edit (``ConfigFile``), checked."""
+        try:
+            file = _config_file(path)
+            read = configs.read_config(file)
+        except FileNotFoundError:
+            return JSONResponse({"detail": f"{path} doesn't exist"}, status_code=404)
+        except UnicodeDecodeError:
+            return JSONResponse({"detail": f"{path} isn't UTF-8 text"}, status_code=422)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        kind = configs.kind_of(read.text)
+        if kind is None:
+            detail = f"{path} isn't a robot or field config"
+            return JSONResponse({"detail": detail}, status_code=422)
+        return ConfigFile(
+            path=server.workspace.relative(file),
+            kind=kind,
+            text=read.text,
+            version=read.version,
+            check=_checked(configs.check_text(read.text, kind)),
+        )
+
+    @app.post("/api/config/check")
+    def check_config(request: ConfigCheckRequest) -> ConfigCheck:
+        """A config's text as it's being typed, checked."""
+        return _checked(configs.check_text(request.text, request.kind))
+
+    @app.post("/api/config/patch", responses={422: {}})
+    def patch_config(request: ConfigPatchRequest):
+        """Numbers changed in place in a config's text (a drag on the editor's diagram)."""
+        edits = [configs.Edit(e.location, e.value) for e in request.edits]
+        try:
+            text = configs.patch_text(request.text, edits)
+        except configs.PatchError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return ConfigPatched(text=text, check=_checked(configs.check_text(text, request.kind)))
+
+    @app.put("/api/config", responses={400: {}, 404: {}, 409: {}})
+    def save_config(request: ConfigSave):
+        """Write a config, in its own line endings; refused (409, with the version on disk)
+        if it changed since it was opened."""
+        try:
+            file = _config_file(request.path)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        with server.saving:
+            try:
+                current = configs.read_config(file)
+            except FileNotFoundError:
+                detail = f"{request.path} doesn't exist any more"
+                return JSONResponse({"detail": detail}, status_code=404)
+            except (OSError, UnicodeDecodeError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            if request.version is not None and request.version != current.version:
+                detail = f"{request.path} changed on disk since you opened it"
+                return JSONResponse({"detail": detail, "version": current.version}, status_code=409)
+            try:
+                version = configs.write_config(file, request.text, current)
+            except OSError as exc:
+                return JSONResponse(
+                    {"detail": f"can't save {request.path}: {exc}"}, status_code=500
+                )
+        return ConfigSaved(version=version)
 
     # --- recorded runs (.vexsim/runs) ------------------------------------------------------
 

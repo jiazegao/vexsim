@@ -11,7 +11,7 @@ const GROUPS: { kinds: ItemKind[]; title: string; hint: string }[] = [
   { kinds: ["input"], title: "Controller inputs", hint: "Click to drive with this recorded input" },
   { kinds: ["log"], title: "Telemetry logs", hint: "Click to play this log back, drawn with the robot and field picked above" },
   { kinds: ["scenario"], title: "Benchmark scenarios", hint: "Benchmarks get their own page in a later version" },
-  { kinds: ["invalid"], title: "Unreadable configs", hint: "Fix the YAML to use it" },
+  { kinds: ["invalid"], title: "Unreadable configs", hint: "Click to open it and fix the YAML" },
 ];
 
 function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null): boolean {
@@ -39,6 +39,7 @@ export function Sidebar(props: {
   workspace: WorkspaceInfo | null;
   form: RunForm;
   onPick: (item: WorkspaceItem) => void;
+  onEdit: (item: WorkspaceItem) => void; // open a robot or field config in its editor
   onRefresh: () => void;
   loading: boolean;
   shownLog: string | null; // the telemetry log being played back
@@ -78,7 +79,8 @@ export function Sidebar(props: {
           {GROUPS.map((group) => {
             const items = workspace?.items.filter((item) => group.kinds.includes(item.kind)) ?? [];
             if (!items.length) return null;
-            const pickable = !["scenario", "invalid"].includes(group.kinds[0]);
+            const pickable = group.kinds[0] !== "scenario";
+            const editable = ["robot", "field"].includes(group.kinds[0]);
             return (
               <section key={group.title} className="group">
                 <h2>
@@ -88,7 +90,7 @@ export function Sidebar(props: {
                   {items.map((item) => {
                     const selected = inUse(item, form, props.shownLog);
                     return (
-                      <li key={item.kind + item.path}>
+                      <li key={item.kind + item.path} className={editable ? "editable" : undefined}>
                         <button
                           className={`item${selected ? " selected" : ""}${pickable ? "" : " inert"}`}
                           data-testid={`item-${item.path}`}
@@ -104,6 +106,17 @@ export function Sidebar(props: {
                             </span>
                           )}
                         </button>
+                        {editable && (
+                          <button
+                            type="button"
+                            className="ghost small item-edit"
+                            onClick={() => props.onEdit(item)}
+                            title={`Edit ${item.path}: its YAML beside a diagram you can drag`}
+                            data-testid={`edit-${item.path}`}
+                          >
+                            Edit
+                          </button>
+                        )}
                       </li>
                     );
                   })}
