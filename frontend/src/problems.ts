@@ -118,7 +118,8 @@ export function shortPath(root: string, file: string): string {
   return normal(file).slice(normal(root).replace(/\/$/, "").length + 1);
 }
 
-function absolute(root: string, file: string): string {
+/** A file's absolute path: as it is, or in `root`. */
+export function absolute(root: string, file: string): string {
   if (/^([A-Za-z]:)?[\\/]/.test(file)) return file;
   const separator = root.includes("\\") && !root.includes("/") ? "\\" : "/";
   return `${root.replace(/[\\/]$/, "")}${separator}${file}`;

@@ -46,6 +46,7 @@ export interface AppInfo {
   workspace_name: string;
   python: string;
   platform: string;
+  pages: number;
 }
 
 export interface WorkspaceItem {

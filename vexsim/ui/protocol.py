@@ -78,6 +78,7 @@ class AppInfo(_Message):
     workspace_name: str
     python: str
     platform: str
+    pages: int  # the app's pages open on this server now
 
 
 class WorkspaceItem(_Message):

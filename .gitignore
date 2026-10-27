@@ -9,6 +9,7 @@ dist/
 .ruff_cache/
 frontend/node_modules/
 frontend/test-results/
+frontend/.vscode-test/
 frontend/playwright-report/
 .vexsim/*
 !.vexsim/launch.yaml

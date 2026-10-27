@@ -1,0 +1,69 @@
+{
+  "name": "vexsim",
+  "displayName": "vexsim",
+  "description": "The vexsim app in a panel beside your robot code: run, watch and drive simulations, edit robots and fields",
+  "version": "0.0.0",
+  "publisher": "vexsim",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "VEX",
+    "robotics",
+    "PROS",
+    "simulator"
+  ],
+  "icon": "media/vexsim.png",
+  "main": "./extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vexsim.open",
+        "title": "Open the app",
+        "category": "vexsim"
+      },
+      {
+        "command": "vexsim.openFolder",
+        "title": "Open in vexsim"
+      },
+      {
+        "command": "vexsim.stop",
+        "title": "Stop the app",
+        "category": "vexsim"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "vexsim.openFolder",
+          "when": "false"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "vexsim.openFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation@90"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "vexsim",
+      "properties": {
+        "vexsim.python": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The Python that has vexsim installed, to run it with. Its default is the Python `vexsim vscode` ran with.",
+          "scope": "machine-overridable"
+        }
+      }
+    }
+  }
+}

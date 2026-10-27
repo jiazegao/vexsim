@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { calibrationCharts, uncertainty } from "../calibration";
+import { FileLink } from "../components/FileLink";
 import { JobStatus, ProblemBox, ResultList } from "../components/JobPanel";
 import { LineChart } from "../components/LineChart";
 import { isActive, latest, useJob } from "../jobs";
@@ -303,9 +304,9 @@ function CalibrationView(props: { result: CalibrationResult; onApply: (robot: st
         </span>
         <span className="spacer" />
         {result.files.map((name) => (
-          <a key={name} className="button" href={file(name)} download>
+          <FileLink key={name} className="button" href={file(name)} name={name}>
             {name}
-          </a>
+          </FileLink>
         ))}
       </header>
       <p className="muted small">

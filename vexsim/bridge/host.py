@@ -16,6 +16,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from vexsim.bridge.build import NO_CONSOLE
+
 
 class HostError(RuntimeError):
     """The robot code crashed or hung, or the host process died."""
@@ -76,6 +78,7 @@ class RobotHost:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env={**os.environ, **env} if env else None,
+                creationflags=NO_CONSOLE,
             )
         except OSError as exc:
             raise HostError(f"cannot start the robot host {self.executable}: {exc}") from exc

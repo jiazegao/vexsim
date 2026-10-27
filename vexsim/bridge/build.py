@@ -35,6 +35,9 @@ DEFINES = ["-DVEXSIM=1", "-D_PROS_KERNEL_SUPPRESS_LLEMU_WARNING"]
 MIN_GCC = 11
 EXE_NAME = "robot_host.exe" if sys.platform == "win32" else "robot_host"
 MSYS2_FOLDERS = ("msys64", "msys2")  # searched on every drive, in ucrt64\bin
+# Toolchain programs and the robot host run with no console window of their own: a server
+# started without a console (from a shortcut, or VS Code) would show one for each on Windows
+NO_CONSOLE = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 INSTALL_HELP_WINDOWS = """\
 vexsim compiles robot code with MSYS2's MinGW-w64 g++ (UCRT64). To install it:
@@ -96,7 +99,15 @@ def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     if Path(cmd[0]).is_absolute():
         env["PATH"] = str(Path(cmd[0]).parent) + os.pathsep + env.get("PATH", "")
-    return subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=env, **kwargs)
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        env=env,
+        creationflags=NO_CONSOLE,
+        **kwargs,
+    )
 
 
 def _msys2_candidates() -> list[str]:

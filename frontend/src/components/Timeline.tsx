@@ -1,4 +1,5 @@
 import type { Phase } from "../playback";
+import { FileLink } from "./FileLink";
 import type { Playhead } from "../playhead";
 import { usePlayhead } from "../playhead";
 import { fixed, formatTime } from "../pose";
@@ -104,9 +105,9 @@ export function Timeline(props: {
         {props.run ? <span className="muted small">{runSummary(props.run)}</span> : props.summary && <span className="muted small">{props.summary}</span>}
         <span className="spacer" />
         {props.csv && (
-          <a className="button ghost small" href={props.csv} download title="The run's telemetry, every 10 ms, as a spreadsheet">
+          <FileLink className="button ghost small" href={props.csv} name="telemetry.csv" title="The run's telemetry, every 10 ms, as a spreadsheet" testid="run-csv">
             CSV
-          </a>
+          </FileLink>
         )}
         {props.video !== null && (
           <button

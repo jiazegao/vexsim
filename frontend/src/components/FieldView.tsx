@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Drawings, Ghost, Layers, Picture, Shape, StartMarker } from "../draw";
 import { draw, HANDLE_GAP_PX, HANDLE_RADIUS_PX } from "../draw";
 import type { Palette } from "../palette";
+import { saveFile } from "../host";
 import { readPalette } from "../palette";
 import type { LogPlayback } from "../mcllog";
 import type { Playback } from "../playback";
@@ -312,12 +313,7 @@ export function FieldView(props: FieldViewProps) {
     const shownTime = element.dataset.time ? Number(element.dataset.time) : null;
     const t = shownTime !== null ? `-${shownTime.toFixed(2)}s` : "";
     element.toBlob((blob) => {
-      if (!blob) return;
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `vexsim-${robot.replace(/[^A-Za-z0-9._-]+/g, "_")}${t}.png`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+      if (blob) saveFile(blob, `vexsim-${robot.replace(/[^A-Za-z0-9._-]+/g, "_")}${t}.png`);
     }, "image/png");
   };
   return (

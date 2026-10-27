@@ -14,10 +14,12 @@ app from ``static/`` and an API under ``/api``:
   what benchmarks, sweeps and calibrations found
 - ``GET``/``PUT /api/configurations`` and ``/api/sweeps``: the saved runs and sweeps
 - ``GET``/``PUT /api/config``, ``POST /api/config/{check,patch,overrides}``: the editors
+- ``WS /api/presence``: held open by each of the app's pages, so the server knows when the
+  last one closes (``serve(stop_when_closed=True)`` then stops)
 
 The server can build and run code, so every request needs the random token ``serve``
-prints (in the URL once, then in a cookie), the Host header must be this server, and
-WebSockets must come from its own pages.
+prints (in the URL once, then in a cookie, or with each request as a bearer token), the
+Host header must be this server, and WebSockets must come from its own pages.
 """
 
 from __future__ import annotations
@@ -25,15 +27,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import os
 import platform
 import secrets
 import socket
 import sys
 import threading
+import time
 import webbrowser
 from http.cookies import SimpleCookie
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
@@ -179,11 +183,38 @@ class Hub:
 # --- the server's state -----------------------------------------------------------------------
 
 
+class Pages:
+    """The app's pages open on this server: each holds a presence socket while it's open."""
+
+    def __init__(self) -> None:
+        self.open = 0
+        self.ever = False  # whether a page has opened yet
+        self._since = time.monotonic()  # when the last page closed (or the server started)
+        self._lock = threading.Lock()
+
+    def opened(self) -> None:
+        with self._lock:
+            self.open += 1
+            self.ever = True
+
+    def closed(self) -> None:
+        with self._lock:
+            self.open -= 1
+            if self.open == 0:
+                self._since = time.monotonic()
+
+    def idle_for(self) -> float | None:
+        """Seconds with no page open; None while one is."""
+        with self._lock:
+            return None if self.open else time.monotonic() - self._since
+
+
 class UIServer:
     """Sessions, jobs and the workspace, shared by every request."""
 
     def __init__(self, workspace: Workspace):
         self.workspace = workspace
+        self.pages = Pages()
         self.jobs = JobManager()
         self.hub = Hub()
         self.sessions: dict[str, Session] = {}
@@ -200,6 +231,7 @@ class UIServer:
             workspace_name=self.workspace.name,
             python=platform.python_version(),
             platform=sys.platform,
+            pages=self.pages.open,
         )
 
     def _publish(self, session: Session, seq: int, message: dict) -> None:
@@ -346,9 +378,15 @@ _UNAUTHORIZED = """<!doctype html><meta charset="utf-8"><title>vexsim</title>
 """
 
 
+# The app's own scripts, styles and icons: no secrets, and a page inside another app's frame
+# (VS Code's panel) loads them without the cookie, which it doesn't get
+PUBLIC = ("/assets/", "/icons/")
+
+
 class Guard:
-    """ASGI middleware: the right Host, a valid token (URL, cookie or bearer header), and,
-    for WebSockets, an Origin of our own. A token in the URL is traded for a cookie."""
+    """ASGI middleware: the right Host, a valid token (URL, cookie or bearer header) but for
+    the app's own files, and, for WebSockets, an Origin of our own. A token in the URL is
+    traded for a cookie."""
 
     def __init__(self, app, *, token: str, cookie: str, hosts: set[str], origins: set[str]):
         self.app = app
@@ -366,11 +404,16 @@ class Guard:
         headers = Headers(scope=scope)
         if headers.get("host", "") not in self.hosts:
             return await self._deny(scope, receive, send, 403, "wrong host")
+        if scope["type"] == "http" and scope["path"].startswith(PUBLIC):
+            return await self.app(scope, receive, send)
         if scope["type"] == "websocket":
             origin = headers.get("origin")
             if origin is not None and origin not in self.origins:
                 return await self._deny(scope, receive, send, 403, "wrong origin")
-        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        raw = scope.get("query_string", b"").decode("latin-1")
+        query = parse_qs(raw)
+        if "token" not in query:  # a link VS Code opened can come as ?token%3D...
+            query = parse_qs(unquote(raw))
         from_url = (query.get("token") or [None])[0]
         cookies = SimpleCookie()
         with contextlib.suppress(Exception):
@@ -722,6 +765,19 @@ def create_app(
         server.stop_session(_session(session_id))
         return Response(status_code=204)
 
+    @app.websocket("/api/presence")
+    async def presence(websocket: WebSocket):
+        """Held open by each of the app's pages while it's open."""
+        server.pages.opened()  # before the page hears it's connected
+        try:
+            await websocket.accept()
+            while True:
+                await websocket.receive_text()  # the page says nothing; this ends when it goes
+        except WebSocketDisconnect:
+            pass
+        finally:
+            server.pages.closed()
+
     @app.websocket("/api/sessions/{session_id}/ws")
     async def session_socket(websocket: WebSocket, session_id: str):
         session = server.sessions.get(session_id)
@@ -991,11 +1047,17 @@ def serve(
     *,
     port: int | None = None,
     open_browser: bool = True,
+    window: bool = False,
+    stop_when_closed: bool = False,
     token: str | None = None,
     dev: bool = False,
 ) -> None:
-    """Run the UI for ``folder`` until Ctrl+C."""
+    """Run the UI for ``folder`` until Ctrl+C, or with ``stop_when_closed`` until its last
+    page has been closed for ``CLOSED_GRACE_S`` (a reload is no close). ``window`` opens it
+    in a window of its own (``vexsim.ui.window``), and stops with it."""
     import uvicorn
+
+    from vexsim.ui.window import open_window
 
     workspace = Path(folder).resolve()
     token = token or secrets.token_urlsafe(24)
@@ -1006,10 +1068,41 @@ def serve(
         origins |= set(DEV_ORIGINS)
     app = create_app(workspace, token=token, port=actual, origins=origins)
     url = f"http://127.0.0.1:{actual}/?token={token}"
+    stop_when_closed = stop_when_closed or window
     print(f"vexsim UI for {workspace}")
     print(f"  {url}")
-    print("Keep this window open while you use it; press Ctrl+C to stop.", flush=True)
-    if open_browser:
+    if stop_when_closed:
+        print("It stops when you close the app (or press Ctrl+C here).", flush=True)
+    else:
+        print("Keep this window open while you use it; press Ctrl+C to stop.", flush=True)
+    if window:
+        threading.Timer(0.5, open_window, args=(url,)).start()
+    elif open_browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
-    config = uvicorn.Config(app, log_level="warning", lifespan="on", ws="auto")
-    uvicorn.Server(config).run(sockets=[sock])
+    config = uvicorn.Config(
+        app, log_level="warning", lifespan="on", ws="auto", timeout_graceful_shutdown=5
+    )
+    server = uvicorn.Server(config)
+    if stop_when_closed:
+        pages = app.state.server.pages
+        grace = float(os.environ.get("VEXSIM_UI_GRACE_S") or CLOSED_GRACE_S)
+        watch = threading.Thread(
+            target=stop_when_closed_for, args=(server, pages, grace), daemon=True
+        )
+        watch.start()
+    server.run(sockets=[sock])
+
+
+CLOSED_GRACE_S = 10.0  # after the last page closes ($VEXSIM_UI_GRACE_S): a reload is no close
+FIRST_PAGE_S = 120.0  # for the first page to open
+
+
+def stop_when_closed_for(server, pages: Pages, grace: float, first: float = FIRST_PAGE_S) -> None:
+    """Stop the uvicorn ``server`` (its ``should_exit``) once its pages have all been closed
+    for ``grace`` seconds, or if none has opened in ``first`` seconds."""
+    while not server.should_exit:
+        time.sleep(min(0.25, max(grace / 4, 0.05)))
+        idle = pages.idle_for()
+        if idle is not None and idle > (grace if pages.ever else first):
+            print("The app was closed: vexsim stops.", flush=True)
+            server.should_exit = True

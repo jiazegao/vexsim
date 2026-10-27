@@ -1,6 +1,7 @@
 // A recorded run as a video: the field canvas, captured while the run plays from its start to
 // its end at the playhead's speed, saved as a WebM file.
 
+import { saveFile } from "./host";
 import type { Playhead } from "./playhead";
 
 const TYPES = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
@@ -36,7 +37,7 @@ export class VideoExport {
     };
     recorder.onstop = () => {
       for (const track of recorder.stream.getTracks()) track.stop();
-      if (this.saving && chunks.length) download(new Blob(chunks, { type: "video/webm" }), `${this.name}.webm`);
+      if (this.saving && chunks.length) saveFile(new Blob(chunks, { type: "video/webm" }), `${this.name}.webm`);
       this.onEnd(this.saving && chunks.length > 0);
     };
     this.recorder = recorder;
@@ -72,10 +73,3 @@ export class VideoExport {
   }
 }
 
-export function download(blob: Blob, filename: string): void {
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = filename.replace(/[^A-Za-z0-9._ -]+/g, "_");
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
-}

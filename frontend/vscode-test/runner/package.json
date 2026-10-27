@@ -1,0 +1,10 @@
+{
+  "name": "vexsim-vscode-tests",
+  "description": "Runs vscode-test/suite.cjs in VS Code; the extension under test is the installed vexsim one",
+  "version": "0.0.0",
+  "publisher": "vexsim",
+  "private": true,
+  "engines": {
+    "vscode": "^1.75.0"
+  }
+}

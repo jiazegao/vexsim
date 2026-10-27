@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { comboLabel, ecdfCharts, meanP95, percent, summaryOf, xUnitOf } from "../bench";
+import { FileLink } from "../components/FileLink";
 import { JobStatus, ProblemBox, ResultList } from "../components/JobPanel";
 import { LineChart } from "../components/LineChart";
+import { openInBrowser } from "../host";
 import { isActive, latest, useJob } from "../jobs";
 import { fixed } from "../pose";
 import type { BenchResult, ResultAbout, RunProblem, ScenarioInfo, WorkspaceInfo } from "../protocol";
@@ -257,16 +259,25 @@ function BenchView(props: { result: BenchResult; onWorstCase: (result: string, f
         </span>
         <span className="spacer" />
         {result.report && (
-          <a className="button" href={file(result.report)} target="_blank" rel="noreferrer" data-testid="bench-report">
+          <a
+            className="button"
+            href={file(result.report)}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="bench-report"
+            onClick={(event) => {
+              if (openInBrowser(file(result.report!))) event.preventDefault(); // a framed page opens no tabs
+            }}
+          >
             Open the report
           </a>
         )}
         {result.files
           .filter((name) => name.endsWith(".csv") && !name.startsWith("worst_"))
           .map((name) => (
-            <a key={name} className="button" href={file(name)} download>
+            <FileLink key={name} className="button" href={file(name)} name={name}>
               {name}
-            </a>
+            </FileLink>
           ))}
       </header>
       <table className="data" data-testid="bench-summary">

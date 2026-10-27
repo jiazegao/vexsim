@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Editor, Place, Problem } from "../problems";
-import { EDITORS, editorUrl, linkSegments, shortPath } from "../problems";
+import { embedded, HOSTS, openInHost } from "../host";
+import { absolute, EDITORS, editorUrl, linkSegments, shortPath } from "../problems";
 import type { RunProblem } from "../protocol";
 import type { Line, SessionStore } from "../session";
 
@@ -65,16 +66,18 @@ export function ConsolePanel(props: {
         {tabButton("problems", "Problems", problems.length, "problems-tab")}
         {tabButton("plots", "Plots", 0, "plots-tab")}
         <span className="spacer" />
-        <label className="editor" title="Where file:line links open">
-          Open files in
-          <select value={editor} onChange={(e) => props.onEditor(e.target.value as Editor)}>
-            {(Object.keys(EDITORS) as Editor[]).map((key) => (
-              <option key={key} value={key}>
-                {EDITORS[key]}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!embedded && (
+          <label className="editor" title="Where file:line links open">
+            Open files in
+            <select value={editor} onChange={(e) => props.onEditor(e.target.value as Editor)}>
+              {(Object.keys(EDITORS) as Editor[]).map((key) => (
+                <option key={key} value={key}>
+                  {EDITORS[key]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       {tab === "plots" ? (
         (props.plots ?? <div className="plots-empty">Plots of a run appear once it's recorded: when it ends, or when you open one from Runs.</div>)
@@ -92,11 +95,23 @@ export function ConsolePanel(props: {
   );
 }
 
-/** A file:line place: a link into the editor, or (with no editor) a button that copies it. */
+/** A file:line place: a link into the editor (inside VS Code, VS Code itself), or (with no
+ * editor) a button that copies it. */
 export function PlaceLink(props: { place: Place; root: string; editor: Editor; children: ReactNode; testid?: string }) {
   const { place, root, editor } = props;
   const href = editorUrl(editor, root, place);
   const where = `${shortPath(root, place.file)}:${place.line}${place.column ? `:${place.column}` : ""}`;
+  if (embedded) {
+    const open = (event: React.MouseEvent) => {
+      event.preventDefault();
+      openInHost(absolute(root, place.file), place.line, place.column);
+    };
+    return (
+      <a className="place" href={href ?? "#"} title={`Open ${where} in ${HOSTS[embedded] ?? embedded}`} data-testid={props.testid} onClick={open}>
+        {props.children}
+      </a>
+    );
+  }
   if (href) {
     return (
       <a className="place" href={href} title={`Open ${where} in ${EDITORS[editor]}`} data-testid={props.testid}>

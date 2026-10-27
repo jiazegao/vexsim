@@ -18,6 +18,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from vexsim.bridge.build import (
+    NO_CONSOLE,
     SHIM_INCLUDE,
     BuildError,
     Template,
@@ -59,7 +60,7 @@ def _fetch_git(version: str, dest: Path) -> None:
         result = subprocess.run(
             ["git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1",
              "--branch", tag, REPO, str(dest)],
-            capture_output=True, text=True, errors="replace",
+            capture_output=True, text=True, errors="replace", creationflags=NO_CONSOLE,
         )  # fmt: skip
         if result.returncode == 0:
             return

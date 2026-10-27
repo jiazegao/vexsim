@@ -1,0 +1,18 @@
+{
+  // The VS Code extension (plain JavaScript, ../vexsim/ui/vscode) and its test, checked
+  // against VS Code's API as of the oldest version it runs on
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": ["node", "vscode"],
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "include": ["../vexsim/ui/vscode/*.js", "vscode-test/**/*.cjs", "vscode-test/**/*.mjs"]
+}

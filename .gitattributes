@@ -2,3 +2,7 @@
 # from vexsim/ui/protocol.py: regenerate these rather than editing or merging them.
 vexsim/ui/static/** linguist-generated=true -diff eol=lf
 frontend/src/protocol.ts linguist-generated=true eol=lf
+# but its icons are binary: no line endings to convert
+vexsim/ui/static/icons/*.png binary
+vexsim/ui/static/icons/*.ico binary
+vexsim/ui/static/icons/*.icns binary

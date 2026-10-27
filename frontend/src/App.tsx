@@ -15,6 +15,7 @@ import { fileName } from "./configdoc";
 import type { ControllerInput } from "./controller";
 import { NEUTRAL } from "./controller";
 import type { Layers } from "./draw";
+import { hostTheme, onHostTheme } from "./host";
 import { LogPlayback, logSummary } from "./mcllog";
 import { Playhead, usePlayheadClock } from "./playhead";
 import type { Editor } from "./problems";
@@ -88,7 +89,7 @@ export function App() {
   const [mcl, setMcl] = useState<LogPlayback | null>(null); // a real robot's MCL log, beside the simulator
   const [logShift, setLogShift] = useState(0); // s: the log nudged later against the run beside it
   const [replayWith, setReplayWith] = useState<string | null>(null); // the saved run to replay it with ("": the form)
-  const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [theme, setTheme] = useState<Theme>(() => hostTheme() ?? loadTheme());
   const [preview, setPreview] = useState<Preview | null>(null);
   const [rescans, setRescans] = useState(0);
   const [configurations, setConfigurations] = useState<RunConfiguration[]>([]);
@@ -191,6 +192,7 @@ export function App() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+  useEffect(() => onHostTheme(setTheme), []); // inside VS Code, its theme's colors
 
   useEffect(() => {
     try {

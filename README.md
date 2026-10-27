@@ -91,7 +91,8 @@ Every command below runs from the repository root, with the example files.
 
 **Or use the browser app** for the same runs, picked from lists instead of typed ([section 7](#7-the-browser-app-vexsim-ui)):
 ```
-vexsim ui
+vexsim ui            # in your browser; or --window, in a window of its own
+vexsim vscode        # once: then "vexsim: Open the app" in VS Code shows it beside your code
 ```
 
 **Check a robot config and see what the simulator builds from it:**
@@ -431,9 +432,11 @@ The robot starts where the log's first estimate puts it, unless `--start` says o
 
 ## 7. The browser app: `vexsim ui`
 ```
-vexsim ui [FOLDER] [--port N] [--no-browser]
+vexsim ui [FOLDER] [--port N] [--no-browser | --window]
+vexsim shortcut [FOLDER] [--remove]
+vexsim vscode [--code CODE] [--out FILE] [--no-install]
 ```
-`vexsim ui` opens vexsim in your web browser for a folder of robot configs, fields, programs and PROS projects (default: the current folder). You pick what to run from lists instead of typing a command line, then watch the run live. It is the same simulation as `vexsim run`, drawn by the browser.
+`vexsim ui` opens vexsim in your web browser for a folder of robot configs, fields, programs and PROS projects (default: the current folder). It can also open in a window of its own, from a shortcut, or in a panel in VS Code ([below](#a-window-of-its-own-a-shortcut-a-vs-code-panel)). You pick what to run from lists instead of typing a command line, then watch the run live. It is the same simulation as `vexsim run`, drawn by the browser.
 
 It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself comes prebuilt with the package, so you don't need Node.js, and it works offline.
 
@@ -521,9 +524,17 @@ Benchmarks, sweeps, fits and builds run as jobs, each in a process of its own (a
 
 The recordings live in the folder's `.vexsim/runs/`, one folder per run: `run.json` (what was run and how it ended), the tape the timeline plays (a frame every 50 ms of simulated time), `telemetry.csv.gz` (every 10 ms), `console.txt`, and `sd/`, the run's SD card (`/usd/`). Set `VEXSIM_RUNS_DIR` to keep them somewhere else.
 
-**Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie. Keep the terminal open while you use the app; Ctrl+C stops it. The browser only reaches files inside the folder.
+**Safety:** the app can build and run code, so it is reachable only from your own computer. The server listens on 127.0.0.1 (port 8642, or a free port if that one is taken, or `--port`), and the link it prints carries a key (`?token=...`) that the browser then keeps as a cookie; the page also sends it with each request, which is how it works inside VS Code, where it gets no cookie. Keep the terminal open while you use the app; Ctrl+C stops it. (A window of its own, or a VS Code panel, stops vexsim when you close it.) The browser only reaches files inside the folder.
 
-Every command has a page in the app, and the commands and the pygame viewer work as before. What's left is optional: a desktop window of its own, and a VS Code panel ([PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11)).
+Every command has a page in the app, and the commands and the pygame viewer work as before. [PLAN.md, section 13](PLAN.md#13-browser-ui-phase-11) has the app's design.
+
+### A window of its own, a shortcut, a VS Code panel
+- **`vexsim ui --window`** opens the app in a window of its own, with no tabs or address bar: the app mode of Microsoft Edge (which every Windows has), Google Chrome, Chromium or Brave, on a browser profile of its own (in `%LOCALAPPDATA%\vexsim\window` on Windows, `~/.cache/vexsim/window` elsewhere), so it's apart from your browsing and keeps its size. **Closing the window stops vexsim**, 10 seconds later (a reload isn't a close). `VEXSIM_BROWSER` names the browser to use. With none of those browsers, the app opens in your default browser and stops when you close its tab.
+- **`vexsim shortcut [FOLDER]`** makes shortcuts that open the folder in that window: on Windows, in the Start menu and on the desktop (they run without a console window; what vexsim would print goes to `%LOCALAPPDATA%\vexsim\ui.log`); on Linux, in the applications menu; on macOS, an app in `~/Applications`. They use the Python you ran the command with, so they work for as long as it has vexsim installed. `--remove` removes them.
+- **`vexsim vscode`** installs vexsim's VS Code extension (it comes with the package; nothing is downloaded). Then **vexsim: Open the app** in the Command Palette (Ctrl+Shift+P), or **Open in vexsim** on a folder in the Explorer, opens the app in a panel beside your code. There, a build error's or a traceback's `file:line` opens in the editor at that line; *Save picture*, *Video* and the CSV files go through VS Code's save dialog; *Open the report* opens your browser; and the app's colors follow VS Code's theme. A run goes on while the panel is hidden behind another tab. Closing the panel stops vexsim; so does **vexsim: Stop the app**. While the panel has the keyboard, keys go to the app (they drive the robot): click in the editor to give VS Code its shortcuts back.
+  - It runs vexsim with the Python `vexsim vscode` ran with; the **vexsim.python** setting changes that. If vexsim doesn't start, the *vexsim* output channel says why.
+  - VS Code turns the extension off in a folder you haven't trusted (*Restricted Mode*), as it runs code.
+  - `--code` installs it in another editor of VS Code's kind (`code-insiders`, `cursor`, `codium`). `--no-install --out FILE` only writes the `.vsix`, to install from VS Code's Extensions view (its `...` menu, *Install from VSIX...*).
 
 ---
 
@@ -1230,7 +1241,11 @@ vexsim/
 |---|---|
 | `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs), config editing (open, check, patch, save, with a check for changes made on disk), jobs of every kind with their progress, the results they keep (and their files: a benchmark's report is served sandboxed), saved sweeps, scenarios and the calibration routine over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
 | `protocol.py` | Every message and request as a pydantic model. `python -m vexsim.ui.protocol frontend/src/protocol.ts` writes them as TypeScript for the page; a test fails while that file is stale. |
-| `static/` | The built page (from `frontend/`, by `npm run build`), shipped with the package. |
+| `window.py` | `vexsim ui --window`: `find_browser` finds a browser with an app mode (or `$VEXSIM_BROWSER`), `open_window` opens the app in it on a profile of its own, else in the default browser. The server knows the app's pages by a WebSocket each holds open (`/api/presence`), and `serve(stop_when_closed=True)` stops once the last one has closed. |
+| `shortcut.py` | `vexsim shortcut`: a `Shortcut` runs `vexsim ui FOLDER --window` with this Python; `make` and `remove` put it in, or take it out of, the Start menu and desktop (a `.lnk`, made through the Windows shell), the applications menu (a desktop entry) or `~/Applications` (an app). |
+| `vsix.py` | `vexsim vscode`: `build` packs `vscode/` into a `.vsix` with this version and this Python as the default of its `vexsim.python` setting; `install` installs it with VS Code's command line. |
+| `vscode/` | The VS Code extension, in plain JavaScript: `extension.js` runs `vexsim ui FOLDER` for a panel and does what the page asks (open a file at a line, save a file, open a report in the browser); `panel.js` is the panel's page, the app in a frame. The page knows it's in VS Code (`?embed=vscode`; `frontend/src/host.ts`). |
+| `static/` | The built page (from `frontend/`, by `npm run build`), shipped with the package, and its icons (from `frontend/scripts/make_icons.py`). |
 
 ### Outside the package
 | Folder | What it holds |
@@ -1316,7 +1331,7 @@ pytest          # every test (the C++ bridge tests skip without g++, unless VEXS
 ruff check .    # lint
 ruff format .   # format
 ```
-CI (`.github/workflows/ci.yml`) runs on Windows (with MSYS2 g++) and Linux, with Python 3.11 and 3.13: lint, every test with the C++ bridge required, validation of every example config, and every example command, uploading the plots and telemetry as artifacts. A Linux job checks the browser app: types, unit tests, a fresh build that must match the committed one, and the end-to-end tests.
+CI (`.github/workflows/ci.yml`) runs on Windows (with MSYS2 g++) and Linux, with Python 3.11 and 3.13: lint, every test with the C++ bridge required, validation of every example config, and every example command, uploading the plots and telemetry as artifacts. A Linux job checks the browser app: types, unit tests, a fresh build that must match the committed one, and the end-to-end tests. Another, on Windows and Linux, installs the VS Code extension in a real VS Code and opens the app in its panel.
 
 **The browser app** (`frontend/`, with Node.js 22):
 ```
@@ -1326,7 +1341,10 @@ npm test        # unit tests (Vitest)
 npm run build   # type-check, then build into vexsim/ui/static: commit the result with the source
 npm run e2e     # end-to-end, in Chromium (Playwright): starts its own `vexsim ui` on port 8653,
                 # with the Python named by VEXSIM_PYTHON (default `python`)
+npm run vscode-test   # the VS Code extension, installed in a VS Code it downloads (on Linux, run
+                      # it under xvfb-run); also with VEXSIM_PYTHON
 ```
+`npm run typecheck` checks the VS Code extension (`vexsim/ui/vscode`, plain JavaScript) against VS Code's API too. The icons are drawn by `python scripts/make_icons.py` (with Pillow) into `public/icons`.
 To work on the page with live reloading, run `vexsim ui --dev --no-browser` (on the default port, 8642) and open the link it prints once, for its cookie; then run `npm run dev` and open http://127.0.0.1:5173. Messages are defined once, in `vexsim/ui/protocol.py`: after changing them, run `python -m vexsim.ui.protocol frontend/src/protocol.ts`.
 
 **Adding to vexsim:**

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { FileLink } from "../components/FileLink";
 import { JobStatus, ProblemBox, ResultList } from "../components/JobPanel";
 import { LineChart } from "../components/LineChart";
 import { isActive, latest, useJob } from "../jobs";
@@ -371,9 +372,9 @@ function SweepView(props: { shown: Shown; live: boolean; onWatch: (trial: SweepT
         <span className="muted small">{about ? `${when(about.created)} · ${about.summary}` : props.live ? `running: ${trials.length} of ${trialCount(sweep)} trials done` : ""}</span>
         <span className="spacer" />
         {about && (
-          <a className="button" href={api.resultFileUrl("sweeps", about.id, "trials.csv")} download>
+          <FileLink className="button" href={api.resultFileUrl("sweeps", about.id, "trials.csv")} name="trials.csv">
             trials.csv
-          </a>
+          </FileLink>
         )}
       </header>
       <p className="muted small">

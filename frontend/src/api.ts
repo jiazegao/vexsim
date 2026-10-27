@@ -1,5 +1,7 @@
-// The UI server's REST API (see vexsim/ui/server.py). Every request carries the session
-// cookie the server set when the page was first opened with its ?token= link.
+// The UI server's REST API (see vexsim/ui/server.py). Every request carries the server's
+// token: the page was opened with it in its link (?token=...), and the server traded it for a
+// cookie. A page shown inside another app (the VS Code panel) gets no cookies, so the page
+// keeps the token for this tab as well, and sends it with each request.
 
 import type {
   AppInfo,
@@ -33,6 +35,40 @@ import type {
   WorkspaceInfo,
 } from "./protocol";
 
+const TOKEN_KEY = "vexsim.token";
+
+function keepToken(): string | null {
+  if (typeof location === "undefined") return null; // not in a page (unit tests)
+  const fromUrl = new URL(location.href).searchParams.get("token");
+  try {
+    if (fromUrl) sessionStorage.setItem(TOKEN_KEY, fromUrl);
+    else return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    // storage off: the cookie alone after a reload
+  }
+  return fromUrl;
+}
+
+const token = keepToken();
+
+/** A request's headers: JSON, and the token. */
+function headers(): Record<string, string> {
+  return token ? { "content-type": "application/json", authorization: `Bearer ${token}` } : { "content-type": "application/json" };
+}
+
+/** One of the server's addresses with the token in it, for what can't send headers:
+ * WebSockets, links and downloads. */
+export function withToken(url: string): string {
+  if (!token) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+}
+
+/** The WebSocket address of the server's `path`. */
+export function socketUrl(path: string): string {
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  return withToken(`${scheme}//${location.host}${path}`);
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -58,11 +94,7 @@ function describe(detail: unknown): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
+  const response = await fetch(path, { credentials: "same-origin", headers: headers(), ...init });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(response.status, describe(body.detail ?? response.statusText));
@@ -75,7 +107,7 @@ export type StartResult = { session: SessionInfo } | { problem: RunProblem };
 
 /** A request whose 422 may carry a RunProblem (a config's issues): what it gave, or that. */
 async function orProblem<T>(path: string, init: RequestInit): Promise<{ ok: T } | { problem: RunProblem }> {
-  const response = await fetch(path, { credentials: "same-origin", headers: { "content-type": "application/json" }, ...init });
+  const response = await fetch(path, { credentials: "same-origin", headers: headers(), ...init });
   const body = await response.json().catch(() => ({}));
   if (response.status === 422) {
     if (typeof body.error === "string") return { problem: body as RunProblem };
@@ -103,7 +135,7 @@ export const api = {
   result: <T>(kind: ResultKind, id: string) => request<T>(`/api/results/${kind}/${path(id)}`),
   deleteResult: (kind: ResultKind, id: string) => request<void>(`/api/results/${kind}/${path(id)}`, { method: "DELETE" }),
   /** A file a job wrote in its result's folder (a report, a CSV), to open or download. */
-  resultFileUrl: (kind: ResultKind, id: string, name: string) => `/api/results/${kind}/${path(id)}/files/${path(name)}`,
+  resultFileUrl: (kind: ResultKind, id: string, name: string) => withToken(`/api/results/${kind}/${path(id)}/files/${path(name)}`),
   benchReplay: (id: string, file: string) => request<Replay>(`/api/results/bench/${path(id)}/replay`, post({ file })),
   scenario: (scenario: string) => orProblem<ScenarioInfo>(`/api/bench/scenario?path=${encodeURIComponent(scenario)}`, { method: "GET" }),
   sweeps: () => request<SweepsFile>("/api/sweeps"),
@@ -119,7 +151,7 @@ export const api = {
   updateRun: (id: string, update: RunUpdate) =>
     request<RunRecord>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(update) }),
   deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  csvUrl: (id: string) => `/api/runs/${encodeURIComponent(id)}/telemetry.csv`,
+  csvUrl: (id: string) => withToken(`/api/runs/${encodeURIComponent(id)}/telemetry.csv`),
   replay: (log: string, robot: string, field: string | null) =>
     request<Replay>("/api/replay", { method: "POST", body: JSON.stringify({ log, robot, field }) }),
   /** An MCL log from the workspace, to play on the field; a RunProblem if it doesn't read. */
@@ -138,7 +170,7 @@ export const api = {
     const response = await fetch("/api/config", {
       method: "PUT",
       credentials: "same-origin",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ path, text, version }),
     });
     const body = await response.json().catch(() => ({}));
@@ -152,7 +184,7 @@ export const api = {
     const response = await fetch("/api/preview", {
       method: "POST",
       credentials: "same-origin",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ robot, field }),
     });
     const body = await response.json().catch(() => ({}));
@@ -167,7 +199,7 @@ export const api = {
     const response = await fetch("/api/sessions", {
       method: "POST",
       credentials: "same-origin",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ spec, replace: true, name }),
     });
     const body = await response.json().catch(() => ({}));
@@ -182,8 +214,25 @@ export const api = {
 
 /** The WebSocket address of a session's messages. */
 export function sessionSocketUrl(id: string): string {
-  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${location.host}/api/sessions/${encodeURIComponent(id)}/ws`;
+  return socketUrl(`/api/sessions/${encodeURIComponent(id)}/ws`);
+}
+
+/** Hold a connection to the server while this page is open, so it knows when the app's last
+ * page has closed (a server started for a window of its own then stops). It reconnects if
+ * the connection drops: soon, then less often while the server is gone. */
+export function stayPresent(): void {
+  let wait = 1000;
+  const connect = () => {
+    const socket = new WebSocket(socketUrl("/api/presence"));
+    socket.onopen = () => {
+      wait = 1000;
+    };
+    socket.onclose = () => {
+      setTimeout(connect, wait);
+      wait = Math.min(wait * 2, 30_000);
+    };
+  };
+  connect();
 }
 
 /** Drop ?token=... from the address bar once the server has set its cookie. */
