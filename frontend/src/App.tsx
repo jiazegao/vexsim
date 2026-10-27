@@ -5,6 +5,7 @@ import { Controls, SPEEDS } from "./components/Controls";
 import type { Compared, FieldSource } from "./components/FieldView";
 import { FieldKey, FieldView } from "./components/FieldView";
 import { KeysHelp } from "./components/KeysHelp";
+import { NewRobotDialog } from "./components/NewRobotDialog";
 import { Plots } from "./components/Plots";
 import { Readout } from "./components/Readout";
 import { RunBar } from "./components/RunBar";
@@ -107,6 +108,8 @@ export function App() {
   const [closedRun, setClosedRun] = useState(false); // the ended live run was put away
   const [video, setVideo] = useState<VideoExport | null>(null);
   const [openConfigs, setOpenConfigs] = useState<string[]>([]); // configs open in editors
+  const [designing, setDesigning] = useState<string[]>([]); // opened in their Design view
+  const [newRobot, setNewRobot] = useState(false); // the "New robot…" dialog is open
   const [page, setPage] = useState<string>("simulate"); // a PageId, or an open config's path
   const [visited, setVisited] = useState<string[]>(["simulate"]); // pages made so far (they stay)
   const [analyzeRobot, setAnalyzeRobot] = useState("");
@@ -580,9 +583,17 @@ export function App() {
 
   // --- config editors, in tabs beside Simulate ----------------------------------------------
 
-  const openConfig = (path: string) => {
+  const openConfig = (path: string, design = false) => {
+    if (design) setDesigning((list) => (list.includes(path) ? list : [...list, path]));
     setOpenConfigs((open) => (open.includes(path) ? open : [...open, path]));
     setPage(path);
+  };
+  /** A robot "New robot…" made: picked for the next run, and open in its Design view. */
+  const robotCreated = async (path: string) => {
+    setNewRobot(false);
+    if (info) await scan(info, false);
+    setForm((current) => ({ ...current, config: "", robot: path }));
+    openConfig(path, true);
   };
   const closeConfig = (path: string) => {
     setOpenConfigs((open) => open.filter((p) => p !== path));
@@ -801,6 +812,7 @@ export function App() {
           picked={picked}
           onPick={pick}
           onEdit={(item) => openConfig(item.path)}
+          onNewRobot={() => setNewRobot(true)}
           loading={scanning}
           onRefresh={() => info && scan(info, false)}
           shownLog={recording?.key.startsWith("log:") ? recording.key.slice(4) : null}
@@ -861,6 +873,7 @@ export function App() {
               onPick={pickConfiguration}
               onSave={saveConfiguration}
               onDelete={deleteConfiguration}
+              onNewRobot={() => setNewRobot(true)}
             />
             <Controls
               store={store}
@@ -1022,6 +1035,7 @@ export function App() {
                 onDirty={markUnsaved}
                 onSaved={() => info && scan(info, false)}
                 request={overrideRequests[path] ?? null}
+                design={designing.includes(path)}
               />
             ))}
           </Suspense>
@@ -1064,6 +1078,14 @@ export function App() {
         </main>
       </div>
       {help && <KeysHelp onClose={() => setHelp(false)} />}
+      {newRobot && (
+        <NewRobotDialog
+          robots={workspace?.items.filter((item) => item.kind === "robot") ?? []}
+          taken={workspace?.items.map((item) => item.path) ?? []}
+          onCreated={robotCreated}
+          onClose={() => setNewRobot(false)}
+        />
+      )}
     </div>
   );
 }

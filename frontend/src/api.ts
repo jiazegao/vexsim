@@ -11,6 +11,8 @@ import type {
   ConfigFile,
   ConfigKind,
   ConfigPatched,
+  NewRobot,
+  NewRobotRequest,
   JobInfo,
   MclLogTape,
   ProjectRoutines,
@@ -166,6 +168,11 @@ export const api = {
     request<ConfigCheck>("/api/config/check", { method: "POST", body: JSON.stringify({ kind, text }) }),
   patchConfig: (kind: ConfigKind, text: string, edits: ConfigEdit[]) =>
     request<ConfigPatched>("/api/config/patch", { method: "POST", body: JSON.stringify({ kind, text, edits }) }),
+  /** A drivetrain preset (tank4, tank6, xdrive, mecanum, hdrive) put on a robot's text. */
+  drivePreset: (text: string, preset: string) =>
+    request<ConfigPatched>("/api/config/drive", { method: "POST", body: JSON.stringify({ text, preset }) }),
+  /** A new robot config in the workspace: on a drive preset, or a copy of `source`. */
+  newRobot: (robot: NewRobotRequest) => request<NewRobot>("/api/config/new", { method: "POST", body: JSON.stringify(robot) }),
 
   /** Write a config opened at `version` (null: whatever is on disk); a conflict if the
    * file changed on disk since. */

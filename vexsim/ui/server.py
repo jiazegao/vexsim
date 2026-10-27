@@ -54,7 +54,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from vexsim import __version__
-from vexsim.app import configs, results, runs
+from vexsim.app import configs, newrobot, results, runs, yamledit
 from vexsim.app.benchmarks import ScenarioProblem, describe_scenario
 from vexsim.app.frames import preview_of
 from vexsim.app.jobs import JobManager
@@ -77,6 +77,7 @@ from vexsim.ui.protocol import (
     ClientCommand,
     ConfigCheck,
     ConfigCheckRequest,
+    ConfigDriveRequest,
     ConfigFile,
     ConfigOverridesRequest,
     ConfigPatched,
@@ -84,6 +85,8 @@ from vexsim.ui.protocol import (
     ConfigSave,
     ConfigSaved,
     JobInfo,
+    NewRobot,
+    NewRobotRequest,
     NotRoutineInfo,
     PlacedIssue,
     Preview,
@@ -599,10 +602,17 @@ def create_app(
 
     @app.post("/api/config/patch", responses={422: {}})
     def patch_config(request: ConfigPatchRequest):
-        """Numbers changed in place in a config's text (a drag on the editor's diagram)."""
-        edits = [configs.Edit(e.location, e.value) for e in request.edits]
+        """A config's text changed in place: numbers a drag on the editor's diagram moved,
+        and the Design view's changes (a value set, a list item added or removed, a key
+        renamed), everything else in it as it was."""
+        edits = [
+            configs.Edit(e.location, e.value)
+            if e.op is None
+            else yamledit.Change(e.op, e.location, e.value)
+            for e in request.edits
+        ]
         try:
-            text = configs.patch_text(request.text, edits)
+            text = yamledit.apply(request.text, edits)
         except configs.PatchError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
         return ConfigPatched(text=text, check=_checked(configs.check_text(text, request.kind)))
@@ -642,6 +652,29 @@ def create_app(
                     {"detail": f"can't save {request.path}: {exc}"}, status_code=500
                 )
         return ConfigSaved(version=version)
+
+    @app.post("/api/config/new", responses={422: {}})
+    def new_robot(request: NewRobotRequest):
+        """A new robot config in the workspace (never over a file): to draw, on a drive
+        preset, or a copy of a robot."""
+        try:
+            file = _config_file(request.path)
+            copy = None if request.source is None else _config_file(request.source)
+            newrobot.create(file, request.name.strip() or "New robot", request.preset, copy)
+        except (configs.PatchError, ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return NewRobot(path=server.workspace.relative(file))
+
+    @app.post("/api/config/drive", responses={422: {}})
+    def config_drive(request: ConfigDriveRequest):
+        """A drivetrain preset put on a robot config's text, the rest of it as it was."""
+        try:
+            text = yamledit.apply(
+                request.text, newrobot.preset_changes(request.text, request.preset)
+            )
+        except configs.PatchError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return ConfigPatched(text=text, check=_checked(configs.check_text(text, "robot")))
 
     # --- recorded runs (.vexsim/runs) ------------------------------------------------------
 

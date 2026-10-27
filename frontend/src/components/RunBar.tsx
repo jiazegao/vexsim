@@ -5,6 +5,7 @@ import type { RunForm } from "../runform";
 import { MODES, NOISE, sameRun, STICKS } from "../runform";
 
 const ANY_LOG = "*"; // a saved run that follows whichever log it's given
+const NEW_ROBOT = "\u0000new"; // the robot list's "New robot…": no file is called that
 
 export function RunBar(props: {
   workspace: WorkspaceInfo | null;
@@ -19,6 +20,7 @@ export function RunBar(props: {
   onPick: (name: string) => void;
   onSave: (name: string) => Promise<string | null>; // an error, or null when saved
   onDelete: (name: string) => Promise<string | null>;
+  onNewRobot: () => void; // "New robot…" picked from the robots
 }) {
   const { workspace, form, onChange, configurations } = props;
   const items = workspace?.items ?? [];
@@ -73,7 +75,7 @@ export function RunBar(props: {
         </label>
         <label className="field">
           <span>Robot</span>
-          <select value={form.robot} onChange={(e) => set("robot")(e.target.value)} data-testid="robot">
+          <select value={form.robot} onChange={(e) => (e.target.value === NEW_ROBOT ? props.onNewRobot() : set("robot")(e.target.value))} data-testid="robot">
             {!form.robot && <option value="">Pick a robot…</option>}
             {of("robot").map((item) => (
               <option key={item.path} value={item.path} disabled={!!item.problem}>
@@ -81,6 +83,7 @@ export function RunBar(props: {
                 {item.problem ? " (has errors)" : ""}
               </option>
             ))}
+            <option value={NEW_ROBOT}>New robot…</option>
           </select>
         </label>
         <label className="field">

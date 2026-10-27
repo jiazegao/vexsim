@@ -1788,6 +1788,404 @@ button.pagetab,
   color: var(--text-secondary);
 }
 
+/* --- the Design view: a robot's forms beside its diagram, and its drawing tools ---------- */
+
+.view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-switch button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.view-switch button + button {
+  border-left: 1px solid var(--border);
+}
+
+.view-switch button.on {
+  background: var(--accent-wash);
+  color: var(--series-1);
+  font-weight: 600;
+}
+
+.editor-split.designing {
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.design-panel {
+  contain: size; /* it scrolls; the diagram beside it sets the height */
+  min-width: 0;
+  overflow: auto;
+  padding: 2px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  font-size: 13px;
+}
+
+.design-panel fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.design-panel section {
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.design-panel section:last-child {
+  border-bottom: none;
+}
+
+.design-panel section.on {
+  box-shadow: inset 3px 0 0 var(--series-1);
+  padding-left: 8px;
+  margin-left: -8px;
+}
+
+.design-panel h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.design-panel h4 {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.design-panel p {
+  margin: 4px 0;
+}
+
+.design-panel .bad,
+.dialog .bad {
+  color: var(--critical);
+}
+
+.design-stale {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-left: 4px solid var(--warning);
+  background: var(--surface-2);
+}
+
+.design-row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+
+.design-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.design-values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.design-unit {
+  font-size: 12px;
+}
+
+.design-panel input,
+.design-panel select {
+  padding: 3px 6px;
+  font-size: 12.5px;
+}
+
+.design-panel input.num {
+  width: 62px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.design-panel input.wide {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.design-panel input.name {
+  width: 96px;
+  font-weight: 600;
+}
+
+.design-panel input[type="checkbox"] {
+  margin: 0;
+}
+
+.design-item {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--page);
+}
+
+.design-item.on,
+.design-table tr.on td {
+  border-color: var(--series-1);
+  background: var(--accent-wash);
+}
+
+.design-item.warning,
+.design-panel section.warning {
+  border-left-color: var(--warning);
+}
+
+.design-item.error,
+.design-panel section.error {
+  border-left-color: var(--critical);
+}
+
+.design-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.design-item-head > :last-child {
+  margin-left: auto;
+}
+
+.design-item-head .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.design-item-head strong {
+  white-space: nowrap;
+}
+
+.design-item-head .group-name {
+  min-width: 96px;
+  padding: 0 7px;
+}
+
+.design-item-head label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+.design-item-head select {
+  max-width: 120px;
+}
+
+.design-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.design-table th {
+  padding: 0 2px 2px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.design-table td {
+  padding: 2px;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+
+.design-table input.num {
+  width: 52px;
+}
+
+.design-table input.name {
+  width: 58px;
+}
+
+.design-table tr.error td:first-child {
+  box-shadow: inset 3px 0 0 var(--critical);
+}
+
+.design-table tr.warning td:first-child {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+.design-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.design-parts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.design-parts button {
+  width: 100%;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.design-parts button.on {
+  background: var(--accent-wash);
+  color: var(--series-1);
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+}
+
+.port-map {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.port {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.port-number {
+  min-width: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.port-users {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port.free {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
+.port.used {
+  background: var(--page);
+}
+
+.port.clash {
+  border-color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 10%, transparent);
+}
+
+/* the diagram's drawing tools, over its top left corner */
+.design-tools {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 70px);
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+}
+
+.design-tools button {
+  border-color: transparent;
+  background: transparent;
+}
+
+.design-tools button.on {
+  background: var(--accent-wash);
+  color: var(--series-1);
+  font-weight: 600;
+}
+
+.design-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  color: var(--text-secondary);
+}
+
+.design-tools select {
+  padding: 1px 4px;
+  font-size: 12px;
+}
+
+/* "New robot…": in the sidebar, and its dialog */
+.group h2 .group-action {
+  float: right;
+  margin-top: -3px;
+  padding: 1px 6px;
+  font-weight: 500;
+  color: var(--series-1);
+}
+
+.dialog.new-robot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(460px, 100%);
+}
+
+.dialog.new-robot p {
+  margin: 0;
+}
+
+.dialog.new-robot .field {
+  flex: none;
+}
+
+.dialog.new-robot .actions {
+  justify-content: flex-end;
+}
+
 /* --- narrow screens ---------------------------------------------------------------- */
 
 /* --- the pages: Sweeps, Bench, Calibrate, Analyze, Build ----------------------------- */
@@ -2263,6 +2661,11 @@ ol.steps {
 
   .editor-split {
     grid-template-rows: minmax(300px, 1fr) minmax(300px, 1fr);
+  }
+
+  .editor-split.designing {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(360px, 1fr) minmax(300px, 1fr);
   }
 
   .main {

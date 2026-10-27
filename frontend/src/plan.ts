@@ -4,6 +4,8 @@
 
 import { configPoints, partPoints } from "./body";
 import type { Part } from "./configdoc";
+import type { ShapePart } from "./design";
+import { handlesOf } from "./design";
 import { drawField } from "./draw";
 import type { Palette } from "./palette";
 import { withAlpha } from "./palette";
@@ -30,7 +32,21 @@ export interface PlanPicture {
   errors: Set<string>; // parts with errors (their paths)
   warnings: Set<string>;
   stale: boolean; // the text doesn't parse just now: this is how it last did
+  design?: ShapePicture | null; // the Design view: the shape as its parts, editable
 }
+
+/** The robot's shape in the Design view: its parts (a footprint as one rectangle), the one
+ * selected with its handles, and what's being drawn. */
+export interface ShapePicture {
+  parts: ShapePart[]; // as they are now (one being dragged where it's been dragged to)
+  selected: number | null;
+  hovered: number | null;
+  preview: ShapePart[]; // being drawn (and its mirror image)
+  sketch: [number, number][] | null; // an outline being drawn: its points, then the pointer
+  closing: boolean; // the pointer is on the outline's first point: a click closes it
+}
+
+export const SHAPE_HANDLE_PX = 5; // half a shape handle's size
 
 /** The robot's area: its footprint (or shape) and every part, with room around them. */
 export function robotExtent(robot: RobotConfig, parts: Part[]): [number, number] {
@@ -54,7 +70,9 @@ export function drawPlan(ctx: CanvasRenderingContext2D, view: View, colors: Pale
 
 function drawRobotPlan(ctx: CanvasRenderingContext2D, view: View, colors: Palette, robot: RobotConfig, picture: PlanPicture): void {
   drawInchGrid(ctx, view, colors);
-  if (robot.body.shape?.length) {
+  if (picture.design) {
+    drawDesign(ctx, view, colors, picture.design);
+  } else if (robot.body.shape?.length) {
     drawShapePlan(ctx, view, colors, robot);
   } else {
     const [length, width] = robot.body.footprint_in ?? [0, 0];
@@ -99,6 +117,71 @@ function drawShapePlan(ctx: CanvasRenderingContext2D, view: View, colors: Palett
     ctx.stroke();
   }
   const front = Math.max(...configPoints(robot.body).map(([x]) => x));
+  arrowTo(ctx, view, colors.ink2, front);
+  label(ctx, view, colors, front, 0, "front", "start", 8, 4);
+}
+
+/** The shape in the Design view: each part (the selected one in the focus color, with its
+ * handles), the front, and whatever is being drawn, dashed. */
+function drawDesign(ctx: CanvasRenderingContext2D, view: View, colors: Palette, design: ShapePicture): void {
+  design.parts.forEach((part, i) => {
+    polygon(ctx, view, partPoints(part));
+    ctx.fillStyle = withAlpha(colors.ink, i === design.selected ? 0.1 : 0.05);
+    ctx.fill();
+    ctx.strokeStyle = i === design.selected ? colors.focus : i === design.hovered ? colors.ink : colors.ink2;
+    ctx.lineWidth = i === design.selected ? 2.5 : 1.5;
+    ctx.stroke();
+  });
+  const points = design.parts.flatMap((part) => partPoints(part));
+  if (points.length) {
+    const front = Math.max(...points.map(([x]) => x));
+    arrowTo(ctx, view, colors.ink2, front);
+    label(ctx, view, colors, front, 0, "front", "start", 8, 4);
+  }
+  const selected = design.selected === null ? null : design.parts[design.selected];
+  if (selected) {
+    for (const [x, y] of handlesOf(selected)) {
+      const [sx, sy] = toScreen(view, x, y);
+      ctx.fillStyle = colors.surface;
+      ctx.strokeStyle = colors.focus;
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(sx - SHAPE_HANDLE_PX, sy - SHAPE_HANDLE_PX, 2 * SHAPE_HANDLE_PX, 2 * SHAPE_HANDLE_PX);
+      ctx.strokeRect(sx - SHAPE_HANDLE_PX, sy - SHAPE_HANDLE_PX, 2 * SHAPE_HANDLE_PX, 2 * SHAPE_HANDLE_PX);
+    }
+  }
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = colors.focus;
+  ctx.lineWidth = 1.5;
+  for (const part of design.preview) {
+    polygon(ctx, view, partPoints(part));
+    ctx.fillStyle = withAlpha(colors.focus, 0.08);
+    ctx.fill();
+    ctx.stroke();
+  }
+  if (design.sketch && design.sketch.length) {
+    ctx.beginPath();
+    design.sketch.forEach(([x, y], i) => {
+      const [sx, sy] = toScreen(view, x, y);
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  if (design.sketch) {
+    design.sketch.slice(0, -1).forEach(([x, y], i) => {
+      const [sx, sy] = toScreen(view, x, y);
+      ctx.beginPath();
+      ctx.arc(sx, sy, i === 0 && design.closing ? 6 : 3.5, 0, 2 * Math.PI);
+      ctx.fillStyle = i === 0 && design.closing ? colors.focus : colors.surface;
+      ctx.fill();
+      ctx.strokeStyle = colors.focus;
+      ctx.stroke();
+    });
+  }
+}
+
+function arrowTo(ctx: CanvasRenderingContext2D, view: View, color: string, front: number): void {
   const [ox, oy] = toScreen(view, 0, 0);
   const [fx, fy] = toScreen(view, front, 0);
   ctx.beginPath();
@@ -107,10 +190,9 @@ function drawShapePlan(ctx: CanvasRenderingContext2D, view: View, colors: Palett
   ctx.lineTo(fx - 9 * Math.cos(-0.45), fy - 9 * Math.sin(-0.45));
   ctx.moveTo(fx, fy);
   ctx.lineTo(fx - 9 * Math.cos(0.45), fy - 9 * Math.sin(0.45));
-  ctx.strokeStyle = colors.ink2;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.stroke();
-  label(ctx, view, colors, front, 0, "front", "start", 8, 4);
 }
 
 /** A light inch grid (heavier every 6 in) and the robot's axes through its origin. */

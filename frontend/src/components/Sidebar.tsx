@@ -53,6 +53,7 @@ export function Sidebar(props: {
   picked: string[] | null; // what that page has picked (null: the run form's picks show)
   onPick: (item: WorkspaceItem) => void;
   onEdit: (item: WorkspaceItem) => void; // open a robot or field config in its editor
+  onNewRobot: () => void;
   onRefresh: () => void;
   loading: boolean;
   shownLog: string | null; // the telemetry log being played back
@@ -90,6 +91,16 @@ export function Sidebar(props: {
           {workspace && workspace.items.length === 0 && (
             <p className="muted pad">No robot configs, programs or PROS projects in this folder yet.</p>
           )}
+          {workspace && !workspace.items.some((item) => item.kind === "robot") && (
+            <section className="group">
+              <h2>
+                Robots{" "}
+                <button type="button" className="ghost small group-action" onClick={props.onNewRobot} data-testid="new-robot">
+                  New…
+                </button>
+              </h2>
+            </section>
+          )}
           {GROUPS.map((group) => {
             const items = workspace?.items.filter((item) => group.kinds.includes(item.kind)) ?? [];
             if (!items.length) return null;
@@ -99,6 +110,11 @@ export function Sidebar(props: {
               <section key={group.title} className="group">
                 <h2>
                   {group.title} <span className="count">{items.length}</span>
+                  {group.kinds[0] === "robot" && (
+                    <button type="button" className="ghost small group-action" onClick={props.onNewRobot} title="Make a robot: draw it, pick its drive and sensors" data-testid="new-robot">
+                      New…
+                    </button>
+                  )}
                 </h2>
                 <ul>
                   {items.map((item) => {

@@ -191,7 +191,7 @@ The simulator always knows where the robot really is (the **true pose**, drawn s
 ---
 
 ## 4. Describing a robot
-A robot is a YAML file. Copy `examples/robots/full_omni_6m.yaml`; its comments explain every field. Here is every section:
+A robot is a YAML file. Copy `examples/robots/full_omni_6m.yaml`; its comments explain every field. Or let the browser app write it: its *New robot…* draws the robot and fills in its drive, mechanisms and sensors with forms ([section 7](#7-the-browser-app-vexsim-ui)). Here is every section:
 
 ```yaml
 version: 1
@@ -528,6 +528,30 @@ A robot that localizes with Monte Carlo localization can log every update to its
 - **Dragging** a part moves it, in 1/8 in steps on a robot and 1/2 in steps on a field (hold Shift for 0.01 in and 0.1 in); the round handle of a selected sensor, wheel or rectangular obstacle turns it, in 15° steps (Shift: 1°). The arrow keys move the selected part a step, and `[` and `]` turn it. The numbers show beside the pointer as you drag.
 - **Only the numbers you change are rewritten.** A drop rewrites just those numbers in the text, in place: every comment, blank line, alignment and key order stays as it was, and a coordinate you didn't move keeps its exact value (dragging `4.656207, 5.6937585` along x leaves `5.6937585` alone). A key the file doesn't have yet, such as a sensor's `heading_deg`, is added in the mapping's own style. A value that comes from a YAML anchor or alias can only be changed in the text. Ctrl+Z undoes a drag like any edit, from the text or the diagram.
 - **Saving:** nothing is written until *Save* (Ctrl+S). A tab with unsaved changes has a dot, and closing it (or the page) asks first. Saving keeps the file's line endings. If the file changed on disk since you opened it, the app says so and lets you keep yours or load the file's. The workspace list and the field view pick the change up at once.
+
+**Making a robot: *New robot…* and the Design view**
+
+![A robot made with New robot…: a clamp's two jaws drawn mirrored at its front, a round bumper behind, an intake ramp on its left, on a six-motor tank drive with an IMU and a distance sensor; one jaw selected, its numbers in the panel](docs/img/ui_design.png)
+
+*New…*, beside *Robots* in the workspace list (or *New robot…* at the end of the run bar's robot list), makes a robot config. Give it a name and say what it starts from: a 15 × 15 in rectangle on a 4- or 6-motor tank drive, an X-drive, a mecanum drive or an H-drive, or a copy of one of your robots. Its file goes beside your other robots (never over a file). It opens in its editor's **Design view**, and the next run uses it. Any robot's editor switches between *Design* and *YAML* in its bar.
+- **Drawing its shape:** the tools over the diagram draw the robot as seen from above. *Rectangle*: drag from corner to corner. *Circle*: drag from its center out. *Outline*: click its corners, then click the first one again (or press Enter, or double-click) to close it; Backspace takes the last point back, Escape stops. Where parts overlap they merge, and the robot's edge is what touches walls, field elements and pieces ([section 4](#a-robot-that-isnt-a-rectangle-shape)). *Snap* sets what drawing snaps to (⅛ to 1 in), and *Mirror* draws each new part with its mirror image across the robot's center line. With *Select*, click a part to select it: drag it to move it, or drag its square handles to reshape it (a rectangle's corners, a circle's rim, an outline's points). The arrow keys nudge it a snap step and Delete takes it away. The panel shows its exact numbers to type over, with *Mirror copy* and *Delete*. A robot with a `footprint_in` becomes a `shape` at its first change.
+- **Its parts:** the panel beside the diagram has a form for each part of the config:
+  - its name;
+  - the body: mass, inertia and center of gravity;
+  - the drive: its type, and every wheel's name, place, heading, type and diameter;
+  - the motor groups: their ports (a negative port runs reversed), cartridge, gear ratio and the wheels each turns, with the wheel speed that gives. A tank drive's groups are `left` and `right`; an H-drive adds strafe groups.
+  - the mechanisms;
+  - the sensors: each one's port and the fields its type has.
+
+  *Start over with a preset drive* replaces the robot's drive with one of the five. The wheels go on the robot's biggest part (its base, not an intake sticking out) and are drawn in until each is on the robot; the motors take ports the mechanisms and sensors don't use. *Add* puts a sensor on the first free port: an IMU near the middle, a tracking wheel, a distance sensor at the front looking ahead, or a GPS. Wheels, sensors and the center of gravity drag on the diagram as in the YAML view, and a part selected on the diagram is the one in view in the panel.
+- **Ports:** a map of the 21 smart ports and what's on each; two things on one port are marked red (`validate-config` calls that an error).
+- **It all goes into the YAML,** in place, as a drag's numbers do:
+  - a value is changed where it's written;
+  - a new list item copies its neighbours' style: a flow `{...}` among flow items, a block among blocks;
+  - a key is renamed where it is;
+  - an empty `[]` or `{}` opens into a list or mapping, its comment staying where it was.
+
+  So every comment and blank line stays. A change that would leave the YAML unreadable (a motor on port 30, say) isn't made, and the bar above the editor says why. One that reads but is wrong (two things on a port) is made, and listed under the diagram as in the YAML view. *Undo* and *Redo* (Ctrl+Z and Ctrl+Shift+Z on the diagram) step through every change, and *YAML* shows the text, which shares their undo history. Nothing is written to the file until *Save*.
 
 The tabs along the top hold a page for each of the other commands: *Sweeps*, *Bench*, *Calibrate*, *Analyze* and *Build*.
 
@@ -1279,13 +1303,15 @@ vexsim/
 | `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
 | `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay, what the robot code draws, when a replay began following its log, and the console. |
 | `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape with the robot code's drawings, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape, and `mcl_tape` an MCL log into one to play beside a run. |
+| `yamledit.py` | The Design view's changes to a config's text: a `Change` sets a value of any kind (a missing key is added), adds a list item, removes an item or a key with its lines, or renames a key, each written in place in its neighbours' style with every comment kept. `apply` makes them, and the diagram's numbers (`configs.Edit`), in order. |
+| `newrobot.py` | New robots: `robot_text` writes the commented template (a rectangle on a drive preset), `create` writes it (or a copy of a robot) where no file is, and `preset_changes` puts a preset's drive on a robot: on its base, inside its shape, its motors on free ports. |
 | `configs.py` | Robot and field configs for the editors: `check_text` validates YAML text as `validate-config` does and places each issue at its line and column; `patch_text` rewrites numbers in place (or adds a missing key in its mapping's style) using PyYAML's node positions, and refuses values that come through anchors, aliases or merges; `set_overrides` writes a calibration's fitted values under `overrides` the same way; `read_config` and `write_config` keep a file's line endings and byte order mark. |
 | `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels and their forces, the controller, sensors, motors, mechanisms, pieces, screens, the period's time left) and the active motion's path and target. `preview_of` gives the robot and field before any run, to drag the robot to its start. |
 
 ### `ui/`: the browser app
 | Module | What it does |
 |---|---|
-| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs), config editing (open, check, patch, save, with a check for changes made on disk), jobs of every kind with their progress, the results they keep (and their files: a benchmark's report is served sandboxed), saved sweeps, scenarios and the calibration routine over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
+| `server.py` | The FastAPI app behind `vexsim ui`: the workspace, previews, saved runs, live runs, the run history (tapes, telemetry, CSV, replays of logs), config editing (open, check, patch, save, with a check for changes made on disk; new robots and drive presets), jobs of every kind with their progress, the results they keep (and their files: a benchmark's report is served sandboxed), saved sweeps, scenarios and the calibration routine over HTTP, each run's messages over a WebSocket, and the page. `Guard` checks every request's key, Host and Origin. `serve` listens on 127.0.0.1 and prints the link. |
 | `protocol.py` | Every message and request as a pydantic model. `python -m vexsim.ui.protocol frontend/src/protocol.ts` writes them as TypeScript for the page; a test fails while that file is stale. |
 | `window.py` | `vexsim ui --window`: `find_browser` finds a browser with an app mode (or `$VEXSIM_BROWSER`), `open_window` opens the app in it on a profile of its own, else in the default browser. The server knows the app's pages by a WebSocket each holds open (`/api/presence`), and `serve(stop_when_closed=True)` stops once the last one has closed. |
 | `shortcut.py` | `vexsim shortcut`: a `Shortcut` runs `vexsim ui FOLDER --window` with this Python; `make` and `remove` put it in, or take it out of, the Start menu and desktop (a `.lnk`, made through the Windows shell), the applications menu (a desktop entry) or `~/Applications` (an app). |

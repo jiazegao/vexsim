@@ -18,7 +18,7 @@ import typing
 from pathlib import Path
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from vexsim.app.launch import RunConfiguration
 from vexsim.app.runs import PoseErrorSummary, RunRecord
@@ -584,10 +584,24 @@ class ConfigCheckRequest(_Message):
 
 
 class ConfigEdit(_Message):
-    """Write `value` where `location` is: one number, or a list of them (`pos_in`)."""
+    """Write `value` where `location` is: one number, or a list of them (`pos_in`), as a drag
+    on the diagram does. With an `op` (the Design view's forms and tools): `set` any value
+    there (a word, a number, a list, a mapping; a missing key is added), `add` it to the end
+    of the list there, `remove` the item or key there, or `rename` the key there to `value`."""
 
     location: str
-    value: float | list[float]
+    value: Any = None
+    op: Literal["set", "add", "remove", "rename"] | None = None
+
+    @model_validator(mode="after")
+    def _numbers(self) -> ConfigEdit:
+        if self.op is None:
+            numbers = self.value if isinstance(self.value, list) else [self.value]
+            if not numbers or not all(
+                isinstance(v, int | float) and not isinstance(v, bool) for v in numbers
+            ):
+                raise ValueError("a drag writes a number, or a list of numbers")
+        return self
 
 
 class ConfigPatchRequest(_Message):
@@ -614,6 +628,29 @@ class ConfigSave(_Message):
 
 class ConfigSaved(_Message):
     version: str
+
+
+class NewRobotRequest(_Message):
+    """Make a robot config at `path` (in the workspace; never over a file): a rectangle to
+    draw over on a `preset` drivetrain (tank4, tank6, xdrive, mecanum, hdrive), or a copy
+    of the robot at `source`, named `name`."""
+
+    path: str
+    name: str
+    preset: str = "tank4"
+    source: str | None = None
+
+
+class NewRobot(_Message):
+    path: str  # in the workspace
+
+
+class ConfigDriveRequest(_Message):
+    """Put a drivetrain preset on a robot config's text: its wheels in the robot's box, its
+    motors on free ports. The answer is a ConfigPatched."""
+
+    text: str
+    preset: str
 
 
 # --- results of the long jobs (analysis, benchmarks, sweeps, calibration) -----------------
@@ -1064,6 +1101,9 @@ MODELS: list[type[BaseModel]] = [
     ConfigPatched,
     ConfigSave,
     ConfigSaved,
+    NewRobotRequest,
+    NewRobot,
+    ConfigDriveRequest,
     MotorCurve,
     MotorCurves,
     DriftRun,

@@ -709,10 +709,11 @@ export interface ConfigCheckRequest {
   text: string;
 }
 
-/** Write `value` where `location` is: one number, or a list of them (`pos_in`). */
+/** Write `value` where `location` is: one number, or a list of them (`pos_in`), as a drag on the diagram does. With an `op` (the Design view's forms and tools): `set` any value there (a word, a number, a list, a mapping; a missing key is added), `add` it to the end of the list there, `remove` the item or key there, or `rename` the key there to `value`. */
 export interface ConfigEdit {
   location: string;
-  value: number | number[];
+  value?: unknown;
+  op?: "set" | "add" | "remove" | "rename" | null;
 }
 
 export interface ConfigPatchRequest {
@@ -736,6 +737,24 @@ export interface ConfigSave {
 
 export interface ConfigSaved {
   version: string;
+}
+
+/** Make a robot config at `path` (in the workspace; never over a file): a rectangle to draw over on a `preset` drivetrain (tank4, tank6, xdrive, mecanum, hdrive), or a copy of the robot at `source`, named `name`. */
+export interface NewRobotRequest {
+  path: string;
+  name: string;
+  preset?: string;
+  source?: string | null;
+}
+
+export interface NewRobot {
+  path: string;
+}
+
+/** Put a drivetrain preset on a robot config's text: its wheels in the robot's box, its motors on free ports. The answer is a ConfigPatched. */
+export interface ConfigDriveRequest {
+  text: string;
+  preset: string;
 }
 
 export interface MotorCurve {
