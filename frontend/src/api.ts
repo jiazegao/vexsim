@@ -13,7 +13,10 @@ import type {
   ConfigPatched,
   NewRobot,
   NewRobotRequest,
+  NewRoute,
+  NewRouteRequest,
   JobInfo,
+  MirroredRoute,
   MclLogTape,
   ProjectRoutines,
   Preview,
@@ -21,6 +24,10 @@ import type {
   ResultAbout,
   ResultKind,
   RoutinePlan,
+  RouteCheck,
+  RouteEdit,
+  RouteFile,
+  RoutePatched,
   RunConfiguration,
   RunConfigurations,
   RunDetails,
@@ -174,6 +181,14 @@ export const api = {
     request<ConfigPatched>("/api/config/drive", { method: "POST", body: JSON.stringify({ text, preset }) }),
   /** A new robot config in the workspace: on a drive preset, or a copy of `source`. */
   newRobot: (robot: NewRobotRequest) => request<NewRobot>("/api/config/new", { method: "POST", body: JSON.stringify(robot) }),
+  /** A route to edit (in a PROS project's routes/ folder), checked. */
+  route: (path: string) => request<RouteFile>(`/api/route?path=${encodeURIComponent(path)}`),
+  checkRoute: (path: string, text: string) => request<RouteCheck>("/api/route/check", post({ path, text })),
+  patchRoute: (path: string, text: string, edits: RouteEdit[]) => request<RoutePatched>("/api/route/patch", post({ path, text, edits })),
+  /** A new route in a project's routes/ folder, with no steps: its path. */
+  newRoute: (route: NewRouteRequest) => request<NewRoute>("/api/routes/new", post(route)),
+  /** A mirrored copy of a route beside it (across x = 0 or y = 0): its path, and what it couldn't mirror. */
+  mirrorRoute: (path: string, text: string, axis: "x" | "y") => request<MirroredRoute>("/api/routes/mirror", post({ path, text, axis })),
   duplicateFile: (path: string) => request<WorkspaceFile>("/api/files/duplicate", { method: "POST", body: JSON.stringify({ path }) }),
   deleteFile: (path: string) => request<void>(`/api/files?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
 

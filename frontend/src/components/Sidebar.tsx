@@ -53,10 +53,10 @@ function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null, mclL
 
 type Tab = "workspace" | "runs";
 
-const CONFIGS: readonly ItemKind[] = ["robot", "field", "invalid"]; // edited in the app
+const CONFIGS: readonly ItemKind[] = ["robot", "field", "invalid", "route"]; // edited in the app
 
-/** What an item's menu offers: Edit (a config in its editor here, any other file in your
- * editor), Duplicate and Delete (files, not a project's folder). */
+/** What an item's menu offers: Edit (a config in its editor here, a route in the autonomous
+ * maker, any other file in your editor), Duplicate and Delete (files, not a project's folder). */
 function itemActions(item: WorkspaceItem, root: string, editor: Editor, unsaved: boolean, act: {
   edit: () => void;
   duplicate: () => Promise<void>;
@@ -64,7 +64,9 @@ function itemActions(item: WorkspaceItem, root: string, editor: Editor, unsaved:
 }): MenuAction[] {
   const folder = item.kind === "project" ? "A PROS project is a folder: copy or delete it with your file manager" : null;
   let edit: MenuAction;
-  if (CONFIGS.includes(item.kind)) {
+  if (item.kind === "route") {
+    edit = { label: "Edit", testid: `edit-${item.path}`, title: "Open it in the autonomous maker: its steps beside its field, each step's end drawn", run: act.edit };
+  } else if (CONFIGS.includes(item.kind)) {
     edit = { label: "Edit", testid: `edit-${item.path}`, title: "Open it in its editor: its YAML beside a diagram you can drag", run: act.edit };
   } else {
     // a project opens at its src/main.cpp
@@ -98,12 +100,13 @@ export function Sidebar(props: {
   page: string; // the page on show: some take what's clicked themselves
   picked: string[] | null; // what that page has picked (null: the run form's picks show)
   onPick: (item: WorkspaceItem) => void;
-  onEdit: (item: WorkspaceItem) => void; // open a robot or field config in its editor
+  onEdit: (item: WorkspaceItem) => void; // open a robot or field config in its editor, a route in the maker
   onDuplicate: (item: WorkspaceItem) => Promise<string>; // a copy beside it: its path
   onDelete: (item: WorkspaceItem) => Promise<void>;
   unsaved: Record<string, boolean>; // configs with changes not saved, in their editors
   editor: Editor; // where files that aren't configs are edited
   onNewRobot: () => void;
+  onNewRoute: () => void;
   onRefresh: () => void;
   loading: boolean;
   shownLog: string | null; // the telemetry log being played back
@@ -113,6 +116,7 @@ export function Sidebar(props: {
   onRunsTab: () => void; // the Runs tab was opened: time to look for new runs
 }) {
   const { workspace, form, onPick } = props;
+  const projects = !!workspace?.items.some((item) => item.kind === "project");
   const [tab, setTab] = useState<Tab>("workspace");
   const [menu, setMenu] = useState<{ item: WorkspaceItem; at: { x: number; y: number }; id: number } | null>(null);
   const [fresh, setFresh] = useState<string | null>(null); // just made: shown, and lit up a moment
@@ -174,14 +178,20 @@ export function Sidebar(props: {
           )}
           {GROUPS.map((group) => {
             const items = workspace?.items.filter((item) => group.kinds.includes(item.kind)) ?? [];
-            if (!items.length) return null;
+            const routes = group.kinds[0] === "route" && projects; // routes can be made, in the projects
+            if (!items.length && !routes) return null;
             const hint = PAGE_HINTS[props.page]?.[group.kinds[0]] ?? group.hint;
             return (
               <section key={group.title} className="group">
                 <h2>
-                  {group.title} <span className="count">{items.length}</span>
+                  {group.title} {items.length > 0 && <span className="count">{items.length}</span>}
                   {group.kinds[0] === "robot" && (
                     <button type="button" className="ghost small group-action" onClick={props.onNewRobot} title="Make a robot: draw it, pick its drive and sensors" data-testid="new-robot">
+                      New…
+                    </button>
+                  )}
+                  {routes && (
+                    <button type="button" className="ghost small group-action" onClick={props.onNewRoute} title="Make an autonomous route for a PROS project: its motions, pauses and the team's functions, each step's end drawn on the field" data-testid="new-route">
                       New…
                     </button>
                   )}

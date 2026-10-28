@@ -1,7 +1,9 @@
 """Autonomous routes (phase 13.1): route files read and checked (vexsim/app/routes.py), the
 team's functions read from a project's headers (bridge/functions.py), and the runner a route
 build adds to the project (bridge/runner.py), which runs a route in the project's own
-autonomous() and says where each step ended. The runs build PROS projects that use LemLib,
+autonomous() and says where each step ended. And the autonomous maker's side of the server
+(13.2): the comments that say how the team's functions move the robot, mirrored routes, and
+routes opened, checked and changed in place. The runs build PROS projects that use LemLib,
 so they need g++ and LemLib's source."""
 
 from __future__ import annotations
@@ -19,13 +21,14 @@ from vexsim.app.routes import (
     check_text,
     label,
     load_route,
+    mirror_text,
     read_route,
     run_route,
     runner_input,
 )
 from vexsim.app.runspec import RunError, RunSpec, check
 from vexsim.app.workspace import Workspace
-from vexsim.bridge.functions import find_functions
+from vexsim.bridge.functions import Hint, find_functions
 from vexsim.bridge.runner import Chassis, RouteRecord, find_chassis, runner_source
 from vexsim.cli import build_parser, main
 
@@ -153,6 +156,8 @@ def test_1239es_own_functions_are_steps():
     )
     assert found.named("startFrontIntake").params[0].literal() == 127
     assert found.why_not("setEffector") == "is overloaded"  # by EFFECTOR_STAGES and float
+    assert found.named("moveForward").hint == Hint("drive", ("inches",))  # its vexsim: comment
+    assert found.named("moveBackward").hint is None
     assert found.enums["EFFECTOR_STAGES"].values[:2] == ("IDLE_ANGLE", "LOW_ANGLE")
 
 
@@ -366,6 +371,202 @@ def test_the_runners_lines_say_where_each_step_ended():
     assert cut.done and cut.error == "step 3 (call): takes 2 argument(s)"
 
 
+# --- the autonomous maker (13.2) ------------------------------------------------------------------
+
+MOVES = """\
+#pragma once
+// Turns in place, clockwise.
+// vexsim: turn_by(degrees)
+void turnBy(float degrees, int timeout = 800);
+// vexsim: point(x, y)
+void goPoint(float x, float y);
+// vexsim: arc(18, degrees)
+void sweep(float degrees);
+// vexsim: drive(inches)
+void ahead(float inches);
+// vexsim: turn_by(90)
+void quarter();
+// vexsim: none
+void clamp(bool closed = true);
+// vexsim: drive(timeout2)
+void notAParameter(int timeout);
+// vexsim: drive(closed)
+void notANumber(bool closed);
+// vexsim: fly(up)
+void notAMotion(float up);
+// vexsim: turn_by(a, b)
+void tooMany(float a, float b);
+
+void unsaid(float inches);
+"""
+
+
+def test_a_comment_above_a_function_says_how_it_moves_the_robot(tmp_path):
+    project = team_project(tmp_path)
+    (project / "include" / "moves.hpp").write_text(MOVES)
+    found = {f.name: f for f in find_functions(project, ["include/moves.hpp"]).functions}
+    assert {name: f.hint for name, f in found.items() if f.hint} == {
+        "turnBy": Hint("turn_by", ("degrees",)),  # past the comment above it
+        "goPoint": Hint("point", ("x", "y")),
+        "sweep": Hint("arc", (18.0, "degrees")),  # a number, or a number parameter
+        "ahead": Hint("drive", ("inches",)),
+        "quarter": Hint("turn_by", (90.0,)),
+        "clamp": Hint("none"),
+    }
+    numbers = "isn't a number, or one of {}()'s number parameters"
+    assert {name: f.hint_problem for name, f in found.items() if f.hint_problem} == {
+        "notAParameter": "vexsim: timeout2 " + numbers.format("notAParameter"),
+        "notANumber": "vexsim: closed " + numbers.format("notANumber"),
+        "notAMotion": "vexsim: fly(up) isn't one of drive(inches), turn_by(degrees), "
+        "arc(radius, degrees), point(x, y), pose(x, y, theta), none",
+        "tooMany": "vexsim: turn_by takes 1 argument(s): degrees",
+    }
+    assert found["unsaid"].hint is None and found["unsaid"].hint_problem is None
+
+
+def test_a_route_is_mirrored_for_the_other_side_of_the_field(tmp_path):
+    project = team_project(tmp_path)
+    (project / "include" / "moves.hpp").write_text(MOVES)
+    text = (
+        "# for the left side\n"
+        "version: 1\nname: Left side\nrobot: ../../robot.yaml\n"
+        "start: [-48, -24, 30]   # setPose\n"
+        "functions: [include/moves.hpp, include/team.hpp]\n"
+        "steps:\n"
+        "  - {move_to_point: [-24, -24], timeout: 1000}   # the first\n"
+        "  - {turn_to_heading: 90, timeout: 800, direction: cw}\n"
+        "  - {swing_to_point: [0, 6], locked_side: left, timeout: 900}\n"
+        "  - {move_to_pose: [-10, 20, 45], timeout: 2000}\n"
+        "  - {call: turnBy, args: {degrees: 30}}\n"
+        "  - {call: goPoint, args: {x: -5, y: 7}}\n"
+        "  - {call: sweep, args: {degrees: -45}}\n"
+        "  - {call: ahead, args: {inches: 12}}\n"
+        "  - {call: startIntake}\n"
+        "  - {call: quarter}\n"
+    )
+    route = route_file(project, text)
+    across_x, notes = mirror_text(text, route, "x")  # x becomes -x
+    assert across_x == (
+        "# for the left side\n"
+        "version: 1\nname: Left side (mirrored)\nrobot: ../../robot.yaml\n"
+        "start: [48, -24, 330]   # setPose\n"
+        "functions: [include/moves.hpp, include/team.hpp]\n"
+        "steps:\n"
+        "  - {move_to_point: [24, -24], timeout: 1000}   # the first\n"
+        "  - {turn_to_heading: 270, timeout: 800, direction: ccw}\n"  # the other way round
+        "  - {swing_to_point: [0, 6], locked_side: right, timeout: 900}\n"
+        "  - {move_to_pose: [10, 20, 315], timeout: 2000}\n"
+        "  - {call: turnBy, args: {degrees: -30}}\n"  # as their vexsim: comments say
+        "  - {call: goPoint, args: {x: 5, y: 7}}\n"
+        "  - {call: sweep, args: {degrees: 45}}\n"
+        "  - {call: ahead, args: {inches: 12}}\n"
+        "  - {call: startIntake}\n"
+        "  - {call: quarter}\n"
+    )
+    assert notes == [
+        "step 9: startIntake() is as it was: nothing says how it moves the robot (a // vexsim: "
+        "comment above it would)",
+        "step 10: quarter() turns by a fixed angle, so its mirror image is another function: "
+        "change that step by hand",
+    ]
+    across_y, _ = mirror_text(text, route, "y")  # y becomes -y
+    assert "start: [-48, 24, 150]   # setPose" in across_y
+    assert "  - {move_to_pose: [-10, -20, 135], timeout: 2000}\n" in across_y
+    assert "  - {call: goPoint, args: {x: -5, y: -7}}\n" in across_y
+    with pytest.raises(ValueError, match="the route doesn't read"):
+        mirror_text("steps: [", route, "x")
+
+
+def test_the_server_opens_checks_and_changes_a_route_in_place(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from tests.test_pages import TOKEN
+    from vexsim.ui.server import create_app
+
+    project = team_project(tmp_path)
+    text = HEAD + "  - {move_to_point: [-24, -24], timeout: 1000}   # the first\n  - {wait: 100}\n"
+    route_file(project, text)
+    path = "project/routes/test.yaml"
+    app = create_app(
+        tmp_path, token=TOKEN, port=8642, hosts={"testserver"}, origins={"http://testserver"}
+    )
+    with TestClient(app) as client:
+        client.headers["authorization"] = f"Bearer {TOKEN}"
+        opened = client.get("/api/route", params={"path": path}).json()
+        assert opened["text"] == text and opened["version"]
+        checked = opened["check"]
+        assert checked["issues"] == [] and checked["route"]["start"] == [-48, -24, 0]
+        assert [s["label"] for s in checked["route"]["steps"]] == [
+            "move_to_point (-24, -24)", "wait 100 ms",
+        ]  # fmt: skip
+        assert checked["places"]["steps[1]"]["line"] == 9  # to show a step in the YAML
+        assert (checked["project"], checked["robot_path"], checked["field_path"]) == (
+            "project", "robot.yaml", "field.yaml",
+        )  # fmt: skip
+        assert checked["headers"] == ["include/modes.hpp", "include/team.hpp"]
+        assert "drive" in [f["name"] for f in checked["functions"]]
+        assert checked["preview"]["field"]["size"] == [144, 144] and checked["track"] == 10
+        # half typed: what reads is still there to draw, the rest is marked
+        typing = text.replace("{wait: 100}", "{wait: }")
+        partial = client.post("/api/route/check", json={"path": path, "text": typing}).json()
+        assert [(i["location"], i["message"]) for i in partial["issues"]] == [
+            ("steps[1].wait", "must be a whole number"),
+        ]  # fmt: skip
+        assert [s["kind"] for s in partial["route"]["steps"]] == ["move_to_point", "invalid"]
+
+        # a step put in, one moved, a number set: in place, the comments kept
+        edits = [
+            {
+                "op": "insert",
+                "location": "steps[1]",
+                "value": {"turn_to_heading": 90, "timeout": 800},
+            },
+            {"op": "move", "location": "steps[2]", "value": 0},
+            {"op": "set", "location": "steps[1].move_to_point[1]", "value": -12},
+        ]
+        patched = client.post("/api/route/patch", json={"path": path, "text": text, "edits": edits})
+        assert patched.json()["text"] == HEAD + (
+            "  - {wait: 100}\n"
+            "  - {move_to_point: [-24, -12], timeout: 1000}   # the first\n"
+            "  - {turn_to_heading: 90, timeout: 800}\n"
+        )
+        assert [s["kind"] for s in patched.json()["check"]["route"]["steps"]] == [
+            "wait", "move_to_point", "turn_to_heading",
+        ]  # fmt: skip
+        moved = [{"op": "move", "location": "steps[0]", "value": 5}]
+        refused = client.post("/api/route/patch", json={"path": path, "text": text, "edits": moved})
+        assert refused.status_code == 422
+        assert refused.json()["detail"] == "steps[0] can only move to a place in its list (0 to 1)"
+        robot = client.get("/api/route", params={"path": "robot.yaml"})
+        assert robot.status_code == 400
+        assert robot.json()["detail"] == "robot.yaml isn't in a PROS project's routes/ folder"
+
+        # New route…: in the project's routes/, never over a file, its start as LemLib's
+        new = {"project": "project", "name": "Test route", "robot": "robot.yaml",
+               "field": "field.yaml", "start": [-48, -24, 0]}  # fmt: skip
+        made = [client.post("/api/routes/new", json=new).json()["path"] for _ in range(2)]
+        assert made == ["project/routes/test_route.yaml", "project/routes/test_route_2.yaml"]
+        written = (tmp_path / made[0]).read_text()
+        assert "robot: ../../robot.yaml   # relative to this file\n" in written
+        assert "start: [-48, -24, 90]   # chassis.setPose(x, y, theta)\n" in written  # facing +x
+        assert written.endswith("steps: []\n") and load_route(tmp_path / made[0]).ok
+        nowhere = client.post("/api/routes/new", json={"project": "nowhere", "name": "x"})
+        assert (
+            nowhere.status_code == 422
+            and nowhere.json()["detail"] == "nowhere isn't a PROS project"
+        )
+
+        # mirrored: a copy beside it
+        mirror = {"path": path, "text": text, "axis": "x"}
+        mirrored = client.post("/api/routes/mirror", json=mirror).json()
+        assert mirrored == {"path": "project/routes/test_mirrored.yaml", "notes": []}
+        copy = (tmp_path / mirrored["path"]).read_text()
+        assert "name: Test route (mirrored)\n" in copy and "start: [48, -24, 0]\n" in copy
+        again = client.post("/api/routes/mirror", json=mirror).json()
+        assert again["path"] == "project/routes/test_mirrored_2.yaml"
+
+
 # --- where routes show up -------------------------------------------------------------------------
 
 
@@ -528,5 +729,13 @@ def test_the_server_lists_a_projects_routes_and_runs_one(route_build, in_cache):
         assert job["state"] == "succeeded", job
         run = RouteRun.model_validate(job["result"])
         assert run.finished and run.steps[0].label.startswith("moveForward(")
+        times = [t for t, _, _, _ in run.path]  # where it drove, every 20 ms
+        assert 0 <= times[0] < 0.02 and times[1] - times[0] == pytest.approx(0.02)
+        assert times[-1] == pytest.approx(run.ended_s, abs=0.02)  # until the last step ended
+        # the editor's text, not saved: run as the file would be
+        text = LEFT_START.read_text().replace("{inches: -10,", "{inches: -20,")
+        route = {"kind": "route", "route": f"{project}/routes/left_start.yaml", "text": text}
+        edited = RouteRun.model_validate(finished(client, route)["result"])
+        assert edited.steps[0].pose[0] == pytest.approx(40, abs=1)  # 20 in back this time
         missing = client.post("/api/jobs", json={"kind": "route", "route": "nowhere.yaml"})
         assert missing.status_code == 422

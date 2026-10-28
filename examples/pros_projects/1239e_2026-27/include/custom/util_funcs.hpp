@@ -4,6 +4,7 @@
 #include "liblvgl/lvgl.h"
 
 // Pneumatics functions
+// vexsim: drive(inches)
 void moveForward(float inches, int timeout, float maxSpeed=127, float minSpeed=1, bool async=true);
 void moveBackward(float inches, int timeout, float maxSpeed, float minSpeed,  bool async);
 void jiggle(int repeats, int time, float forward=8.0, float backward=1.5);

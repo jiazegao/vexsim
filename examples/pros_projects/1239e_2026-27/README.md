@@ -14,6 +14,8 @@ Four more, also under `#ifdef VEXSIM`, let the simulated robot write MCL logs, r
 - `src/main.cpp`: `VEXSIM_BRAKE=hold` (or `brake`) sets the drive's brake mode in `opcontrol()`, which is otherwise coast.
 - `src/custom/MclTracking.cpp`: each update draws what MCL sees on the simulator's field (`vexsim::draw_*`): every sensor's ray to its reading, every 16th particle, and the particles' 2-sigma spread, in the layers the app draws a real MCL log in.
 
+And one comment for the autonomous maker: `include/custom/util_funcs.hpp` says above `moveForward` how it moves the robot (`// vexsim: drive(inches)`), so the maker can draw where a route's `moveForward` steps end. `routes/left_start.yaml` is the start of `left40()` as a route ([README, section 9](../../../README.md#autonomous-routes)).
+
 Left out: `firmware/`, the PROS and LVGL headers (`include/api.h`, `include/pros/`, `include/liblvgl/`) and LemLib's `include/fmt/`, which vexsim supplies. `include/lemlib/` is the team's copy, with their edit to `pid.hpp`.
 
 ```

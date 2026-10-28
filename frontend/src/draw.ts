@@ -149,7 +149,7 @@ export function drawField(ctx: CanvasRenderingContext2D, view: View, colors: Pal
   ctx.fillText("y", ox - 3, oy - length - 5);
 }
 
-function drawElements(ctx: CanvasRenderingContext2D, view: View, colors: Palette, scene: Shape, pieces: [number, number][]): void {
+export function drawElements(ctx: CanvasRenderingContext2D, view: View, colors: Palette, scene: Shape, pieces: [number, number][]): void {
   for (const element of scene.field.obstacles) {
     const color = element.color ?? colors.obstacle;
     ctx.beginPath();
@@ -313,7 +313,7 @@ export function drawShapes(ctx: CanvasRenderingContext2D, view: View, colors: Pa
 }
 
 /** Robot frame (x forward, y left) to field frame, for a robot at `pose`. */
-function place(pose: readonly [number, number, number], x: number, y: number): [number, number] {
+export function place(pose: readonly [number, number, number], x: number, y: number): [number, number] {
   const c = Math.cos(pose[2] * DEG);
   const s = Math.sin(pose[2] * DEG);
   return [pose[0] + c * x - s * y, pose[1] + s * x + c * y];
@@ -350,7 +350,7 @@ function drawBeams(ctx: CanvasRenderingContext2D, view: View, colors: Palette, r
 }
 
 /** Traces the robot's edge at `pose` (its footprint, or its shape's loops) as the path. */
-function traceBody(ctx: CanvasRenderingContext2D, view: View, robot: RobotScene, pose: readonly [number, number, number]): void {
+export function traceBody(ctx: CanvasRenderingContext2D, view: View, robot: RobotScene, pose: readonly [number, number, number]): void {
   const outline = outlineOf(robot);
   const loops = outline ? outline.map((loop) => loop.map(([x, y]) => toScreen(view, ...place(pose, x, y)))) : [footprint(robot, pose, view)];
   ctx.beginPath();
@@ -362,7 +362,7 @@ function traceBody(ctx: CanvasRenderingContext2D, view: View, robot: RobotScene,
 
 /** Marks where the robot faces: its footprint's front edge, thicker, or on a shape (which
  * has no one front edge), an arrow from its origin to its front. */
-function markFront(ctx: CanvasRenderingContext2D, view: View, robot: RobotScene, pose: readonly [number, number, number], width: number): void {
+export function markFront(ctx: CanvasRenderingContext2D, view: View, robot: RobotScene, pose: readonly [number, number, number], width: number): void {
   if (outlineOf(robot)) {
     const [cx, cy] = toScreen(view, pose[0], pose[1]);
     const [fx, fy] = toScreen(view, ...place(pose, frontOf(robot), 0));
@@ -573,7 +573,7 @@ function drawGhost(ctx: CanvasRenderingContext2D, view: View, colors: Palette, r
   ctx.stroke();
 }
 
-function dot(ctx: CanvasRenderingContext2D, view: View, x: number, y: number, radiusPx: number, fill: string, ring?: string): void {
+export function dot(ctx: CanvasRenderingContext2D, view: View, x: number, y: number, radiusPx: number, fill: string, ring?: string): void {
   const [sx, sy] = toScreen(view, x, y);
   ctx.beginPath();
   ctx.arc(sx, sy, Math.max(1.5, radiusPx), 0, 2 * Math.PI);
@@ -586,7 +586,7 @@ function dot(ctx: CanvasRenderingContext2D, view: View, x: number, y: number, ra
   }
 }
 
-function arrow(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, head = 6): void {
+export function arrow(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, head = 6): void {
   const angle = Math.atan2(y1 - y0, x1 - x0);
   ctx.beginPath();
   ctx.moveTo(x0, y0);

@@ -966,10 +966,11 @@ def _mirror_call(step: Step, where: str, functions, axis: str, notes: list[str],
 
     fn = functions.named(step.function)
     hint = fn.hint if fn is not None else None
+    number = int(where.removeprefix("steps[").rstrip("]")) + 1
     if hint is None:
         notes.append(
-            f"step {int(where.removeprefix('steps[').rstrip(']')) + 1}: {step.function}() is as "
-            "it was: nothing says how it moves the robot (a // vexsim: comment above it would)"
+            f"step {number}: {step.function}() is as it was: nothing says how it moves the "
+            "robot (a // vexsim: comment above it would)"
         )
         return []
     given = dict(step.args)
@@ -996,8 +997,8 @@ def _mirror_call(step: Step, where: str, functions, axis: str, notes: list[str],
         current = value(arg)
         if current is None:
             notes.append(
-                f"{step.function}() turns by a fixed angle, so its mirror image is another "
-                "function: change that step by hand"
+                f"step {number}: {step.function}() turns by a fixed angle, so its mirror image "
+                "is another function: change that step by hand"
             )  # (its own step stays as it was)
             return []
         put(arg, -current if hint.motion != "pose" else heading(current))
@@ -1005,7 +1006,10 @@ def _mirror_call(step: Step, where: str, functions, axis: str, notes: list[str],
         xs, ys = hint.args[0], hint.args[1]
         px, py = value(xs), value(ys)
         if px is None or py is None:
-            notes.append(f"{step.function}()'s point can't be mirrored: change that step by hand")
+            notes.append(
+                f"step {number}: {step.function}()'s point is fixed, so it can't be mirrored: "
+                "change that step by hand"
+            )
             return []
         mx, my = point(px, py)
         if mx != px:

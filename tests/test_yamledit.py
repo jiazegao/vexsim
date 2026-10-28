@@ -150,6 +150,57 @@ def test_list_items_and_keys_are_removed_with_their_lines():
         apply(ROBOT, [Change("remove", "sensors[1].type")])
 
 
+STEPS = """\
+steps:
+  # back off the wall
+  - {call: moveForward, args: {inches: -10}}   # 10 in
+  - {turn_to_heading: 270, timeout: 800}
+  # the long one
+  - move_to_point: [14, 0]
+    timeout: 1000
+  - wait_until_done
+functions: [a.hpp, b.hpp]   # headers
+"""
+
+
+def test_a_list_item_is_put_in_before_another_and_the_comments_above_it():
+    # (the autonomous maker's steps, phase 13.2)
+    assert diff(STEPS, apply(STEPS, [Change("insert", "steps[2]", {"wait": 100})])) == [
+        "+  - wait: 100",  # above "# the long one", which stays with its step; in its style
+    ]
+    first = apply(STEPS, [Change("insert", "steps[0]", "wait_until_done")])
+    assert first.startswith("steps:\n  - wait_until_done\n  # back off the wall\n")
+    assert diff(STEPS, apply(STEPS, [Change("insert", "steps[4]", {"wait": 5})])) == [
+        "+  - {wait: 5}",  # at the end
+    ]
+    flow = apply(STEPS, [Change("insert", "functions[1]", "x.hpp")])
+    assert "functions: [a.hpp, x.hpp, b.hpp]   # headers\n" in flow
+    made = apply("steps: []\n", [Change("insert", "steps[0]", {"wait": 5})])
+    assert made == "steps:\n  - {wait: 5}\n"
+    with pytest.raises(PatchError, match="past the end of its list"):
+        apply(STEPS, [Change("insert", "steps[5]", {"wait": 5})])
+
+
+def test_a_list_item_moves_with_its_comments():
+    down = apply(STEPS, [Change("move", "steps[0]", 2)])
+    assert down == STEPS.replace(
+        "  # back off the wall\n  - {call: moveForward, args: {inches: -10}}   # 10 in\n", ""
+    ).replace(
+        "  - wait_until_done\n",
+        "  # back off the wall\n  - {call: moveForward, args: {inches: -10}}   # 10 in\n"
+        "  - wait_until_done\n",
+    )
+    assert apply(down, [Change("move", "steps[2]", 0)]) == STEPS  # and back
+    block = apply(STEPS, [Change("move", "steps[2]", 0)])  # a block item, all its lines
+    assert block.startswith(
+        "steps:\n  # the long one\n  - move_to_point: [14, 0]\n    timeout: 1000\n"
+    )
+    flow = apply(STEPS, [Change("move", "functions[0]", 1)])
+    assert "functions: [b.hpp, a.hpp]   # headers\n" in flow
+    with pytest.raises(PatchError, match=r"can only move to a place in its list \(0 to 3\)"):
+        apply(STEPS, [Change("move", "steps[0]", 4)])
+
+
 def test_a_key_is_renamed_where_it_is_written():
     renamed = apply(ROBOT, [Change("rename", "drivetrain.gearing.left", "port_side")])
     assert diff(ROBOT, renamed) == [

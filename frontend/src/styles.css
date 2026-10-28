@@ -2775,3 +2775,147 @@ ol.steps {
     margin-left: 0;
   }
 }
+
+/* --- the autonomous maker: a route's steps beside its field (PLAN.md 13.2) ------------------ */
+
+.route-editor .editor-split {
+  grid-template-columns: minmax(340px, 440px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.route-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.route-step .design-item-head {
+  cursor: pointer;
+  user-select: none;
+}
+
+.step-number {
+  flex: none;
+  min-width: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+}
+
+.route-step.on .step-number {
+  border-color: var(--series-1);
+  background: var(--series-1);
+  color: var(--surface-1);
+}
+
+.step-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-end {
+  flex: none;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.step-end .bad {
+  color: var(--critical);
+}
+
+.route-form {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.route-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.route-add {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.route-headers summary {
+  margin-top: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.route-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0 12px;
+  font-family: var(--mono);
+}
+
+.route-declaration code {
+  font: 12px var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.route-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.route-side .route-field {
+  flex: 1 1 300px;
+}
+
+.route-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.route-tools button.on {
+  background: var(--accent-wash);
+  border-color: var(--series-1);
+  color: var(--series-1);
+  font-weight: 600;
+}
+
+.route-tools .route-mirror {
+  margin-left: auto;
+}
+
+.route-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+.route-tools select {
+  padding: 1px 4px;
+  font-size: 12px;
+}
+
+.route-sim {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.route-editor .editor-state {
+  white-space: nowrap;
+}

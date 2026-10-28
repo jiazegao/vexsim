@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import itertools
 import os
 import platform
@@ -365,7 +366,9 @@ class UIServer:
                 raise ValueError(f"{request.route} doesn't exist")
             params.update(route=ws.relative(route), root=root)
             title = f"Route: {route.name}"
-            return self.jobs.submit(kind, params, title=title, key=f"route:{route}:{request.seed}")
+            text = hashlib.blake2b((request.text or "").encode(), digest_size=8).hexdigest()
+            key = f"route:{route}:{request.seed}:{request.noise}:{text}"  # the same run, joined
+            return self.jobs.submit(kind, params, title=title, key=key)
         raise ValueError(f"unknown job kind {kind}")
 
     def robot_file(self, relative: str) -> Path:

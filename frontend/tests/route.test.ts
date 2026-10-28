@@ -1,6 +1,6 @@
 import { describe as group, expect, it } from "vitest";
 import type { RouteData, RouteFunctionInfo, RouteStepData } from "../src/protocol";
-import { bearing, describe, newStep, plan, rotateAbout, stepValue, turnAmount, wrap360 } from "../src/route";
+import { bearing, describe, dropEdit, newRoutePath, newStep, numbersText, plan, relativePath, rotateAbout, routeFileName, stepValue, turnAmount, withDrag, wrap360 } from "../src/route";
 
 function step(kind: string, target: number[], extra: Partial<RouteStepData> = {}): RouteStepData {
   return { kind, target, timeout: 1000, side: null, options: {}, function: null, args: {}, label: kind, ...extra };
@@ -104,9 +104,52 @@ group("writing steps", () => {
     expect(newStep("call", [0, 0, 0], MOVE_FORWARD).args).toEqual({ inches: 0, timeout: 1000 });
   });
 
+  it("makes a new motion wait until it's done, with time to get there", () => {
+    const move = newStep("move_to_point", [0, 0, 90]); // 24 in ahead
+    expect([move.options, move.timeout]).toEqual([{ async: false }, 1600]);
+    expect(newStep("move_to_point", [0, 0, 90], undefined, [60, 0]).timeout).toBe(3000); // farther: longer
+    expect(newStep("turn_to_heading", [0, 0, 0]).timeout).toBe(1000); // a quarter turn
+    expect(newStep("wait", [0, 0, 0]).options).toEqual({});
+    expect(stepValue(move)).toEqual({ move_to_point: [24, 0], timeout: 1600, async: false });
+  });
+
+  it("numbers the steps that end in one place as one marker", () => {
+    expect([numbersText([4]), numbersText([1, 2]), numbersText([1, 2, 3, 5]), numbersText([1, 2, 4, 5])]).toEqual(["4", "1,2", "1–3,5", "1,2,4,5"]);
+  });
+
   it("describes each step in a few words", () => {
     expect(describe(step("move_to_point", [14, 0], { options: { max_speed: 60 } }))).toBe("Move to (14, 0) · max 60 · async");
     expect(describe(step("turn_to_heading", [270], { options: { async: false, direction: "ccw" } }))).toBe("Turn to 270° · ccw · waits");
     expect(describe(step("call", [], { function: "moveForward", args: { inches: -10, timeout: 800 } }))).toBe("moveForward(inches -10, timeout 800)");
+  });
+});
+
+group("dragging on the field", () => {
+  it("moves what's dragged at once, and writes just its numbers when it's dropped", () => {
+    const start = route([0, 0, 0], [step("move_to_pose", [24, 0, 90]), step("turn_to_heading", [90])]);
+    const moved = withDrag(start, { grip: { kind: "target", index: 0 }, value: [30, 6] });
+    expect(moved.steps[0].target).toEqual([30, 6, 90]); // its heading stays
+    close(plan(moved, [], 12)[0].pose, [30, 6, 90]); // the plan follows the drag
+    expect(withDrag(start, { grip: { kind: "heading", index: 0 }, value: [180] }).steps[0].target).toEqual([24, 0, 180]);
+    expect(withDrag(start, { grip: { kind: "start" }, value: [-12, 6, 0] }).start).toEqual([-12, 6, 0]);
+    expect(withDrag(start, null)).toBe(start);
+    expect(dropEdit(start, { grip: { kind: "target", index: 0 }, value: [30, 6] })).toEqual({ op: "set", location: "steps[0].move_to_pose", value: [30, 6, 90] });
+    expect(dropEdit(start, { grip: { kind: "heading", index: 1 }, value: [180] })).toEqual({ op: "set", location: "steps[1].turn_to_heading", value: 180 });
+    expect(dropEdit(start, { grip: { kind: "start-heading" }, value: [0, 0, 45] })).toEqual({ op: "set", location: "start", value: [0, 0, 45] });
+  });
+});
+
+group("a route's files", () => {
+  it("writes its robot and field relative to it", () => {
+    expect(relativePath("examples/pros_projects/p/routes/a.yaml", "examples/robots/r.yaml")).toBe("../../../robots/r.yaml");
+    expect(relativePath("routes/a.yaml", "robot.yaml")).toBe("../robot.yaml");
+    expect(relativePath("p/routes/a.yaml", "p/routes/field.yaml")).toBe("field.yaml");
+  });
+
+  it("names a new route's file as the server does, never over another", () => {
+    expect(routeFileName("Left 40 (fast)!")).toBe("left_40_fast.yaml");
+    expect(routeFileName("!!!")).toBe("route.yaml");
+    expect(newRoutePath("p", "Left", ["p/routes/left.yaml", "p/routes/left_2.yaml"])).toBe("p/routes/left_3.yaml");
+    expect(newRoutePath(".", " ", [])).toBe("routes/new_route.yaml"); // a project at the workspace's root
   });
 });

@@ -6,6 +6,7 @@ import type { Compared, FieldSource } from "./components/FieldView";
 import { FieldKey, FieldView } from "./components/FieldView";
 import { KeysHelp } from "./components/KeysHelp";
 import { NewRobotDialog } from "./components/NewRobotDialog";
+import { NewRouteDialog } from "./components/NewRouteDialog";
 import { Plots } from "./components/Plots";
 import { Readout } from "./components/Readout";
 import { RunBar } from "./components/RunBar";
@@ -37,6 +38,7 @@ import { canRecordVideo, VideoExport } from "./video";
 
 // The editors (and CodeMirror) load when a config is first opened, the pages when first shown
 const ConfigEditor = lazy(() => import("./components/ConfigEditor").then((m) => ({ default: m.ConfigEditor })));
+const RouteEditor = lazy(() => import("./components/RouteEditor").then((m) => ({ default: m.RouteEditor })));
 const SweepsPage = lazy(() => import("./pages/SweepsPage").then((m) => ({ default: m.SweepsPage })));
 const BenchPage = lazy(() => import("./pages/BenchPage").then((m) => ({ default: m.BenchPage })));
 const CalibratePage = lazy(() => import("./pages/CalibratePage").then((m) => ({ default: m.CalibratePage })));
@@ -107,9 +109,11 @@ export function App() {
   const [opening, setOpening] = useState<string | null>(null); // the run (or log) being fetched
   const [closedRun, setClosedRun] = useState(false); // the ended live run was put away
   const [video, setVideo] = useState<VideoExport | null>(null);
-  const [openConfigs, setOpenConfigs] = useState<string[]>([]); // configs open in editors
+  const [openConfigs, setOpenConfigs] = useState<string[]>([]); // configs (and routes) open in editors
+  const [openRoutes, setOpenRoutes] = useState<string[]>([]); // those that are routes, in the autonomous maker
   const [designing, setDesigning] = useState<string[]>([]); // opened in their Design view
   const [newRobot, setNewRobot] = useState(false); // the "New robot…" dialog is open
+  const [newRoute, setNewRoute] = useState(false); // the "New route…" dialog is open
   const [page, setPage] = useState<string>("simulate"); // a PageId, or an open config's path
   const [visited, setVisited] = useState<string[]>(["simulate"]); // pages made so far (they stay)
   const [analyzeRobot, setAnalyzeRobot] = useState("");
@@ -588,6 +592,18 @@ export function App() {
     setOpenConfigs((open) => (open.includes(path) ? open : [...open, path]));
     setPage(path);
   };
+  /** A route, open in the autonomous maker (in a tab, as a config is). */
+  const openRoute = (path: string) => {
+    setOpenRoutes((open) => (open.includes(path) ? open : [...open, path]));
+    setOpenConfigs((open) => (open.includes(path) ? open : [...open, path]));
+    setPage(path);
+  };
+  /** A route "New route…" made (or a mirrored copy): listed, and open in the maker. */
+  const routeCreated = async (path: string) => {
+    setNewRoute(false);
+    if (info) await scan(info, false);
+    openRoute(path);
+  };
   /** A robot "New robot…" made: picked for the next run, and open in its Design view. */
   const robotCreated = async (path: string) => {
     setNewRobot(false);
@@ -609,6 +625,7 @@ export function App() {
   };
   const closeConfig = (path: string) => {
     setOpenConfigs((open) => open.filter((p) => p !== path));
+    setOpenRoutes((open) => open.filter((p) => p !== path));
     setUnsaved(({ [path]: _, ...rest }) => rest);
     setClosing(null);
     setPage((current) => (current === path ? "simulate" : current));
@@ -630,13 +647,14 @@ export function App() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [anyUnsaved]);
 
-  /** A route to run: its project's, with its robot, field and start (as its setPose has it). */
-  const pickRoute = async (path: string) => {
+  /** The run form set up to run a route: its project's, with its robot, field and start (as
+   * its setPose has it). */
+  const routeForm = async (path: string): Promise<(current: RunForm) => RunForm> => {
     const project = path.split("/").slice(0, -2).join("/") || ".";
     const listed = await api.routines(project).catch(() => null);
     const route = listed && "ok" in listed ? listed.ok.routes?.find((r) => r.path === path) : undefined;
     const start = route?.start;
-    setForm((current) => ({
+    return (current) => ({
       ...current,
       program: project,
       routine: "",
@@ -645,7 +663,19 @@ export function App() {
       ...(start ? { x: formatStart(start[0]), y: formatStart(start[1]), heading: formatStart(start[2]) } : {}),
       ...(route?.robot ? { robot: route.robot } : {}),
       ...(route ? { field: route.field ?? "" } : {}),
-    }));
+    });
+  };
+  /** A route to run: picked in the run bar. */
+  const pickRoute = async (path: string) => setForm(await routeForm(path));
+  /** A route (just saved in the maker) run on the Simulate page, with its timeline and plots. */
+  const watchRoute = async (path: string) => {
+    const next = (await routeForm(path))(form);
+    setForm(next);
+    setShown(null);
+    setPage("simulate");
+    const result = formToSpec(next);
+    if ("error" in result) setProblem({ error: result.error, issues: [] });
+    else await startRun(result.spec, null);
   };
 
   /** A workspace item clicked in the sidebar: for the page on show where it's of use there,
@@ -846,12 +876,13 @@ export function App() {
           page={page}
           picked={picked}
           onPick={pick}
-          onEdit={(item) => openConfig(item.path)}
+          onEdit={(item) => (item.kind === "route" ? openRoute(item.path) : openConfig(item.path))}
           onDuplicate={duplicateItem}
           onDelete={deleteItem}
           unsaved={unsaved}
           editor={editor}
           onNewRobot={() => setNewRobot(true)}
+          onNewRoute={() => setNewRoute(true)}
           loading={scanning}
           onRefresh={() => info && scan(info, false)}
           shownLog={recording?.key.startsWith("log:") ? recording.key.slice(4) : null}
@@ -1063,20 +1094,36 @@ export function App() {
             />
           </div>
           <Suspense fallback={<p className="muted pad">Opening the editor…</p>}>
-            {openConfigs.map((path) => (
-              <ConfigEditor
-                key={path}
-                path={path}
-                active={page === path}
-                closing={closing === path}
-                onClose={() => closeConfig(path)}
-                onKeepOpen={() => setClosing(null)}
-                onDirty={markUnsaved}
-                onSaved={() => info && scan(info, false)}
-                request={overrideRequests[path] ?? null}
-                design={designing.includes(path)}
-              />
-            ))}
+            {openConfigs.map((path) =>
+              openRoutes.includes(path) ? (
+                <RouteEditor
+                  key={path}
+                  path={path}
+                  active={page === path}
+                  closing={closing === path}
+                  workspace={workspace}
+                  onClose={() => closeConfig(path)}
+                  onKeepOpen={() => setClosing(null)}
+                  onDirty={markUnsaved}
+                  onSaved={() => info && scan(info, false)}
+                  onWatch={watchRoute}
+                  onOpen={routeCreated}
+                />
+              ) : (
+                <ConfigEditor
+                  key={path}
+                  path={path}
+                  active={page === path}
+                  closing={closing === path}
+                  onClose={() => closeConfig(path)}
+                  onKeepOpen={() => setClosing(null)}
+                  onDirty={markUnsaved}
+                  onSaved={() => info && scan(info, false)}
+                  request={overrideRequests[path] ?? null}
+                  design={designing.includes(path)}
+                />
+              ),
+            )}
           </Suspense>
           <Suspense fallback={<p className="muted pad">Opening the page…</p>}>
             {visited.includes("sweeps") && (
@@ -1117,6 +1164,20 @@ export function App() {
         </main>
       </div>
       {help && <KeysHelp onClose={() => setHelp(false)} />}
+      {newRoute && (
+        <NewRouteDialog
+          projects={workspace?.items.filter((item) => item.kind === "project") ?? []}
+          robots={workspace?.items.filter((item) => item.kind === "robot") ?? []}
+          fields={workspace?.items.filter((item) => item.kind === "field") ?? []}
+          project={form.program}
+          robot={form.robot}
+          field={form.field}
+          start={startPose}
+          taken={workspace?.items.map((item) => item.path) ?? []}
+          onCreated={routeCreated}
+          onClose={() => setNewRoute(false)}
+        />
+      )}
       {newRobot && (
         <NewRobotDialog
           robots={workspace?.items.filter((item) => item.kind === "robot") ?? []}

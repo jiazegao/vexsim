@@ -237,21 +237,37 @@ export function stepValue(step: RouteStepData): StepValue {
   return value;
 }
 
-/** A new step of `kind`, to add after `at` (where the robot is then). */
-export function newStep(kind: string, at: LemPose, fn?: RouteFunctionInfo): RouteStepData {
+/** A timeout that leaves a motion from `at` room to finish: longer the farther it goes and
+ * the more it turns (milliseconds, in hundreds). */
+export function timeoutFor(step: RouteStepData, at: LemPose, track = 12): number {
+  const end = planStep(at, step, undefined, track).pose;
+  const distance = Math.hypot(end[0] - at[0], end[1] - at[1]);
+  const turn = Math.abs(shortest(end[2] - at[2]));
+  const ms = 600 + 40 * distance + 4 * turn;
+  return Math.min(5000, Math.max(800, Math.round(ms / 100) * 100));
+}
+
+/** A new step of `kind`, to add after `at` (where the robot is then): `target` if it's given,
+ * else 24 inches ahead or a quarter turn on. A motion waits until it's done (LemLib's default
+ * is to go on at once), so the route runs as it's drawn, one step after another. */
+export function newStep(kind: string, at: LemPose, fn?: RouteFunctionInfo, target?: number[]): RouteStepData {
   const base: RouteStepData = { kind, target: [], timeout: null, side: null, options: {}, function: null, args: {}, label: kind };
   const [dx, dy] = ahead(at[2]);
   const round = (v: number) => Math.round(v * 10) / 10;
+  const motion = (made: RouteStepData): RouteStepData => {
+    const step = { ...made, target: target ?? made.target, options: { async: false } };
+    return { ...step, timeout: timeoutFor(step, at) };
+  };
   switch (kind) {
     case "move_to_point":
     case "turn_to_point":
     case "swing_to_point":
-      return { ...base, target: [round(at[0] + dx * 24), round(at[1] + dy * 24)], timeout: 1000, side: kind === "swing_to_point" ? "left" : null };
+      return motion({ ...base, target: [round(at[0] + dx * 24), round(at[1] + dy * 24)], side: kind === "swing_to_point" ? "left" : null });
     case "move_to_pose":
-      return { ...base, target: [round(at[0] + dx * 24), round(at[1] + dy * 24), round(at[2])], timeout: 2000 };
+      return motion({ ...base, target: [round(at[0] + dx * 24), round(at[1] + dy * 24), round(at[2])] });
     case "turn_to_heading":
     case "swing_to_heading":
-      return { ...base, target: [round(wrap360(at[2] + 90))], timeout: 800, side: kind === "swing_to_heading" ? "left" : null };
+      return motion({ ...base, target: [round(wrap360(at[2] + 90))], side: kind === "swing_to_heading" ? "left" : null });
     case "wait":
       return { ...base, target: [250] };
     case "wait_until":
@@ -333,4 +349,80 @@ export function copySteps(steps: StepValue[]): void {
 
 export function copiedSteps(): StepValue[] | null {
   return clipboard && clipboard.map((step) => structuredClone(step));
+}
+
+// --- dragging on the field ----------------------------------------------------------------------
+
+/** What a drag on the field holds: the start (or its heading), a step's target, or its heading. */
+export type Grip = { kind: "start" } | { kind: "start-heading" } | { kind: "target"; index: number } | { kind: "heading"; index: number };
+
+/** A drag's value: the start's pose, a target's x and y, or a heading. */
+export interface Dragged {
+  grip: Grip;
+  value: number[];
+}
+
+/** `route` as it would be with the drag dropped, for the plan to follow it at once. */
+export function withDrag(route: RouteData, dragged: Dragged | null): RouteData {
+  if (!dragged) return route;
+  const [a, b, c] = dragged.value;
+  const { grip } = dragged;
+  if (grip.kind === "start" || grip.kind === "start-heading") return { ...route, start: [a, b, c] };
+  const steps = route.steps.map((step, i) => {
+    if (i !== grip.index) return step;
+    if (grip.kind === "target") return { ...step, target: step.kind === "move_to_pose" ? [a, b, step.target[2]] : [a, b] };
+    return { ...step, target: step.kind === "move_to_pose" ? [step.target[0], step.target[1], a] : [a] };
+  });
+  return { ...route, steps };
+}
+
+/** The edit a drag makes when it's dropped: the number(s) it moved, written in place. */
+export function dropEdit(route: RouteData, dragged: Dragged): { op: "set"; location: string; value: unknown } {
+  const moved = withDrag(route, dragged);
+  const { grip } = dragged;
+  if (grip.kind === "start" || grip.kind === "start-heading") return { op: "set", location: "start", value: [...moved.start] };
+  const step = moved.steps[grip.index];
+  const value = step.kind === "turn_to_heading" || step.kind === "swing_to_heading" ? step.target[0] : [...step.target];
+  return { op: "set", location: `steps[${grip.index}].${step.kind}`, value };
+}
+
+/** `to` (a workspace path) as a path from the folder `from` is in: what a route writes for
+ * its robot and field. */
+export function relativePath(from: string, to: string): string {
+  const base = from.split("/").slice(0, -1);
+  const target = to.split("/");
+  let same = 0;
+  while (same < base.length && same < target.length - 1 && base[same] === target[same]) same++;
+  return [...base.slice(same).map(() => ".."), ...target.slice(same)].join("/");
+}
+
+/** The file a route's name gives it, as the server names it: `Left 40` is `left_40.yaml`. */
+export function routeFileName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `${slug || "route"}.yaml`;
+}
+
+/** Where the server puts a route called `name` in `project`: never over a file in `taken`. */
+export function newRoutePath(project: string, name: string, taken: readonly string[]): string {
+  const file = routeFileName(name.trim() || "New route");
+  const stem = file.slice(0, -".yaml".length);
+  const folder = project === "." ? "routes" : `${project}/routes`; // a project at the workspace's root
+  let path = `${folder}/${file}`;
+  for (let count = 2; taken.includes(path); count++) path = `${folder}/${stem}_${count}.yaml`;
+  return path;
+}
+
+/** A marker's numbers, a run of three or more as a range: `1–3,5`. */
+export function numbersText(numbers: readonly number[]): string {
+  const parts: string[] = [];
+  for (let i = 0; i < numbers.length; ) {
+    let j = i;
+    while (j + 1 < numbers.length && numbers[j + 1] === numbers[j] + 1) j++;
+    parts.push(j - i >= 2 ? `${numbers[i]}–${numbers[j]}` : numbers.slice(i, j + 1).join(","));
+    i = j + 1;
+  }
+  return parts.join(",");
 }
