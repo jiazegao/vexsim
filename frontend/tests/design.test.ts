@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { ShapePart } from "../src/design";
+import type { Copied, ShapePart } from "../src/design";
 import {
   circleTo,
+  copiedPart,
+  copyOf,
+  copyPart,
   describePart,
   describeUser,
   fileStem,
@@ -16,6 +19,7 @@ import {
   newSensor,
   newWheel,
   outlineProblem,
+  pasteEdits,
   partAt,
   partContains,
   partEdits,
@@ -210,5 +214,89 @@ describe("motors and sensors", () => {
     expect(uniqueName("mechanism", ["mechanism", "mechanism2"])).toBe("mechanism3");
     expect(shown(0.1 + 0.2)).toBe("0.3");
     expect(shown(null)).toBe("");
+  });
+});
+
+describe("copy and paste", () => {
+  // the robot as the server sends it: every field, defaults and all
+  const SERVED: RobotConfig = {
+    ...TANK,
+    drivetrain: { ...TANK.drivetrain, wheels: TANK.drivetrain.wheels.map((w) => ({ ...w, heading_deg: 0, drop_in: 0, roller_angle_deg: null })) },
+    sensors: [
+      { type: "imu", port: 6, pos_in: [0, 0], mount_yaw_deg: 0, noise: "default", scale_error: null },
+      { type: "rotation", port: 8, reversed: false, noise: "default", tracking_wheel: { pos_in: [0, -1.5], heading_deg: 0, diameter_in: 2 } },
+    ],
+  };
+
+  it("copies what's selected, as it would be written", () => {
+    expect(copyOf(SERVED, null, "drivetrain.wheels[0]")).toEqual({
+      kind: "wheel",
+      value: { name: "lf", pos_in: [5, 7], type: "omni", diameter_in: 3.25 },
+      groups: ["left"],
+      label: "wheel lf",
+      pastes: 0,
+    });
+    expect(copyOf(SERVED, null, "sensors[1].tracking_wheel")).toEqual({
+      kind: "sensor",
+      value: { type: "rotation", port: 8, tracking_wheel: { pos_in: [0, -1.5], diameter_in: 2 } },
+      groups: [],
+      label: "the rotation sensor on port 8",
+      pastes: 0,
+    });
+    expect((copyOf(SERVED, null, "sensors[0]") as Copied).value).toEqual({ type: "imu", port: 6 });
+    expect(copyOf(SHAPED, 1, "drivetrain.wheels[0]")).toMatchObject({ kind: "shape", value: { type: "circle", pos_in: [7.5, 0], diameter_in: 5 }, label: "the circle" });
+    expect(copyOf(SERVED, null, "body")).toMatch(/center of gravity/);
+    expect(copyOf(SERVED, null, null)).toBeNull();
+    expect(copyOf(SERVED, null, "drivetrain.wheels[9]")).toBeNull();
+    const copy = copyOf(SERVED, null, "sensors[0]") as Copied;
+    copyPart(copy);
+    expect(copiedPart()).toBe(copy); // one for the page: every robot's editor pastes it
+  });
+
+  it("pastes a wheel a step along, under the next of its name, in its motor groups", () => {
+    const wheel = copyOf(SERVED, null, "drivetrain.wheels[0]") as Copied;
+    expect(pasteEdits(SERVED, wheel)).toEqual({
+      edits: [
+        { location: "drivetrain.wheels", op: "add", value: { name: "lf2", pos_in: [6, 6], type: "omni", diameter_in: 3.25 } },
+        { location: "drivetrain.gearing.left.wheels", op: "set", value: ["lf", "lb", "lf2"] },
+      ],
+      part: null,
+      path: "drivetrain.wheels[4]",
+      label: "wheel lf2",
+    });
+    wheel.pastes = 1; // the next lands a step further
+    const two = { ...SERVED, drivetrain: { ...SERVED.drivetrain, wheels: [...SERVED.drivetrain.wheels, { ...SERVED.drivetrain.wheels[0], name: "lf2" }] } };
+    expect(pasteEdits(two, wheel).edits[0].value).toEqual({ name: "lf3", pos_in: [7, 5], type: "omni", diameter_in: 3.25 });
+    // into a robot that hasn't its name or its group: its own name, in no group
+    const xdrive: RobotConfig = {
+      ...SERVED,
+      drivetrain: { type: "xdrive", wheels: [{ name: "fl", pos_in: [5, 5], type: "omni", diameter_in: 3.25 }], gearing: { front_left: { motors: [1], cartridge: "blue", wheels: ["fl"] } } },
+    };
+    expect(pasteEdits(xdrive, { ...wheel, pastes: 0 }).edits).toEqual([{ location: "drivetrain.wheels", op: "add", value: { name: "lf", pos_in: [6, 6], type: "omni", diameter_in: 3.25 } }]);
+  });
+
+  it("pastes a sensor on its port if it's free, else the first free one, and parts of the shape", () => {
+    const tracking = copyOf(SERVED, null, "sensors[1].tracking_wheel") as Copied;
+    expect(pasteEdits(SERVED, tracking)).toEqual({
+      edits: [{ location: "sensors", op: "add", value: { type: "rotation", port: 7, tracking_wheel: { pos_in: [1, -2.5], diameter_in: 2 } } }],
+      part: null,
+      path: "sensors[2].tracking_wheel",
+      label: "a rotation sensor on port 7",
+    });
+    const imu = copyOf(SERVED, null, "sensors[0]") as Copied;
+    expect(pasteEdits({ ...SERVED, sensors: [] }, imu).label).toBe("an IMU on port 6"); // free there
+    expect(pasteEdits(SHAPED, copyOf(SHAPED, 1, null) as Copied)).toEqual({
+      edits: [{ location: "body.shape", op: "add", value: { type: "circle", pos_in: [8.5, -1], diameter_in: 5 } }],
+      part: 2,
+      path: null,
+      label: "a copy of the circle",
+    });
+    // a footprint's rectangle, pasted: the footprint becomes a shape of the two
+    const pasted = pasteEdits(TANK, copyOf(TANK, 0, null) as Copied);
+    expect(pasted.edits).toEqual([
+      { location: "body.footprint_in", op: "remove" },
+      { location: "body.shape", op: "set", value: [{ type: "rect", size_in: [18, 14] }, { type: "rect", pos_in: [1, -1], size_in: [18, 14] }] },
+    ]);
+    expect(pasted.part).toBe(1);
   });
 });

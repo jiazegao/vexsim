@@ -595,6 +595,18 @@ export function App() {
     setForm((current) => ({ ...current, config: "", robot: path }));
     openConfig(path, true);
   };
+  /** A workspace file copied beside itself (the list shows it): the copy's path. */
+  const duplicateItem = async (item: WorkspaceItem): Promise<string> => {
+    const made = await api.duplicateFile(item.path);
+    if (info) await scan(info, false);
+    return made.path;
+  };
+  /** A workspace file deleted: its editor closes, if it's open, and the run bar lets it go. */
+  const deleteItem = async (item: WorkspaceItem) => {
+    await api.deleteFile(item.path);
+    if (openConfigs.includes(item.path)) closeConfig(item.path);
+    if (info) await scan(info, false);
+  };
   const closeConfig = (path: string) => {
     setOpenConfigs((open) => open.filter((p) => p !== path));
     setUnsaved(({ [path]: _, ...rest }) => rest);
@@ -812,6 +824,10 @@ export function App() {
           picked={picked}
           onPick={pick}
           onEdit={(item) => openConfig(item.path)}
+          onDuplicate={duplicateItem}
+          onDelete={deleteItem}
+          unsaved={unsaved}
+          editor={editor}
           onNewRobot={() => setNewRobot(true)}
           loading={scanning}
           onRefresh={() => info && scan(info, false)}

@@ -114,6 +114,7 @@ test("draws a new robot, gives it a drive and sensors, saves it and drives it, t
 test("a robot's Design view writes its forms into the YAML, which an undo takes back", async ({ page }) => {
   const path = "examples/robots/full_omni_6m.yaml";
   const original = readFileSync(resolve(WORKSPACE, path), "utf-8");
+  await page.getByTestId(`item-${path}`).click({ button: "right" }); // its menu
   await page.getByTestId(`edit-${path}`).click();
   await page.getByTestId("view-design").click();
   await page.getByLabel("Mass (kg)").fill("7.25");

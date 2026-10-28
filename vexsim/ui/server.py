@@ -54,7 +54,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from vexsim import __version__
-from vexsim.app import configs, newrobot, results, runs, yamledit
+from vexsim.app import configs, files, newrobot, results, runs, yamledit
 from vexsim.app.benchmarks import ScenarioProblem, describe_scenario
 from vexsim.app.frames import preview_of
 from vexsim.app.jobs import JobManager
@@ -111,6 +111,7 @@ from vexsim.ui.protocol import (
     StartSession,
     SweepsFile,
     TextSpan,
+    WorkspaceFile,
     WorkspaceInfo,
 )
 
@@ -521,6 +522,38 @@ def create_app(
         ws = server.workspace
         items = [item.to_dict() for item in ws.scan()]
         return WorkspaceInfo(root=str(ws.root), name=ws.name, items=items)
+
+    def _listed(relative: str) -> tuple[Path, str]:
+        """A file the workspace lists (its path and kind), to copy or delete: no other file,
+        and not a PROS project's folder."""
+        item = next((i for i in server.workspace.scan() if i.path == relative), None)
+        if item is None:
+            raise ValueError(f"{relative} isn't one of the workspace's files")
+        if item.kind == "project":
+            raise ValueError(
+                f"{relative} is a PROS project's folder: copy or delete it with your file manager"
+            )
+        return server.workspace.path(relative), item.kind
+
+    @app.post("/api/files/duplicate", responses={422: {}})
+    def duplicate_file(request: WorkspaceFile):
+        """A copy of a workspace file beside it (a robot's or field's named as a copy)."""
+        try:
+            path, kind = _listed(request.path)
+            made = files.duplicate(path, kind)
+        except (configs.PatchError, ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return WorkspaceFile(path=server.workspace.relative(made))
+
+    @app.delete("/api/files", status_code=204, responses={422: {}})
+    def delete_file(path: str):
+        """A workspace file deleted (one the workspace lists, not a project's folder)."""
+        try:
+            file, _ = _listed(path)
+            file.unlink()
+        except (ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return Response(status_code=204)
 
     def _problem(exc: RunError) -> JSONResponse:
         issues = [

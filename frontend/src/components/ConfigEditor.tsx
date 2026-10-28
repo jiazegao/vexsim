@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Part } from "../configdoc";
 import { fieldParts, partAtLine, robotParts, spanRange, textChange } from "../configdoc";
-import { DRIVE_PRESETS, shapeOf } from "../design";
+import { copiedPart, copyOf, copyPart, DRIVE_PRESETS, pasteEdits, shapeOf } from "../design";
 import type { ConfigCheck, ConfigEdit, ConfigFile, ConfigPatched, FieldConfig, PlacedIssue, RobotConfig, TextSpan } from "../protocol";
 import type { DesignTools, Tool } from "./ConfigDiagram";
 import { ConfigDiagram } from "./ConfigDiagram";
@@ -57,10 +57,12 @@ export function ConfigEditor(props: {
   const textRef = useRef(text);
   textRef.current = text;
   const queue = useRef<Promise<unknown>>(Promise.resolve()); // changes, one after another
+  const robotNow = useRef<RobotConfig | null>(null); // the latest robot read, for queued changes
 
   const take = useCallback((forText: string, result: ConfigCheck) => {
     setChecked({ text: forText, result });
     if (result.robot || result.field) setDrawn({ robot: result.robot ?? null, field: result.field ?? null });
+    if (result.robot) robotNow.current = result.robot;
   }, []);
 
   const load = useCallback(async () => {
@@ -141,7 +143,7 @@ export function ConfigEditor(props: {
   /** A change the server writes into the text: made after the ones before it, on the text
    * they left. `strict` (the Design view): one that would leave a robot's YAML unreadable
    * isn't made. Rejects, having said why, if it can't be made. */
-  const change = (write: (base: string) => Promise<ConfigPatched>, strict: boolean, done: string | null = null): Promise<void> => {
+  const change = (write: (base: string) => Promise<ConfigPatched>, strict: boolean, done: string | null | (() => string) = null): Promise<void> => {
     const made = queue.current.then(async () => {
       if (!file) throw new Error("not loaded");
       try {
@@ -156,7 +158,8 @@ export function ConfigEditor(props: {
         editor.current?.replace(patched.text);
         setText(patched.text);
         take(patched.text, patched.check);
-        setNotice(done ? { bad: false, text: done } : null);
+        const said = typeof done === "function" ? done() : done;
+        setNotice(said ? { bad: false, text: said } : null);
       } catch (error) {
         setNotice({ bad: true, text: (error as Error).message });
         throw error;
@@ -165,7 +168,7 @@ export function ConfigEditor(props: {
     queue.current = made.catch(() => {});
     return made;
   };
-  const edit = (edits: ConfigEdit[], strict = false) => change((base) => api.patchConfig(file!.kind, base, edits), strict);
+  const edit = (edits: ConfigEdit[], strict = false, done: string | null = null) => change((base) => api.patchConfig(file!.kind, base, edits), strict, done);
   const putDrive = (preset: string) => {
     const label = DRIVE_PRESETS.find(([id]) => id === preset)?.[1] ?? preset;
     const done = `It has a ${label} now: new wheels and motor groups, on free ports (Undo takes them back).`;
@@ -260,6 +263,39 @@ export function ConfigEditor(props: {
         onMirror: setMirror,
       }
     : null;
+  // Ctrl+C and Ctrl+V on a robot's diagram: the selected part copied, and copies of it pasted
+  // (into this robot or another one open beside it), each one selected as it lands
+  const copySelected = () => {
+    if (!drawn.robot) return;
+    const copy = copyOf(drawn.robot, designView ? shapePart : null, selected);
+    if (copy === null) {
+      setNotice({ bad: false, text: "Select something to copy first: a wheel, a sensor or, in the Design view, a part of the shape." });
+    } else if (typeof copy === "string") {
+      setNotice({ bad: true, text: copy });
+    } else {
+      copyPart(copy);
+      setNotice({ bad: false, text: `Copied ${copy.label}: Ctrl+V pastes a copy, into this robot or another.` });
+    }
+  };
+  const pasteCopied = () => {
+    const copy = copiedPart();
+    if (!copy) return setNotice({ bad: false, text: "Nothing's copied yet: select a part of a robot and press Ctrl+C." });
+    if (!drawn.robot || stale) return setNotice({ bad: true, text: "The YAML doesn't read just now: fix it before pasting." });
+    // worked out in its turn, from the robot the pastes before it left (names, ports, places)
+    let pasted: ReturnType<typeof pasteEdits> | null = null;
+    const write = (base: string) => {
+      pasted = pasteEdits(robotNow.current ?? drawn.robot!, copy);
+      copy.pastes += 1;
+      return api.patchConfig("robot", base, pasted.edits);
+    };
+    change(write, designView, () => `Pasted ${pasted!.label}.`)
+      .then(() => {
+        setShapePart(pasted!.part);
+        setSelected(pasted!.path);
+      })
+      .catch(() => {});
+  };
+
   /** Where something is written, shown in the text (the YAML view, if it's not on show). */
   const showText = (span: TextSpan) => {
     const select = () => {
@@ -420,6 +456,8 @@ export function ConfigEditor(props: {
           onUndo={() => editor.current?.undo()}
           onRedo={() => editor.current?.redo()}
           design={design}
+          onCopy={copySelected}
+          onPaste={pasteCopied}
         />
       </div>
       <div className="editor-foot">

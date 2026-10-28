@@ -469,3 +469,111 @@ export function newMechanism(robot: RobotConfig): [string, Record<string, unknow
   const name = uniqueName("mechanism", Object.keys(robot.mechanisms ?? {}));
   return [name, { motors: [freePorts(robot)[0] ?? 1], cartridge: "green" }];
 }
+
+// --- copy and paste ----------------------------------------------------------------------------
+
+/** A part of a robot copied with Ctrl+C on its diagram: a part of its shape, a wheel or a
+ * sensor, as it's written, to paste into this robot or another one open beside it. */
+export interface Copied {
+  kind: "shape" | "wheel" | "sensor";
+  value: Record<string, unknown>;
+  groups: string[]; // a wheel's motor groups: its copy goes in those the robot has
+  label: string; // what it is, in a few words
+  pastes: number; // how many copies have been pasted: each lands a step further along
+}
+
+/** Where each copy lands from the part it's a copy of: right of it and below, inches. */
+export const PASTE_STEP: readonly [number, number] = [1, -1];
+
+let copied: Copied | null = null; // one for the page: a part copied in one robot pastes into another
+
+export function copyPart(part: Copied): void {
+  copied = part;
+}
+
+export function copiedPart(): Copied | null {
+  return copied;
+}
+
+const PART_NAMES = { rect: "rectangle", circle: "circle", outline: "outline" } as const;
+const WHEEL_DEFAULTS = { heading_deg: 0, drop_in: 0 };
+const SENSOR_DEFAULTS: Record<string, Record<string, unknown>> = {
+  imu: { pos_in: [0, 0], mount_yaw_deg: 0, noise: "default" },
+  rotation: { reversed: false, noise: "default" },
+  distance: { heading_deg: 0, noise: "default" },
+  gps: { mount_yaw_deg: 0, noise: "default" },
+};
+
+/** A config's part without what's at its default (the server sends every field). */
+function plain(value: object, defaults: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([key, v]) => v !== null && v !== undefined && JSON.stringify(v) !== JSON.stringify(defaults[key])));
+}
+
+/** What's selected, to copy: the selected part of the shape, or the wheel or sensor selected
+ * on the diagram (`selected`, its path). Null if nothing is; a reason if it can't be. */
+export function copyOf(robot: RobotConfig, shapePart: number | null, selected: string | null): Copied | string | null {
+  const part = shapePart === null ? undefined : shapeOf(robot.body)[shapePart];
+  if (part) return { kind: "shape", value: written(part), groups: [], label: `the ${PART_NAMES[part.type]}`, pastes: 0 };
+  if (selected === "body") return "The center of gravity can't be copied: a robot has just the one.";
+  const wheel = selected && /^drivetrain\.wheels\[(\d+)\]$/.exec(selected);
+  if (wheel) {
+    const found = robot.drivetrain.wheels[Number(wheel[1])];
+    if (!found) return null;
+    const groups = Object.entries(robot.drivetrain.gearing).filter(([, g]) => g.wheels.includes(found.name));
+    return { kind: "wheel", value: plain(found, WHEEL_DEFAULTS), groups: groups.map(([name]) => name), label: `wheel ${found.name}`, pastes: 0 };
+  }
+  const sensor = selected && /^sensors\[(\d+)\]/.exec(selected);
+  if (sensor) {
+    const found = (robot.sensors ?? [])[Number(sensor[1])];
+    if (!found) return null;
+    const value = plain(found, SENSOR_DEFAULTS[found.type] ?? {});
+    if (found.type === "rotation" && found.tracking_wheel) value.tracking_wheel = plain(found.tracking_wheel, { heading_deg: 0 });
+    return { kind: "sensor", value, groups: [], label: `the ${sensorName(found.type)} on port ${found.port}`, pastes: 0 };
+  }
+  return null;
+}
+
+/** A copy pasted into `robot`: the edits that add it, a step further along than the last
+ * copy, and what to select once it's there (a part of the shape, or the path of a wheel or
+ * sensor). A wheel takes its name if no wheel has it (else the next free number) and joins
+ * the motor groups its original was in, where the robot has them; a sensor keeps its port if
+ * it's free, else takes the first free one. */
+export function pasteEdits(robot: RobotConfig, copy: Copied): { edits: ConfigEdit[]; part: number | null; path: string | null; label: string } {
+  const along = copy.pastes + 1;
+  const [dx, dy] = [PASTE_STEP[0] * along, PASTE_STEP[1] * along];
+  const shift = (point: unknown): [number, number] => {
+    const [x, y] = (point as [number, number] | undefined) ?? [0, 0];
+    return [tidy(x + dx), tidy(y + dy)];
+  };
+  if (copy.kind === "shape") {
+    const part = movedPart(copy.value as unknown as ShapePart, dx, dy);
+    const edits = partEdits(robot, null, part);
+    return { edits, part: shapeOf(robot.body).length, path: null, label: `a copy of ${copy.label}` };
+  }
+  if (copy.kind === "wheel") {
+    const names = robot.drivetrain.wheels.map((w) => w.name);
+    const original = String(copy.value.name);
+    const base = original.replace(/\d+$/, "") || original;
+    let name = original;
+    for (let n = 2; names.includes(name); n++) name = `${base}${n}`;
+    const edits: ConfigEdit[] = [{ location: "drivetrain.wheels", op: "add", value: { ...copy.value, name, pos_in: shift(copy.value.pos_in) } }];
+    for (const group of copy.groups) {
+      const gear = robot.drivetrain.gearing[group];
+      if (gear) edits.push({ location: `drivetrain.gearing.${group}.wheels`, op: "set", value: [...gear.wheels, name] });
+    }
+    return { edits, part: null, path: `drivetrain.wheels[${names.length}]`, label: `wheel ${name}` };
+  }
+  const value: Record<string, unknown> = { ...copy.value };
+  const taken = portMap(robot);
+  if (taken.has(Number(value.port))) value.port = freePorts(robot)[0] ?? value.port;
+  if ("pos_in" in value) value.pos_in = shift(value.pos_in);
+  const wheel = value.tracking_wheel as Record<string, unknown> | undefined;
+  if (wheel) value.tracking_wheel = { ...wheel, pos_in: shift(wheel.pos_in) };
+  const index = (robot.sensors ?? []).length;
+  return {
+    edits: [{ location: "sensors", op: "add", value }],
+    part: null,
+    path: wheel ? `sensors[${index}].tracking_wheel` : `sensors[${index}]`,
+    label: `${/^[aeiou]/i.test(sensorName(String(value.type))) ? "an" : "a"} ${sensorName(String(value.type))} on port ${value.port}`,
+  };
+}

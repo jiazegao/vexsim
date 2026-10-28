@@ -35,6 +35,7 @@ import type {
   SweepsFile,
   Tape,
   Telemetry,
+  WorkspaceFile,
   WorkspaceInfo,
 } from "./protocol";
 
@@ -173,6 +174,8 @@ export const api = {
     request<ConfigPatched>("/api/config/drive", { method: "POST", body: JSON.stringify({ text, preset }) }),
   /** A new robot config in the workspace: on a drive preset, or a copy of `source`. */
   newRobot: (robot: NewRobotRequest) => request<NewRobot>("/api/config/new", { method: "POST", body: JSON.stringify(robot) }),
+  duplicateFile: (path: string) => request<WorkspaceFile>("/api/files/duplicate", { method: "POST", body: JSON.stringify({ path }) }),
+  deleteFile: (path: string) => request<void>(`/api/files?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
 
   /** Write a config opened at `version` (null: whatever is on disk); a conflict if the
    * file changed on disk since. */

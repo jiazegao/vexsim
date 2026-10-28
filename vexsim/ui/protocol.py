@@ -645,6 +645,13 @@ class NewRobot(_Message):
     path: str  # in the workspace
 
 
+class WorkspaceFile(_Message):
+    """A file in the workspace, by its path there: one to copy (``POST /api/files/duplicate``,
+    which answers with the copy's), or the copy."""
+
+    path: str
+
+
 class ConfigDriveRequest(_Message):
     """Put a drivetrain preset on a robot config's text: its wheels in the robot's box, its
     motors on free ports. The answer is a ConfigPatched."""
@@ -1104,6 +1111,7 @@ MODELS: list[type[BaseModel]] = [
     NewRobotRequest,
     NewRobot,
     ConfigDriveRequest,
+    WorkspaceFile,
     MotorCurve,
     MotorCurves,
     DriftRun,

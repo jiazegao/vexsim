@@ -757,6 +757,11 @@ export interface ConfigDriveRequest {
   preset: string;
 }
 
+/** A file in the workspace, by its path there: one to copy (`POST /api/files/duplicate`, which answers with the copy's), or the copy. */
+export interface WorkspaceFile {
+  path: string;
+}
+
 export interface MotorCurve {
   command: string;
   label: string;

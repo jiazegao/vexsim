@@ -51,6 +51,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
       ["Drag its handle", "turn it, to 15°"],
       ["Shift while dragging", "finer: 0.01 in (0.1 in), 1°"],
       ["Arrows, [ ]", "move, turn the selected part"],
+      ["Ctrl+C / Ctrl+V", "copy the selected wheel, sensor or part of a robot's shape / paste a copy, into this robot or another"],
       ["Ctrl+Z / Ctrl+Shift+Z", "undo / redo, in the text or the diagram"],
       ["Ctrl+S", "save"],
     ],

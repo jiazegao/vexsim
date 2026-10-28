@@ -93,6 +93,8 @@ export function ConfigDiagram(props: {
   onUndo: () => void;
   onRedo: () => void;
   design?: DesignTools | null;
+  onCopy?: () => void; // Ctrl+C: the selected part (a robot's)
+  onPaste?: () => void; // Ctrl+V: a copy of what was copied
 }) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -502,6 +504,12 @@ export function ConfigDiagram(props: {
         p.onRedo();
         return;
       }
+      const clip = { c: p.onCopy, v: p.onPaste }[event.key.toLowerCase()];
+      if (mod && clip && p.robot && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        clip();
+        return;
+      }
       if (sketch && tools) {
         if (event.key === "Escape") {
           sketch = null;
@@ -616,8 +624,8 @@ export function ConfigDiagram(props: {
         role="img"
         aria-label={
           design
-            ? "The robot, drawn from its config. Draw its shape with the tools; drag a part to move it, its corners to reshape it; Delete takes the selected part away."
-            : `The ${kind}, drawn from its config. Drag a part to move it; arrow keys move the selected part, [ and ] turn it.`
+            ? "The robot, drawn from its config. Draw its shape with the tools; drag a part to move it, its corners to reshape it; Delete takes the selected part away; Ctrl+C and Ctrl+V copy and paste it."
+            : `The ${kind}, drawn from its config. Drag a part to move it; arrow keys move the selected part, [ and ] turn it${props.robot ? "; Ctrl+C and Ctrl+V copy and paste it" : ""}.`
         }
       />
       <div className="readout-tip" ref={readout} hidden aria-live="polite" data-testid="drag-readout" />

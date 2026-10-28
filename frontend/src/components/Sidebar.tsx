@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { embedded, HOSTS, openInHost } from "../host";
 import type { ItemKind, WorkspaceInfo, WorkspaceItem } from "../protocol";
+import type { Editor } from "../problems";
+import { absolute, EDITORS, editorUrl } from "../problems";
 import type { RunForm } from "../runform";
+import type { MenuAction } from "./ItemMenu";
+import { ItemMenu } from "./ItemMenu";
 
 const GROUPS: { kinds: ItemKind[]; title: string; hint: string }[] = [
   { kinds: ["robot"], title: "Robots", hint: "Click to run this robot" },
@@ -45,6 +50,44 @@ function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null, mclL
 
 type Tab = "workspace" | "runs";
 
+const CONFIGS: readonly ItemKind[] = ["robot", "field", "invalid"]; // edited in the app
+
+/** What an item's menu offers: Edit (a config in its editor here, any other file in your
+ * editor), Duplicate and Delete (files, not a project's folder). */
+function itemActions(item: WorkspaceItem, root: string, editor: Editor, unsaved: boolean, act: {
+  edit: () => void;
+  duplicate: () => Promise<void>;
+  remove: () => Promise<void>;
+}): MenuAction[] {
+  const folder = item.kind === "project" ? "A PROS project is a folder: copy or delete it with your file manager" : null;
+  let edit: MenuAction;
+  if (CONFIGS.includes(item.kind)) {
+    edit = { label: "Edit", testid: `edit-${item.path}`, title: "Open it in its editor: its YAML beside a diagram you can drag", run: act.edit };
+  } else {
+    // a project opens at its src/main.cpp
+    const file = absolute(root, item.kind === "project" ? `${item.path}/src/main.cpp` : item.path);
+    if (embedded) {
+      edit = { label: `Edit in ${HOSTS[embedded] ?? embedded}`, testid: `edit-${item.path}`, run: () => openInHost(file, 1, null) };
+    } else {
+      const href = editorUrl(editor, root, { file, line: 1, column: null });
+      edit = href
+        ? { label: `Edit in ${EDITORS[editor]}`, testid: `edit-${item.path}`, href }
+        : { label: "Edit", testid: `edit-${item.path}`, disabled: "Pick an editor under “Open files in”, below the field, to edit it from here" };
+    }
+  }
+  return [
+    edit,
+    { label: "Duplicate", testid: `duplicate-${item.path}`, title: "A copy beside it", run: act.duplicate, disabled: folder },
+    {
+      label: "Delete",
+      testid: `delete-${item.path}`,
+      run: act.remove,
+      disabled: folder,
+      confirm: `Delete ${item.path}?${unsaved ? " Its unsaved changes go too." : ""} It can't be undone.`,
+    },
+  ];
+}
+
 /** The workspace's files, to pick from, and the recorded runs. */
 export function Sidebar(props: {
   workspace: WorkspaceInfo | null;
@@ -53,6 +96,10 @@ export function Sidebar(props: {
   picked: string[] | null; // what that page has picked (null: the run form's picks show)
   onPick: (item: WorkspaceItem) => void;
   onEdit: (item: WorkspaceItem) => void; // open a robot or field config in its editor
+  onDuplicate: (item: WorkspaceItem) => Promise<string>; // a copy beside it: its path
+  onDelete: (item: WorkspaceItem) => Promise<void>;
+  unsaved: Record<string, boolean>; // configs with changes not saved, in their editors
+  editor: Editor; // where files that aren't configs are edited
   onNewRobot: () => void;
   onRefresh: () => void;
   loading: boolean;
@@ -64,6 +111,27 @@ export function Sidebar(props: {
 }) {
   const { workspace, form, onPick } = props;
   const [tab, setTab] = useState<Tab>("workspace");
+  const [menu, setMenu] = useState<{ item: WorkspaceItem; at: { x: number; y: number }; id: number } | null>(null);
+  const [fresh, setFresh] = useState<string | null>(null); // just made: shown, and lit up a moment
+  const opened = useRef(0);
+  // a menu closes itself, not one opened since (its action still going when another opened)
+  const closeMenu = useCallback((id: number) => setMenu((open) => (open?.id === id ? null : open)), []);
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!fresh) return;
+    list.current?.querySelector(`[data-testid="item-${CSS.escape(fresh)}"]`)?.scrollIntoView({ block: "nearest" });
+    const timer = setTimeout(() => setFresh(null), 2500);
+    return () => clearTimeout(timer);
+  }, [fresh, workspace]);
+  /** The menu, at the pointer (a right-click) or, from the keyboard or its ⋯ button, below
+   * the item. */
+  const openMenu = (item: WorkspaceItem, event: React.MouseEvent) => {
+    event.preventDefault();
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const pointer = event.type === "contextmenu" && (event.clientX || event.clientY);
+    const at = pointer ? { x: event.clientX, y: event.clientY } : { x: box.left, y: box.bottom };
+    setMenu((open) => (event.type === "click" && open?.item.path === item.path ? null : { item, at, id: ++opened.current }));
+  };
   const choose = (next: Tab) => {
     setTab(next);
     if (next === "runs") props.onRunsTab();
@@ -87,7 +155,7 @@ export function Sidebar(props: {
       {tab === "runs" ? (
         props.runs
       ) : (
-        <>
+        <div ref={list}>
           {workspace && workspace.items.length === 0 && (
             <p className="muted pad">No robot configs, programs or PROS projects in this folder yet.</p>
           )}
@@ -104,7 +172,6 @@ export function Sidebar(props: {
           {GROUPS.map((group) => {
             const items = workspace?.items.filter((item) => group.kinds.includes(item.kind)) ?? [];
             if (!items.length) return null;
-            const editable = ["robot", "field"].includes(group.kinds[0]);
             const hint = PAGE_HINTS[props.page]?.[group.kinds[0]] ?? group.hint;
             return (
               <section key={group.title} className="group">
@@ -120,11 +187,11 @@ export function Sidebar(props: {
                   {items.map((item) => {
                     const selected = props.picked ? props.picked.includes(item.path) : inUse(item, form, props.shownLog, props.mclLog);
                     return (
-                      <li key={item.kind + item.path} className={editable ? "editable" : undefined}>
+                      <li key={item.kind + item.path} className="with-menu" onContextMenu={(e) => openMenu(item, e)}>
                         <button
-                          className={`item${selected ? " selected" : ""}`}
+                          className={`item${selected ? " selected" : ""}${fresh === item.path ? " fresh" : ""}`}
                           data-testid={`item-${item.path}`}
-                          title={`${item.path}\n${hint}`}
+                          title={`${item.path}\n${hint}\nRight-click for Edit, Duplicate and Delete`}
                           aria-pressed={selected}
                           onClick={() => onPick(item)}
                         >
@@ -136,17 +203,19 @@ export function Sidebar(props: {
                             </span>
                           )}
                         </button>
-                        {editable && (
-                          <button
-                            type="button"
-                            className="ghost small item-edit"
-                            onClick={() => props.onEdit(item)}
-                            title={`Edit ${item.path}: its YAML beside a diagram you can drag`}
-                            data-testid={`edit-${item.path}`}
-                          >
-                            Edit
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          className="ghost small item-more"
+                          onClick={(e) => openMenu(item, e)}
+                          title="Edit, duplicate or delete it (or right-click it)"
+                          aria-label={`More for ${item.name}`}
+                          aria-haspopup="menu"
+                          aria-expanded={menu?.item.path === item.path}
+                          data-menu-trigger=""
+                          data-testid={`menu-${item.path}`}
+                        >
+                          ⋯
+                        </button>
                       </li>
                     );
                   })}
@@ -154,7 +223,20 @@ export function Sidebar(props: {
               </section>
             );
           })}
-        </>
+        </div>
+      )}
+      {menu && (
+        <ItemMenu
+          key={menu.id}
+          label={`${menu.item.name}: what to do with it`}
+          at={menu.at}
+          onClose={() => closeMenu(menu.id)}
+          actions={itemActions(menu.item, workspace?.root ?? "", props.editor, !!props.unsaved[menu.item.path], {
+            edit: () => props.onEdit(menu.item),
+            duplicate: async () => setFresh(await props.onDuplicate(menu.item)),
+            remove: () => props.onDelete(menu.item),
+          })}
+        />
       )}
     </nav>
   );

@@ -314,6 +314,7 @@ test("drags a sensor of the 1239E robot: its number changes and the comments sta
   const file = resolve(WORKSPACE, path);
   const original = readFileSync(file, "utf-8");
   try {
+    await page.getByTestId(`item-${path}`).click({ button: "right" }); // its menu
     await page.getByTestId(`edit-${path}`).click();
     await expect(page.getByTestId("config-state")).toHaveText("no problems");
     // frontL, the distance sensor on port 1: about an inch further forward, along x only
@@ -346,6 +347,7 @@ test("drags a sensor of the 1239E robot: its number changes and the comments sta
 });
 
 test("marks a config's mistakes at their lines as you type", async ({ page }) => {
+  await page.getByTestId("item-examples/fields/practice_elements.yaml").click({ button: "right" }); // its menu
   await page.getByTestId("edit-examples/fields/practice_elements.yaml").click();
   await expect(page.getByTestId("config-state")).toHaveText("no problems");
   await page.locator(".cm-line", { hasText: "size_in: [144, 144]" }).click();
