@@ -9,14 +9,17 @@ every task the code creates keeps running across phases, as on the V5.
 from __future__ import annotations
 
 import math
+import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vexsim.algorithms.localization.base import Pose
 from vexsim.api.devices import ANALOG, DIGITAL
-from vexsim.bridge import routines
+from vexsim.bridge import routines, runner
 from vexsim.bridge.build import BuildResult, build_project
 from vexsim.bridge.host import HostError, Reply, RobotHost
+from vexsim.bridge.runner import RouteRecord
 from vexsim.devices.devices import (
     DistanceDevice,
     GpsDevice,
@@ -91,13 +94,19 @@ class CppProgram:
         busy_timeout_s: float = 5.0,
         env: dict[str, str] | None = None,
         routine: str | None = None,
+        route: str | None = None,
     ):
         """``routine``: the routine to run in place of the one autonomous() calls
-        (routines.py)."""
+        (routines.py). ``route``: a route build's route, as its runner reads it
+        (app/routes.py's ``runner_input``); ``route_record`` then says how it went."""
         self.executable = Path(executable)
         self.env = env
         self.routine = routine
         self.routine_ran = False  # the switch said it ran it
+        self.route = route
+        self.route_record = RouteRecord() if route is not None else None
+        self.autonomous_us: int | None = None  # when the autonomous period started
+        self._route_file: Path | None = None
         self.name = name or self.executable.parent.name
         self.spin_calls_per_ms = spin_calls_per_ms
         self.busy_timeout_s = busy_timeout_s
@@ -152,6 +161,12 @@ class CppProgram:
         }
         if self.routine:
             env[routines.ENV] = self.routine
+        if self.route is not None:
+            handle, name = tempfile.mkstemp(prefix="vexsim-route-", suffix=".txt")
+            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as file:
+                file.write(self.route)
+            self._route_file = Path(name)
+            env[runner.ENV] = name
         self.host = RobotHost(
             self.executable,
             devices,
@@ -173,10 +188,20 @@ class CppProgram:
         else:
             status = connection
         self._pending.append(f"MODE {self._serial} {name} {status}")
+        if name == "autonomous" and self.autonomous_us is None:
+            self.autonomous_us = now_us
         return HostPhase(self, name, self._serial, now_us, limit_s)
 
     def phase_over(self, name: str) -> None:
         """A competition function returned, or its period ended."""
+        record = self.route_record
+        if name == "autonomous" and record is not None and record.started is None and self.sim:
+            if record.error is None and not self.routine_ran:
+                record.error = (
+                    f"autonomous() didn't call a routine from {routines.AUTON_HEADER} that vexsim "
+                    "can switch, so the route didn't run"
+                )
+                self.sim.log(f"vexsim: {record.error}")
         if name == "autonomous" and self.routine and not self.routine_ran and self.sim:
             self.sim.log(
                 f"vexsim: autonomous() didn't call a routine from {routines.AUTON_HEADER} "
@@ -187,6 +212,9 @@ class CppProgram:
     def close(self) -> None:
         if self.host is not None:
             self.host.close()
+        if self._route_file is not None:
+            self._route_file.unlink(missing_ok=True)
+            self._route_file = None
 
     # --- each millisecond ---------------------------------------------------------------------
 
@@ -283,6 +311,13 @@ class CppProgram:
             elif verb == "L":
                 motor.current_limit_a = int(cmd[2]) / 1000.0
         for text in reply.console:
+            if self.route_record is not None and text.startswith(runner.EVENT):
+                true = Pose.from_si(sim.robot.pose)
+                pose = (true.x, true.y, (90.0 - true.heading) % 360.0)
+                time_s = (now_us - (self.autonomous_us or 0)) / 1e6
+                known = self.route_record.read(text, time_s, pose)
+                if known and not text.startswith(runner.EVENT + "can't run"):
+                    continue  # the runner's notes are for vexsim; why it can't run is for you
             sim.log(text)
             if text.startswith(routines.NOTE):
                 self.routine_ran = True

@@ -41,6 +41,21 @@ Sched& S() {
 
 thread_local Tcb* t_current = nullptr;
 
+// The tasks the route runner follows: those a task creates while it holds `mutex` (LemLib
+// starts each async motion's task holding its chassis' motion mutex). Its callbacks run in
+// the task that creates one, and in the one that ends (or the task deleting it).
+struct Follow {
+	SimMutex* mutex = nullptr;
+	void (*started)(std::uint32_t) = nullptr;
+	void (*ended)(std::uint32_t) = nullptr;
+	std::uint32_t count = 0;
+};
+
+Follow& F() {
+	static Follow f;
+	return f;
+}
+
 // Owner of a mutex taken outside any task (from a global constructor).
 Tcb g_no_task;
 
@@ -118,6 +133,13 @@ void mark_deleted(Tcb* t) {
 	wake_joiners(t);
 }
 
+// A followed task's end, said once; called without the scheduler's lock (the callback prints).
+void report_end(Tcb* t) {
+	if (!t->followed || t->follow_ended) return;
+	t->follow_ended = true;
+	if (F().ended) F().ended(t->follow_serial);
+}
+
 void thread_main(Tcb* t) {
 	{
 		Lock lk(S().m);
@@ -128,6 +150,7 @@ void thread_main(Tcb* t) {
 	// thread reaches the OS crash filter first, without its message.
 	try {
 		t->fn(t->arg);
+		report_end(t);
 	} catch (const std::exception& e) {
 		host_uncaught_exception(e.what());
 	} catch (...) {
@@ -146,6 +169,10 @@ Tcb* spawn(void (*fn)(void*), void* arg, std::uint32_t prio, const char* name) {
 	t->name = name ? std::string(name).substr(0, TASK_NAME_MAX_LEN) : "";
 	t->fn = fn;
 	t->arg = arg;
+	if (F().mutex && t_current && F().mutex->owner == t_current) {
+		t->followed = true;
+		t->follow_serial = F().count++;
+	}
 	make_ready(t);
 	S().tasks.push_back(t);
 	std::thread(thread_main, t).detach();
@@ -275,6 +302,11 @@ task_t task_create(task_fn_t function, void* const parameters, uint32_t prio, co
 	(void)stack_depth;
 	Lock lk(S().m);
 	Tcb* t = spawn(function, parameters, prio, name);
+	if (t->followed && F().started) {
+		lk.unlock();
+		F().started(t->follow_serial);
+		lk.lock();
+	}
 	maybe_preempt(lk);
 	return t;
 }
@@ -282,6 +314,7 @@ task_t task_create(task_fn_t function, void* const parameters, uint32_t prio, co
 void task_delete(task_t task) {
 	Tcb* t = resolve(task);
 	if (!t) return;
+	if (t_current && t->state != TaskState::deleted) report_end(t);
 	Lock lk(S().m);
 	if (t->state == TaskState::deleted) return;
 	mark_deleted(t);
@@ -526,4 +559,17 @@ bool mutex_recursive_give(mutex_t mutex) { return mutex_give(mutex); }
 
 }  // namespace c
 }  // namespace pros
+
+// vexsim's own, for the route runner (vexsim/bridge/cpp/route/runner.cpp)
+void vexsim_follow_tasks(void* mutex, void (*started)(std::uint32_t), void (*ended)(std::uint32_t)) {
+	Lock lk(S().m);
+	F().mutex = static_cast<SimMutex*>(mutex);
+	F().started = started;
+	F().ended = ended;
+}
+
+std::uint32_t vexsim_followed_count(void) {
+	Lock lk(S().m);
+	return F().count;
+}
 }

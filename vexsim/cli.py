@@ -222,6 +222,70 @@ def cmd_routines(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_route(args: argparse.Namespace) -> int:
+    """``vexsim route check|run FILE``: a route read and checked, or run headless."""
+    from vexsim.app.routes import label, load_route, run_route
+    from vexsim.app.runspec import RunError
+
+    checked = load_route(args.file)
+    route = checked.route
+    if route is None or checked.errors:
+        print(f"Route  {args.file}")
+        _print_issues(checked.issues)
+        return EXIT_INVALID
+    if args.action == "check":
+        x, y, theta = route.start
+        print(f"Route  {args.file}: {route.name}")
+        print(f"  starts at ({x:g}, {y:g}, {theta:g}), {len(route.steps)} step(s)")
+        for number, step in enumerate(route.steps, 1):
+            print(f"  {number:>3}  {label(step)}")
+        functions = checked.functions
+        if args.functions and functions is not None:
+            print(f"Functions a step can call ({', '.join(route.functions) or 'no headers'}):")
+            for fn in functions.functions:
+                print(f"  {fn.declaration()}")
+            for other in functions.others:
+                print(f"  not callable: {other.name}() (line {other.line}) {other.why}")
+        _print_issues(checked.issues)
+        if not checked.issues:
+            print("  no problems")
+        return EXIT_OK
+    try:
+        result = run_route(args.file, seed=args.seed, noise=args.noise, log=print)
+    except RunError as exc:
+        _print_run_error(exc)
+        return EXIT_INVALID
+    if args.json:
+        import json
+
+        print(json.dumps(result, indent=2))
+        return EXIT_OK if result["error"] is None else EXIT_INVALID
+    if result["error"]:
+        print(f"error: {result['error']}")
+    ended = result["ended_s"]
+    print(
+        f"{route.name}: {len(route.steps)} step(s)"
+        + (
+            f", done {ended:.2f} s into the {result['period_s']:g} s autonomous period"
+            if result["finished"]
+            else ""
+        )
+    )
+    row = "  {:>4}  {:>7}  {:>8}  {:<20}  {:<20}  {}"
+    print(row.format("step", "ends at", "took (s)", "robot (x, y, θ)", "LemLib (x, y, θ)", "what"))
+    for step in result["steps"]:
+        if step["ended_s"] is None:
+            where = "didn't end" if step["started_s"] is not None else "didn't start"
+            print(row.format(step["number"], where, "", "", "", step["label"]))
+            continue
+        pose = ", ".join(f"{v:.1f}" for v in step["pose"])
+        lemlib = ", ".join(f"{v:.1f}" for v in step["lemlib"]) if step["lemlib"] else "-"
+        flag = " (used up its timeout)" if step["timed_out"] else ""
+        ended, took = f"{step['ended_s']:.3f}", f"{step['duration_s']:.3f}"
+        print(row.format(step["number"], ended, took, pose, lemlib, step["label"] + flag))
+    return EXIT_OK if result["error"] is None else EXIT_INVALID
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from vexsim.bridge.doctor import run_doctor
 
@@ -518,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
             "viewer for keys."
         ),
     )
-    p.add_argument("robot", help="robot YAML file")
+    p.add_argument("robot", nargs="?", help="robot YAML file (a --route's own, if left out)")
     p.add_argument(
         "--program",
         help="Python robot program file, or a PROS 4 project folder (built with `vexsim build`)",
@@ -528,6 +592,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help="PROS projects: run this routine from include/custom/auton.hpp in place of the "
         "one autonomous() calls (vexsim routines PROJECT lists them)",
+    )
+    p.add_argument(
+        "--route",
+        metavar="FILE",
+        help="run a route (a YAML file in a PROS project's routes/ folder) as a routine is "
+        "run: its project, robot, field and start, unless given",
     )
     p.add_argument(
         "--mode",
@@ -600,6 +670,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("project", help="PROS project folder")
     p.set_defaults(func=cmd_routines)
+
+    p = sub.add_parser(
+        "route",
+        help="check an autonomous route, or run it and see where each step ended",
+        description=(
+            "A route is a YAML file in a PROS project's routes/ folder: a start pose and steps "
+            "(LemLib motions, pauses and calls of the team's functions), run in the project's "
+            "own autonomous() without changing the project. check reads and checks it; run "
+            "runs it headless and prints where each step ended."
+        ),
+    )
+    actions = p.add_subparsers(dest="action", required=True)
+    check = actions.add_parser("check", help="read and check a route")
+    check.add_argument("file", help="the route's YAML file")
+    check.add_argument(
+        "--functions", action="store_true", help="list the functions its headers declare"
+    )
+    check.set_defaults(func=cmd_route)
+    run = actions.add_parser("run", help="run a route headless; print where each step ended")
+    run.add_argument("file", help="the route's YAML file")
+    run.add_argument("--seed", type=int, default=0)
+    run.add_argument("--noise", choices=["ideal", "default", "harsh"], help="sensor noise preset")
+    run.add_argument("--json", action="store_true", help="print the endpoints as JSON")
+    run.set_defaults(func=cmd_route)
 
     p = sub.add_parser(
         "build",

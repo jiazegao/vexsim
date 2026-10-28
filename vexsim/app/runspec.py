@@ -75,6 +75,7 @@ class RunSpec(BaseModel):
     robot: str
     program: str | None = None
     routine: str | None = None  # a PROS project's, run inside autonomous() (bridge/routines.py)
+    route: str | None = None  # a route's file (app/routes.py), run as a routine is
     field: str | None = None
     mode: Mode | None = None
     start: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -97,17 +98,25 @@ class RunSpec(BaseModel):
         elif getattr(args, "sticks", None) or getattr(args, "curve", None):
             raise RunError("--sticks and --curve go with --follow")
         routine = getattr(args, "routine", None)
+        route = getattr(args, "route", None)
+        given = route_defaults(route) if route else {}
         if args.start is not None:
             start = (args.start.x, args.start.y, args.start.heading)
         elif follow is not None:
             start = log_start(follow.log)
+        elif route:
+            start = given.get("start", (0.0, 0.0, 0.0))
         else:
             start = routine_start(args.program, routine) or (0.0, 0.0, 0.0)
+        robot = args.robot or given.get("robot")
+        if not robot:
+            raise RunError("pick the robot: vexsim run ROBOT (or --route FILE, whose robot it is)")
         return cls(
-            robot=args.robot,
-            program=args.program,
+            robot=robot,
+            program=args.program or given.get("program"),
             routine=routine,
-            field=args.field,
+            route=route,
+            field=args.field or given.get("field"),
             mode=args.mode,
             start=start,
             seed=args.seed,
@@ -124,6 +133,7 @@ class RunSpec(BaseModel):
         for flag, value in (
             ("--program", self.program),
             ("--routine", self.routine),
+            ("--route", self.route),
             ("--field", self.field),
         ):
             if value:
@@ -173,11 +183,38 @@ class RunSpec(BaseModel):
             update={
                 "robot": absolute(self.robot),
                 "program": absolute(self.program),
+                "route": absolute(self.route),
                 "field": absolute(self.field),
                 "input": absolute(self.input),
                 "follow": follow,
             }
         )
+
+
+def route_defaults(route: str, base: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+    """What a run of ``route`` takes from it: its robot, project, field and start, paths as
+    ``route`` is given (relative to ``base``, or the working directory); what it can't read
+    is left out, for ``check`` to explain."""
+    from vexsim.app.routes import project_of, read_route
+    from vexsim.config.issues import ConfigError
+    from vexsim.config.yaml_io import load_yaml_file
+
+    path = Path(base or ".") / route
+    try:
+        found, _ = read_route(load_yaml_file(path), path.stem)
+    except ConfigError:
+        found = None
+    folder = os.path.dirname(route)
+    given: dict[str, Any] = {}
+    project = project_of(path)
+    if project is not None:
+        given["program"] = os.path.normpath(os.path.join(folder, ".."))
+    if found is not None:
+        for key in ("robot", "field"):
+            if getattr(found, key):
+                given[key] = os.path.normpath(os.path.join(folder, getattr(found, key)))
+        given["start"] = found.start_pose()
+    return given
 
 
 def routine_start(project: str | None, routine: str | None) -> tuple[float, float, float] | None:
@@ -257,6 +294,7 @@ class Prepared:
     project: Path | None = None  # the PROS project folder, if the program is one
     program_file: Path | None = None  # the Python program, if the program is one
     follow: Any = None  # the path to follow (vexsim.runtime.follow.LoggedPath), if any
+    route: Any = None  # the route to run, checked (vexsim.app.routes.CheckedRoute), if any
     warnings: list[ConfigIssue] = field(default_factory=list)
 
 
@@ -291,6 +329,8 @@ def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared
             raise RunError(f"program not found: {named.program}")
     if spec.routine:
         _check_routine(prepared, named)
+    if spec.route:
+        _check_route(prepared, named)
     if spec.input and not Path(spec.input).is_file():
         raise RunError(f"input not found: {named.input}")
     if spec.follow is not None:
@@ -330,6 +370,34 @@ def _check_routine(prepared: Prepared, named: RunSpec) -> None:
     if prepared.spec.mode == "driver":
         message = "a routine runs in the autonomous period: in autonomous, match or skills mode"
         prepared.warnings.append(ConfigIssue("warning", "routine", message))
+
+
+def _check_route(prepared: Prepared, named: RunSpec) -> None:
+    """The route reads and checks, and the run is its project's, in the autonomous period."""
+    from vexsim.app.routes import load_route
+
+    spec = prepared.spec
+    if spec.routine:
+        raise RunError("a run picks a routine or runs a route, not both")
+    if not Path(spec.route).is_file():
+        raise RunError(f"route not found: {named.route}")
+    checked = load_route(spec.route)
+    if checked.route is None or checked.errors:
+        raise RunError(f"{named.route}: the route has errors", checked.errors, source=named.route)
+    project = checked.project
+    if prepared.project is None and prepared.program_file is None and not spec.program:
+        prepared.project = project
+    elif prepared.project is None or prepared.project.resolve() != project.resolve():
+        raise RunError(
+            f"{named.route} is a route of {project}, so the run's program is that project"
+        )
+    if spec.mode == "driver":
+        raise RunError("a route runs in the autonomous period: in autonomous, match or skills mode")
+    prepared.route = checked
+    for issue in checked.issues:
+        if issue.severity == "warning" and issue.location != "start":
+            where = f"{issue.location}: " if issue.location else ""
+            prepared.warnings.append(ConfigIssue("warning", "route", where + issue.message))
 
 
 def _path_to_follow(spec: RunSpec, named: RunSpec):
@@ -451,10 +519,17 @@ def build(prepared: Prepared, log: Callable[[str], None] | None = print) -> Path
 
     if prepared.project is None:
         raise ValueError("this run's program isn't a PROS project")
+    route = prepared.route.route if prepared.route is not None else None
     try:
-        result = build_project(prepared.project, log=log)
+        result = build_project(
+            prepared.project, log=log, route=list(route.functions) if route else None
+        )
     except BuildError as exc:
         raise RunError(str(exc)) from None
+    for number, step in enumerate(route.steps if route else (), 1):
+        why = result.functions_left_out.get(step.function or "")
+        if why:
+            raise RunError(f"step {number} calls {step.function}(), which {why}")
     routine = prepared.spec.routine
     if routine and routine not in result.routines:
         why = next((n for n in result.notes if n.startswith(f"{routine}() ")), None)
@@ -478,6 +553,11 @@ def program_factory(
         if executable is None:
             raise ValueError("a PROS project needs its executable: build it first")
         name = prepared.project.resolve().name
+        route = None
+        if prepared.route is not None:
+            from vexsim.app.routes import runner_input
+
+            route = runner_input(prepared.route.route, prepared.route.functions)
 
         def make_cpp():
             return CppProgram(
@@ -486,6 +566,7 @@ def program_factory(
                 busy_timeout_s=spec.busy_timeout,
                 env=dict(spec.env),
                 routine=spec.routine,
+                route=route,
             )
 
         return make_cpp, spec.mode or "autonomous"

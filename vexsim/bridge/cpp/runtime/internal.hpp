@@ -35,6 +35,10 @@ struct Tcb {
 	std::condition_variable cv;
 	void (*fn)(void*) = nullptr;
 	void* arg = nullptr;
+	// a task the route runner follows (vexsim_follow_tasks): LemLib's async motions
+	bool followed = false;
+	bool follow_ended = false;  // its end was reported
+	std::uint32_t follow_serial = 0;
 };
 
 struct SimMutex {

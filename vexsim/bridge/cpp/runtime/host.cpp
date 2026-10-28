@@ -320,6 +320,24 @@ void host_busy(const Tcb* task, double seconds) {
 
 using namespace vexsim;
 
+namespace {
+// A route build's runner, when VEXSIM_ROUTE names a route (vexsim/bridge/cpp/route/runner.cpp):
+// the routine switch runs it, if the build has one; else it runs in place of autonomous().
+void (*g_route)(void) = nullptr;
+bool g_routine_switch = false;
+
+void (*phase_function(const Phase& phase))() {
+	if (g_route && !g_routine_switch && std::strcmp(phase.name, "autonomous") == 0) return g_route;
+	return phase.fn;
+}
+}  // namespace
+
+extern "C" {
+void vexsim_set_route(void (*run)(void)) { g_route = run; }
+void vexsim_routine_switch(void) { g_routine_switch = true; }
+void (*vexsim_route(void))(void) { return g_route; }
+}
+
 int main() {
 	std::set_terminate([] {
 		// Let the C++ runtime print the exception, then report it as a crash.
@@ -353,7 +371,8 @@ int main() {
 			sched_wake(now);
 			if (pending_phase) {
 				devices_set_competition(pending_status);
-				sched_start_competition_task(pending_phase->fn, pending_phase->task_name, pending_serial);
+				sched_start_competition_task(phase_function(*pending_phase), pending_phase->task_name,
+				                             pending_serial);
 				pending_phase = nullptr;
 			}
 			std::uint64_t next = sched_run();

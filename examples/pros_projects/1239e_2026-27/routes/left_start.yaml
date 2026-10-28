@@ -1,0 +1,16 @@
+# The start of 1239E's left40() as a route (PLAN.md, phase 13): vexsim runs it in the
+# project's own autonomous(), without changing the project. Numbers are LemLib's: inches,
+# and theta in degrees clockwise from +y.
+version: 1
+name: Left start
+robot: ../../../robots/1239e_2026-27.yaml   # relative to this file
+field: ../../../fields/1239e_2026-27.yaml
+start: [60, 0, 90]                          # chassis.setPose(60, 0, 90)
+functions: [include/custom/util_funcs.hpp, include/custom/lift_control.hpp]
+steps:
+  - {call: moveForward, args: {inches: -10, timeout: 800, minSpeed: 1}}
+  - {turn_to_heading: 270, timeout: 800, max_speed: 100}
+  - {move_to_point: [14, 0], timeout: 1000, max_speed: 60}
+  - {call: startFrontIntake}
+  - {wait: 100}
+  - {move_to_point: [36, 0], timeout: 1000, forwards: false, min_speed: 60, early_exit: 3, async: false}

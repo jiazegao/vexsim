@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -178,6 +178,8 @@ class BuildResult:
     notes: list[str] = field(default_factory=list)
     lemlib: str | None = None  # LemLib version built from source, if the project uses it
     routines: list[str] = field(default_factory=list)  # the ones a run can pick (routines.py)
+    # a route build's: the team's functions its runner can't call, and why (bridge/runner.py)
+    functions_left_out: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -493,8 +495,13 @@ def build_project(
     workers: int | None = None,
     debug: bool = False,
     log: Callable[[str], None] | None = None,
+    route: Sequence[str] | None = None,
 ) -> BuildResult:
-    """Build (incrementally) a PROS 4 project; returns the robot host executable."""
+    """Build (incrementally) a PROS 4 project; returns the robot host executable.
+
+    ``route``: a route build (bridge/runner.py), with the team's functions from these headers
+    (relative to the project). It shares the project's objects with its other builds, and
+    has an executable of its own."""
     start = time.perf_counter()
     project = Path(project).resolve()
     if not is_pros_project(project):
@@ -550,6 +557,7 @@ def build_project(
     flags_key = _digest(tc.cxx, tc.version_text, *opt, *map(str, includes), *DEFINES)
 
     generated = out / "generated"
+    runner = _runner_parts(project, list(route), lemlib_version) if route is not None else None
     _generate_assets(project, generated / "vexsim_assets.cpp")
     sources.append(generated / "vexsim_assets.cpp")
     if lemlib_version:
@@ -575,13 +583,13 @@ def build_project(
             )
     user_sources = [s for s in sources if s.is_relative_to(stage)]
     runtime_objs, runtime_lib = build_runtime(tc, workers=workers)
-    exe = out / EXE_NAME
+    exe = out / (EXE_NAME if route is None else EXE_NAME.replace("robot_host", "robot_host_route"))
     left_out: dict[str, str] = {}  # routine: why, as linking found
     compiled_user = 0
-    while True:
-        switched = [r for r in switchable if r.name not in left_out]
-        first = _routine_files(switched, generated, stage)
-        units = sources + ([generated / "vexsim_routines.cpp"] if switched else [])
+
+    def compile_units(units: list[Path], first: dict[Path, Path]) -> tuple[list[Path], int, int]:
+        """Compile what's out of date: the objects, how many sources compiled, and how many
+        of those were the project's own."""
         jobs, objs = [], []
         for src in units:
             rel = src.relative_to(stage if src.is_relative_to(stage) else out)
@@ -601,10 +609,25 @@ def build_project(
         compiled = _compile_all(tc, [job[:3] for job in jobs], parallel, rewrite)
         for _, obj, _, key in jobs:
             obj.with_suffix(".flags").write_text(key)
+        return objs, compiled, count
+
+    while True:
+        switched = [r for r in switchable if r.name not in left_out]
+        first = _routine_files(switched, generated, stage)
+        units = sources + ([generated / "vexsim_routines.cpp"] if switched else [])
+        objs, compiled, count = compile_units(units, first)
         compiled_user += count
+        undefined: dict[str, str] = {}
+        if runner is not None:  # the team's functions that some file defines (or the header)
+            user_objs = [o for o in objs if "generated" not in o.parts]
+            defined = _defined_names(tc, user_objs + libraries)
+            source, undefined = _runner_file(runner, defined, generated, stage)
+            more, recompiled, _ = compile_units([source], {})
+            objs, compiled = objs + more, compiled or recompiled
         result = BuildResult(
             exe, compiled_user, len(user_sources), 0.0, kernel=kernel, notes=notes,
             lemlib=lemlib_version, routines=[r.name for r in switched],
+            functions_left_out=undefined,
         )  # fmt: skip
         inputs = objs + libraries + runtime_objs + [runtime_lib]
         if (
@@ -659,7 +682,8 @@ def _link(
 
 
 def _linked(exe: Path) -> Path:
-    return exe.with_name("robot_host.tmp" + (".exe" if sys.platform == "win32" else ""))
+    stem = exe.name.removesuffix(".exe")
+    return exe.with_name(stem + ".tmp" + (".exe" if sys.platform == "win32" else ""))
 
 
 def _install(exe: Path) -> Path:
@@ -668,9 +692,69 @@ def _install(exe: Path) -> Path:
     try:
         os.replace(linked, exe)
     except PermissionError:  # Windows: the old executable is still running (open viewer)
-        exe = exe.with_name(f"robot_host-{int(time.time())}.exe")
+        exe = exe.with_name(f"{exe.name.removesuffix('.exe')}-{int(time.time())}.exe")
         os.replace(linked, exe)
     return exe
+
+
+@dataclass(frozen=True)
+class _Runner:
+    project: Path
+    headers: list[str]
+    functions: object  # functions.Functions
+    chassis: object  # runner.Chassis
+
+
+def _runner_parts(project: Path, headers: list[str], lemlib_version: str | None) -> _Runner:
+    """What a route build's runner (bridge/runner.py) is made of; raises BuildError when
+    there's no runner to make."""
+    from vexsim.bridge.functions import find_functions
+    from vexsim.bridge.runner import find_chassis
+
+    if not lemlib_version:
+        raise BuildError(f"a route runs LemLib's motions, and {project.name} doesn't use LemLib")
+    chassis = find_chassis(project)
+    if isinstance(chassis, str):
+        raise BuildError(chassis)
+    functions = find_functions(project, headers)
+    if functions.missing:
+        raise BuildError(f"{project.name} has no {', '.join(functions.missing)}")
+    return _Runner(project, headers, functions, chassis)
+
+
+def _runner_file(
+    runner: _Runner, defined: set[str], generated: Path, stage: Path
+) -> tuple[Path, dict[str, str]]:
+    """Write the runner, without the functions no file defines (they wouldn't link):
+    where it is, and those functions, with why."""
+    from dataclasses import replace
+
+    from vexsim.bridge.runner import runner_source
+
+    functions = runner.functions
+    why = "is declared, but no file vexsim's build compiles defines it"
+    undefined = {
+        f.name: why for f in functions.functions if not f.defined and f.name not in defined
+    }
+    kept = replace(functions, functions=[f for f in functions.functions if f.name not in undefined])
+    path = generated / "vexsim_route.cpp"
+    text = runner_source(runner.project, runner.headers, kept, runner.chassis, stage, undefined)
+    _write_if_changed(path, text)
+    return path, undefined
+
+
+def _defined_names(tc: Toolchain, files: list[Path]) -> set[str]:
+    """The functions ``files`` (objects and libraries) define, by qualified name."""
+    result = _run([_tool(tc, "nm"), "--defined-only", "-C", *map(str, files)])
+    names = set()
+    for line in result.stdout.splitlines():
+        parts = line.split(maxsplit=2)
+        if len(parts) == 3 and parts[1] in ("T", "W"):
+            name = parts[2].split("(")[0].strip()
+            if sys.platform == "darwin" and "(" not in parts[2]:
+                name = name.removeprefix("_")  # a C function's symbol
+            names.add(name)
+    return names
 
 
 def _routine_files(switched: list[Routine], generated: Path, stage: Path) -> dict[Path, Path]:
