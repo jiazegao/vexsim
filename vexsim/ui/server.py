@@ -95,6 +95,7 @@ from vexsim.ui.protocol import (
     ReplayRequest,
     ResultAbout,
     ResultReplayRequest,
+    RouteInfo,
     RoutineInfo,
     RoutinePlan,
     RoutineRequest,
@@ -247,7 +248,7 @@ class UIServer:
     def check(self, spec: RunSpec):
         """``check`` the spec's files, which must be inside the workspace (raises RunError)."""
         follow = spec.follow.log if spec.follow else None
-        for path in (spec.robot, spec.program, spec.field, spec.input, follow):
+        for path in (spec.robot, spec.program, spec.route, spec.field, spec.input, follow):
             if path:
                 try:
                     self.workspace.path(path)
@@ -275,7 +276,8 @@ class UIServer:
             threading.Thread(target=session.start, daemon=True).start()
             return session
         project = prepared.project.resolve()
-        job = self.submit_build(project)
+        route = list(prepared.route.route.functions) if prepared.route is not None else None
+        job = self.submit_build(project, route=route)
         session.building()
         with self._lock:
             self._waiting.setdefault(job.id, []).append(session)
@@ -285,10 +287,15 @@ class UIServer:
             self._job_done(job)
         return session
 
-    def submit_build(self, project: Path, debug: bool = False):
-        """Build a PROS project (or join its build already running)."""
+    def submit_build(self, project: Path, debug: bool = False, route: list[str] | None = None):
+        """Build a PROS project (or join its build already running); ``route``: a route
+        build, with the team's functions from these headers."""
         title, key = f"Build {project.name}" + (" (debug)" if debug else ""), f"build:{project}"
         params = {"project": str(project), "debug": debug}
+        if route is not None:
+            title += " for a route"
+            key += ":route:" + "|".join(route)
+            params["route"] = route
         return self.jobs.submit("build", params, title=title, key=key)
 
     def submit_job(self, request):
@@ -337,6 +344,13 @@ class UIServer:
             store = results.results_root(ws.root, "sweeps")
             params.update(root=root, results=str(store))
             return self.jobs.submit(kind, params, title=f"Sweep: {request.sweep.name}")
+        if kind == "route":
+            route = ws.path(request.route)
+            if not route.is_file():
+                raise ValueError(f"{request.route} doesn't exist")
+            params.update(route=ws.relative(route), root=root)
+            title = f"Route: {route.name}"
+            return self.jobs.submit(kind, params, title=title, key=f"route:{route}:{request.seed}")
         raise ValueError(f"unknown job kind {kind}")
 
     def robot_file(self, relative: str) -> Path:
@@ -831,8 +845,29 @@ def create_app(
                 NotRoutineInfo(name=o.name, line=o.line, why=o.why)
                 for o in (found.others if found else [])
             ],
+            routes=_routes(folder),
         )
         return Response(listed.model_dump_json(), media_type="application/json")
+
+    def _routes(project: Path) -> list[RouteInfo]:
+        """The project's routes, as a run takes them."""
+        from vexsim.app.runspec import route_defaults
+
+        ws = server.workspace
+        listed = []
+        for item in ws.scan_routes(project):
+            given = route_defaults(item.path, ws.root)
+            listed.append(
+                RouteInfo(
+                    path=item.path,
+                    name=item.name,
+                    robot=given.get("robot"),
+                    field=given.get("field"),
+                    start=given.get("start"),
+                    problem=item.problem or None,
+                )  # fmt: skip
+            )
+        return listed
 
     @app.post("/api/sessions", responses={422: {"model": RunProblem}})
     def start_session(request: StartSession):

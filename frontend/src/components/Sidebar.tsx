@@ -13,6 +13,7 @@ const GROUPS: { kinds: ItemKind[]; title: string; hint: string }[] = [
   { kinds: ["field"], title: "Fields", hint: "Click to run on this field" },
   { kinds: ["program"], title: "Python programs", hint: "Click to run this program" },
   { kinds: ["project"], title: "PROS projects", hint: "Click to build and run this project" },
+  { kinds: ["route"], title: "Autonomous routes", hint: "Click to run this route in its project's autonomous()" },
   { kinds: ["input"], title: "Controller inputs", hint: "Click to drive with this recorded input" },
   { kinds: ["log"], title: "Telemetry logs", hint: "Click to play this log back, drawn with the robot and field picked above" },
   { kinds: ["robotlog"], title: "Robot logs", hint: "Click to calibrate the simulated robot with this log" },
@@ -37,6 +38,8 @@ function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null, mclL
     case "program":
     case "project":
       return form.program === item.path;
+    case "route":
+      return form.route === item.path;
     case "input":
       return form.input === item.path;
     case "log":

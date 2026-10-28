@@ -20,6 +20,7 @@ ItemKind = Literal[
     "scenario",
     "program",
     "project",
+    "route",
     "input",
     "log",
     "robotlog",
@@ -31,6 +32,7 @@ KIND_ORDER: tuple[str, ...] = (
     "field",
     "program",
     "project",
+    "route",
     "scenario",
     "input",
     "log",
@@ -98,6 +100,7 @@ class Workspace:
             depth = len(here.relative_to(self.root).parts)
             if "project.pros" in files:
                 items.append(self._project(here))
+                items += self._routes(here)
                 dirs[:] = []  # a project's sources and headers aren't workspace files
                 continue
             dirs[:] = sorted(
@@ -125,6 +128,39 @@ class Workspace:
             folder.name,
             "PROS project with LemLib" if lemlib else "PROS project",
         )
+
+    def scan_routes(self, project: str | os.PathLike[str]) -> list[WorkspaceItem]:
+        """A PROS project's autonomous routes (the YAML files in its routes/ folder)."""
+        return self._routes(Path(project).resolve())
+
+    def _routes(self, project: Path) -> list[WorkspaceItem]:
+        """The project's autonomous routes: the YAML files in its routes/ folder."""
+        from vexsim.app.routes import FOLDER, load_route
+
+        folder = project / FOLDER
+        items = []
+        for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+            if path.suffix.lower() not in (".yaml", ".yml") or not path.is_file():
+                continue
+            checked = load_route(path)
+            route = checked.route
+            if route is None:
+                problem = next(
+                    (f"{i.location or '(document)'}: {i.message}" for i in checked.errors), ""
+                )
+                items.append(
+                    WorkspaceItem("route", self.relative(path), path.name, problem=problem)
+                )
+                continue
+            x, y, theta = route.start
+            steps = len(route.steps)
+            detail = (
+                f"{steps} step{'s' if steps != 1 else ''}, from setPose({x:g}, {y:g}, {theta:g})"
+            )
+            errors = checked.errors
+            problem = f"{errors[0].location or '(document)'}: {errors[0].message}" if errors else ""
+            items.append(WorkspaceItem("route", self.relative(path), route.name, detail, problem))
+        return items
 
     def _classify(self, path: Path) -> WorkspaceItem | None:
         suffix = path.suffix.lower()

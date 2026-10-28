@@ -5,6 +5,7 @@ import type { RunForm } from "../runform";
 import { MODES, NOISE, sameRun, STICKS } from "../runform";
 
 const ANY_LOG = "*"; // a saved run that follows whichever log it's given
+const ROUTE = "route:"; // the routine list's routes: no routine is called that
 const NEW_ROBOT = "\u0000new"; // the robot list's "New robot…": no file is called that
 
 export function RunBar(props: {
@@ -30,11 +31,15 @@ export function RunBar(props: {
   const theta = Number.isFinite(heading) ? lemlibTheta(heading) : null;
   const project = of("project").some((item) => item.path === form.program);
   const following = !!form.follow || form.following;
-  const routines = project && props.routines?.found ? props.routines : null;
-  const pickRoutine = (name: string) => {
-    const start = routines?.routines.find((r) => r.name === name)?.start; // where its setPose puts it
+  const listed = project ? props.routines : null;
+  const routines = listed?.found ? listed : null;
+  const routes = listed?.routes ?? [];
+  const pickRoutine = (value: string) => {
+    const route = value.startsWith(ROUTE) ? routes.find((r) => r.path === value.slice(ROUTE.length)) : undefined;
+    const start = route ? route.start : routines?.routines.find((r) => r.name === value)?.start; // where its setPose puts it
     const at = start ? { x: String(start[0]), y: String(start[1]), heading: String(start[2]) } : {};
-    onChange({ ...form, routine: name, ...at });
+    if (route) onChange({ ...form, routine: "", route: route.path, ...at, ...(route.robot ? { robot: route.robot } : {}), field: route.field ?? form.field });
+    else onChange({ ...form, routine: value, route: "", ...at });
   };
 
   const chosen = configurations.find((c) => c.name === form.config) ?? null;
@@ -99,7 +104,7 @@ export function RunBar(props: {
         </label>
         <label className="field wide">
           <span>Program</span>
-          <select value={form.program} onChange={(e) => onChange({ ...form, program: e.target.value, routine: "" })} data-testid="program">
+          <select value={form.program} onChange={(e) => onChange({ ...form, program: e.target.value, routine: "", route: "" })} data-testid="program">
             <option value="">None: drive it with the keys or a gamepad</option>
             {of("program").length > 0 && (
               <optgroup label="Python programs">
@@ -122,18 +127,32 @@ export function RunBar(props: {
             )}
           </select>
         </label>
-        {routines && (
-          <label className="field routine" title={`The routine to run inside the project's autonomous(), in place of the one it calls (they're the functions in ${routines.header}); picking one starts the robot where its setPose puts it`}>
+        {(routines || routes.length > 0) && (
+          <label
+            className="field routine"
+            title={`The routine to run inside the project's autonomous(), in place of the one it calls (${routines ? `the functions in ${routines.header}` : "it has none"}), or one of its routes (routes/): picking one starts the robot where its setPose puts it`}
+          >
             <span>Routine</span>
-            <select value={form.routine} onChange={(e) => pickRoutine(e.target.value)} data-testid="routine">
+            <select value={form.route ? ROUTE + form.route : form.routine} onChange={(e) => pickRoutine(e.target.value)} data-testid="routine">
               <option value="">As the project picks</option>
-              {form.routine && !routines.routines.some((r) => r.name === form.routine) && <option value={form.routine}>{form.routine} (not in {routines.header})</option>}
-              {routines.routines.map((r) => (
+              {routines && form.routine && !routines.routines.some((r) => r.name === form.routine) && <option value={form.routine}>{form.routine} (not in {routines.header})</option>}
+              {routines?.routines.map((r) => (
                 <option key={r.name} value={r.name} disabled={!r.source} title={r.source ? `${r.source}` : "vexsim can't tell which file defines it"}>
                   {r.name}
                   {r.source ? "" : " (not found)"}
                 </option>
               ))}
+              {(routes.length > 0 || form.route) && (
+                <optgroup label="Routes (routes/)">
+                  {form.route && !routes.some((r) => r.path === form.route) && <option value={ROUTE + form.route}>{form.route} (not found)</option>}
+                  {routes.map((r) => (
+                    <option key={r.path} value={ROUTE + r.path} disabled={!!r.problem} title={r.problem ?? r.path}>
+                      {r.name}
+                      {r.problem ? " (has errors)" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </label>
         )}

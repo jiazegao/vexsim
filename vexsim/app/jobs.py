@@ -37,6 +37,7 @@ JOB_KINDS: dict[str, str] = {
     "bench": "vexsim.app.benchmarks:run_benchmark",
     "calibrate": "vexsim.app.calibrate:calibrate",
     "sweep": "vexsim.app.sweeps:run_sweep",
+    "route": "vexsim.app.routes:route_job",
 }
 
 
@@ -61,7 +62,9 @@ class Report:
 def build(params: dict, report: Report) -> dict:
     from vexsim.bridge.build import build_project
 
-    result = build_project(params["project"], debug=params.get("debug", False), log=report)
+    result = build_project(
+        params["project"], debug=params.get("debug", False), log=report, route=params.get("route")
+    )
     return {
         "executable": str(result.executable),
         "linked": result.linked,

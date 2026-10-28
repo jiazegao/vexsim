@@ -630,6 +630,24 @@ export function App() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [anyUnsaved]);
 
+  /** A route to run: its project's, with its robot, field and start (as its setPose has it). */
+  const pickRoute = async (path: string) => {
+    const project = path.split("/").slice(0, -2).join("/") || ".";
+    const listed = await api.routines(project).catch(() => null);
+    const route = listed && "ok" in listed ? listed.ok.routes?.find((r) => r.path === path) : undefined;
+    const start = route?.start;
+    setForm((current) => ({
+      ...current,
+      program: project,
+      routine: "",
+      route: path,
+      mode: current.mode === "driver" ? "" : current.mode,
+      ...(start ? { x: formatStart(start[0]), y: formatStart(start[1]), heading: formatStart(start[2]) } : {}),
+      ...(route?.robot ? { robot: route.robot } : {}),
+      ...(route ? { field: route.field ?? "" } : {}),
+    }));
+  };
+
   /** A workspace item clicked in the sidebar: for the page on show where it's of use there,
    * else for a run on the Simulate page. */
   const pick = (item: WorkspaceItem) => {
@@ -650,6 +668,11 @@ export function App() {
     if (item.kind === "mcllog") {
       setPage("simulate");
       openMclLog(item.path);
+      return;
+    }
+    if (item.kind === "route") {
+      setPage("simulate");
+      void pickRoute(item.path);
       return;
     }
     if (page === "analyze" && item.kind === "robot") return setAnalyzeRobot(item.path);

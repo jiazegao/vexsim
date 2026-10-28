@@ -16,6 +16,7 @@ export interface RunForm {
   field: string; // "" = an empty field
   program: string; // "" = none: the controller drives
   routine: string; // a PROS project's routine, run inside autonomous(); "" = as the project picks
+  route: string; // or a route of the project's (routes/*.yaml), run as a routine is; "" = none
   mode: "" | Mode; // "" = the program's default
   x: string;
   y: string;
@@ -38,6 +39,7 @@ export function emptyForm(): RunForm {
     field: "",
     program: "",
     routine: "",
+    route: "",
     mode: "",
     x: "0",
     y: "0",
@@ -86,7 +88,8 @@ export function formToSpec(form: RunForm): { spec: RunSpec } | { error: string }
     const spec: RunSpec = {
       robot: form.robot,
       program: form.program || null,
-      routine: (form.program && form.routine) || null,
+      routine: (form.program && !form.route && form.routine) || null,
+      ...(form.program && form.route ? { route: form.route } : {}),
       field: form.field || null,
       mode: form.mode || null,
       start: [number(form.x, "Start x"), number(form.y, "Start y"), number(form.heading, "Heading")],
@@ -111,6 +114,7 @@ export function specToForm(spec: RunSpec, config = ""): RunForm {
     field: spec.field ?? "",
     program: spec.program ?? "",
     routine: spec.routine ?? "",
+    route: spec.route ?? "",
     mode: (spec.mode ?? "") as RunForm["mode"],
     x: String(x),
     y: String(y),
@@ -135,6 +139,7 @@ function canonical(spec: RunSpec): string {
     robot: spec.robot,
     program: spec.program || null,
     routine: spec.routine || null,
+    route: spec.route || null,
     field: spec.field || null,
     mode: spec.mode || null,
     start: (spec.start ?? [0, 0, 0]).map(Number),
@@ -161,6 +166,7 @@ export function reconcile(form: RunForm, items: WorkspaceItem[]): RunForm {
   if (next.robot && !has(["robot"], next.robot)) next.robot = "";
   if (next.field && !has(["field"], next.field)) next.field = "";
   if (next.program && !has(["program", "project"], next.program)) next.program = "";
+  if (next.route && !has(["route"], next.route)) next.route = "";
   if (next.input && !has(["input"], next.input)) next.input = "";
   if (next.follow && !has(["mcllog"], next.follow)) next.follow = "";
   if (!next.robot) {

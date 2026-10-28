@@ -50,6 +50,7 @@ include = ["vexsim*"]
     "cpp/runtime/*.cpp",
     "cpp/runtime/*.hpp",
     "cpp/runtime/defaults/*.cpp",
+    "cpp/route/*.cpp",
 ]
 # The browser app, built from frontend/ by `npm run build`, and the VS Code extension
 "vexsim.ui" = ["static/*", "static/assets/*", "static/icons/*", "vscode/*"]

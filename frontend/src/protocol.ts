@@ -1,14 +1,14 @@
 // Generated from vexsim/ui/protocol.py: python -m vexsim.ui.protocol frontend/src/protocol.ts
 // Don't edit by hand; a test fails when this file is stale.
 
-export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "input" | "log" | "robotlog" | "mcllog" | "invalid";
+export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "route" | "input" | "log" | "robotlog" | "mcllog" | "invalid";
 export type SessionState = "building" | "starting" | "running" | "paused" | "finished" | "error" | "stopped";
 export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type ConfigKind = "robot" | "field";
 export type ResultKind = "bench" | "sweeps" | "calibrations";
 export type DrawColor = "violet" | "blue" | "orange" | "aqua" | "yellow" | "magenta" | "green" | "red" | "ink" | "muted";
 export type Shape = ["point", number, number, DrawColor, number] | ["line", number, number, number, number, DrawColor] | ["circle", number, number, number, DrawColor] | ["ellipse", number, number, number, number, number, DrawColor] | ["pose", number, number, number, DrawColor] | ["text", number, number, string, DrawColor];
-export type StartJob = BuildJob | DoctorJob | MotorCurvesJob | DriftJob | OdometryJob | BenchJob | CalibrateJob | SweepJob;
+export type StartJob = BuildJob | DoctorJob | MotorCurvesJob | DriftJob | OdometryJob | BenchJob | CalibrateJob | SweepJob | RouteJob;
 export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | DrawingsMessage | FollowingMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
 export type ClientCommand = SimpleCommand | StepCommand | SpeedCommand | InputCommand;
 
@@ -24,6 +24,7 @@ export interface RunSpec {
   robot: string;
   program?: string | null;
   routine?: string | null;
+  route?: string | null;
   field?: string | null;
   mode?: "autonomous" | "driver" | "match" | "skills" | null;
   start?: [number, number, number];
@@ -181,6 +182,38 @@ export interface SweepJob {
   workers?: number | null;
 }
 
+/** A route run headless (`vexsim route run`); its result is a `RouteRun`. */
+export interface RouteJob {
+  kind: "route";
+  route: string;
+  seed?: number;
+  noise?: "ideal" | "default" | "harsh" | null;
+}
+
+/** Where a step of a route ended in a run (LemLib's convention: x, y in inches, theta in degrees clockwise from +y); times are seconds into the autonomous period. */
+export interface RouteStepEnd {
+  number: number;
+  kind: string;
+  label: string;
+  started_s: number | null;
+  ended_s: number | null;
+  duration_s: number | null;
+  pose: [number, number, number] | null;
+  lemlib: [number, number, number] | null;
+  timed_out: boolean | null;
+}
+
+/** A route run headless: where each step ended. */
+export interface RouteRun {
+  name: string;
+  error: string | null;
+  started: boolean;
+  finished: boolean;
+  ended_s: number | null;
+  period_s: number;
+  steps: RouteStepEnd[];
+}
+
 /** Why a run can't start (HTTP 422). */
 export interface RunProblem {
   error: string;
@@ -204,6 +237,7 @@ export interface RunConfiguration {
   robot: string;
   program?: string | null;
   routine?: string | null;
+  route?: string | null;
   field?: string | null;
   mode?: "autonomous" | "driver" | "match" | "skills" | null;
   start?: [number, number, number];
@@ -516,12 +550,23 @@ export interface NotRoutineInfo {
   why: string;
 }
 
-/** A PROS project's routines, to pick one for a run. */
+/** A route in a PROS project's routes/ folder (`vexsim.app.routes`), to run it. */
+export interface RouteInfo {
+  path: string;
+  name: string;
+  robot: string | null;
+  field: string | null;
+  start: [number, number, number] | null;
+  problem: string | null;
+}
+
+/** A PROS project's routines, to pick one for a run, and its routes. */
 export interface ProjectRoutines {
   header: string;
   found: boolean;
   routines: RoutineInfo[];
   others: NotRoutineInfo[];
+  routes?: RouteInfo[];
 }
 
 export interface RobotConfig {

@@ -33,6 +33,7 @@ ItemKind = Literal[
     "scenario",
     "program",
     "project",
+    "route",
     "input",
     "log",
     "robotlog",
@@ -213,12 +214,49 @@ class SweepJob(_Message):
     workers: Workers | None = None
 
 
+class RouteJob(_Message):
+    """A route run headless (``vexsim route run``); its result is a ``RouteRun``."""
+
+    kind: Literal["route"]
+    route: str  # its file, in the workspace
+    seed: Annotated[int, Field(ge=0)] = 0
+    noise: Literal["ideal", "default", "harsh"] | None = None
+
+
 StartJob = Annotated[
     Union[  # noqa: UP007 - a named union, for the TypeScript generator
-        BuildJob, DoctorJob, MotorCurvesJob, DriftJob, OdometryJob, BenchJob, CalibrateJob, SweepJob
+        BuildJob, DoctorJob, MotorCurvesJob, DriftJob, OdometryJob, BenchJob, CalibrateJob,
+        SweepJob, RouteJob,
     ],
     Field(discriminator="kind"),
-]
+]  # fmt: skip
+
+
+class RouteStepEnd(_Message):
+    """Where a step of a route ended in a run (LemLib's convention: x, y in inches, theta in
+    degrees clockwise from +y); times are seconds into the autonomous period."""
+
+    number: int  # from 1
+    kind: str
+    label: str
+    started_s: float | None
+    ended_s: float | None  # None: it didn't end before the run did
+    duration_s: float | None
+    pose: tuple[float, float, float] | None  # where the robot really was
+    lemlib: tuple[float, float, float] | None  # where LemLib's odometry put it
+    timed_out: bool | None  # a motion that used up its timeout; None: not a motion
+
+
+class RouteRun(_Message):
+    """A route run headless: where each step ended."""
+
+    name: str
+    error: str | None  # why the route couldn't run, or stopped
+    started: bool
+    finished: bool  # every step ended
+    ended_s: float | None  # when the last step ended
+    period_s: float  # the autonomous period it's measured against
+    steps: list[RouteStepEnd]
 
 
 class RunProblem(_Message):
@@ -527,13 +565,25 @@ class NotRoutineInfo(_Message):
     why: str  # it takes arguments, returns a value, ...
 
 
+class RouteInfo(_Message):
+    """A route in a PROS project's routes/ folder (``vexsim.app.routes``), to run it."""
+
+    path: str  # its file, in the workspace
+    name: str
+    robot: str | None  # workspace paths of the configs it names
+    field: str | None
+    start: tuple[float, float, float] | None  # where it starts: x, y, heading
+    problem: str | None  # why it can't run as it is
+
+
 class ProjectRoutines(_Message):
-    """A PROS project's routines, to pick one for a run."""
+    """A PROS project's routines, to pick one for a run, and its routes."""
 
     header: str  # where they're declared, in the project
     found: bool  # whether the project has that header
     routines: list[RoutineInfo]
     others: list[NotRoutineInfo]  # functions the header declares that can't be routines
+    routes: list[RouteInfo] = []
 
 
 # --- config editors ---------------------------------------------------------------------------
@@ -1056,6 +1106,9 @@ MODELS: list[type[BaseModel]] = [
     CalibrateJob,
     Sweep,
     SweepJob,
+    RouteJob,
+    RouteStepEnd,
+    RouteRun,
     RunProblem,
     PreviewRequest,
     Preview,
@@ -1095,6 +1148,7 @@ MODELS: list[type[BaseModel]] = [
     MclLogTape,
     RoutineInfo,
     NotRoutineInfo,
+    RouteInfo,
     ProjectRoutines,
     *ROBOT_MODELS,
     *FIELD_MODELS,
