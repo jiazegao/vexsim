@@ -37,6 +37,7 @@ import dataclasses
 import difflib
 import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +101,7 @@ MOTIONS: dict[str, Motion] = {
     ),
 }
 PAUSES = ("wait", "wait_until", "wait_until_done")
+_FUNCTION = re.compile(r"(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*")  # a function's name, with namespaces
 KINDS = (*MOTIONS, *PAUSES, "call")
 TOP_KEYS = ("version", "name", "robot", "field", "start", "functions", "steps")
 
@@ -307,7 +309,7 @@ def _read_step(reader: _Reader, item: Any, where: str) -> Step | None:
             return None
         return Step(kind)
     # call
-    if not isinstance(value, str) or not value.replace("::", "").replace("_", "a").isalnum():
+    if not isinstance(value, str) or not _FUNCTION.fullmatch(value):
         reader.error(at, "must be the name of one of the team's functions")
         return None
     args = item.get("args") or {}
@@ -412,7 +414,7 @@ class CheckedRoute:
 def check_route(route: Route, path: str | os.PathLike[str]) -> CheckedRoute:
     """``route`` (from the file ``path``) against its project, robot, field and functions."""
     from vexsim.bridge import lemlib
-    from vexsim.bridge.build import project_templates
+    from vexsim.bridge.build import BuildError, project_templates
     from vexsim.bridge.functions import find_functions
     from vexsim.bridge.runner import find_chassis
 
@@ -429,22 +431,32 @@ def check_route(route: Route, path: str | os.PathLike[str]) -> CheckedRoute:
     project = project_of(path)
     if project is None:
         error("", f"a route is a file in a PROS project's {FOLDER}/ folder")
-    elif not lemlib.find_version(project, project_templates(project)):
-        error("", f"a route runs LemLib's motions, and {project.name} doesn't use LemLib")
-        project = None
+    else:
+        try:
+            version = lemlib.find_version(project, project_templates(project))
+        except BuildError as exc:
+            version, why = None, str(exc)
+        else:
+            why = f"a route runs LemLib's motions, and {project.name} doesn't use LemLib"
+        if not version:
+            error("", why)
+            project = None
     checked.project = project
     _check_configs(checked, path, error)
     if project is not None:
         chassis = find_chassis(project)
         if isinstance(chassis, str):
             error("", chassis)
+        inside = []
         for k, header in enumerate(route.functions):
             target = (project / header).resolve()
             if not target.is_relative_to(project.resolve()):
                 error(f"functions[{k}]", f"{header} isn't in the project")
-            elif not target.is_file():
+                continue
+            if not target.is_file():
                 error(f"functions[{k}]", f"the project has no {header}")
-        checked.functions = find_functions(project, [h for h in route.functions])
+            inside.append(header)
+        checked.functions = find_functions(project, inside)
     for k, step in enumerate(route.steps):
         where = f"steps[{k}]"
         if step.kind == "call":
@@ -719,6 +731,7 @@ def run_route(
         route_defaults,
         simulation_factory,
     )
+    from vexsim.bridge.host import HostError
     from vexsim.runtime.simulation import MODES
 
     given = route_defaults(str(path), root)
@@ -734,6 +747,8 @@ def run_route(
     record = sim.program.route_record
     try:  # autonomous() may return while the last motion goes on: wait for it
         sim.world.run_until(lambda w: record.done, timeout_s=max_seconds)
+    except HostError as exc:  # where the steps before it ended still counts
+        record.error = record.error or f"the robot code stopped: {exc}"
     finally:
         sim.close()
     period = dict(MODES[mode]).get("autonomous") or AUTONOMOUS_S
@@ -746,8 +761,12 @@ def endpoints(route: Route, record, period_s: float | None = None) -> dict:
     def seconds(value: float | None) -> float | None:
         return None if value is None else round(value, 3)  # the simulation's ticks are 1 ms
 
-    def pose(value) -> list[float] | None:
-        return None if value is None else [round(v, 3) for v in value]
+    def pose(value) -> list[float] | None:  # LemLib's theta isn't kept in [0, 360)
+        return (
+            None
+            if value is None
+            else [round(value[0], 3), round(value[1], 3), round(value[2] % 360, 3)]
+        )
 
     steps = []
     for number, step in enumerate(route.steps, 1):

@@ -205,14 +205,17 @@ def route_defaults(route: str, base: str | os.PathLike[str] | None = None) -> di
     except ConfigError:
         found = None
     folder = os.path.dirname(route)
+
+    def beside(relative: str) -> str:  # with /, as the app has workspace paths, on Windows too
+        return Path(os.path.normpath(os.path.join(folder, relative))).as_posix()
+
     given: dict[str, Any] = {}
-    project = project_of(path)
-    if project is not None:
-        given["program"] = os.path.normpath(os.path.join(folder, ".."))
+    if project_of(path) is not None:
+        given["program"] = beside("..")
     if found is not None:
         for key in ("robot", "field"):
             if getattr(found, key):
-                given[key] = os.path.normpath(os.path.join(folder, getattr(found, key)))
+                given[key] = beside(getattr(found, key))
         given["start"] = found.start_pose()
     return given
 

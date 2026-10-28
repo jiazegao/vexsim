@@ -847,7 +847,8 @@ def create_app(
             ],
             routes=_routes(folder),
         )
-        return Response(listed.model_dump_json(), media_type="application/json")
+        unused = {"routes"} if not listed.routes else set()  # a project without routes: as before
+        return Response(listed.model_dump_json(exclude=unused), media_type="application/json")
 
     def _routes(project: Path) -> list[RouteInfo]:
         """The project's routes, as a run takes them."""

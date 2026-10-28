@@ -250,8 +250,12 @@ def cmd_route(args: argparse.Namespace) -> int:
         if not checked.issues:
             print("  no problems")
         return EXIT_OK
+
+    def log(line: str) -> None:  # the build's: with --json, stdout is the JSON alone
+        print(line, file=sys.stderr if args.json else sys.stdout)
+
     try:
-        result = run_route(args.file, seed=args.seed, noise=args.noise, log=print)
+        result = run_route(args.file, seed=args.seed, noise=args.noise, log=log)
     except RunError as exc:
         _print_run_error(exc)
         return EXIT_INVALID

@@ -153,7 +153,7 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 | `examples/fields/` | `v5rc_empty` (walls only), `practice_elements` (a barrier, two goals, six balls), `1239e_2026-27` (the 2026-27 field as team 1239E models it) |
 | `examples/programs/` | `tour.py`: a Python program that runs every chassis motion, and numbers its stops on the field; `tank_drive.py`: tank driver control only, to drive or to follow a log |
 | `examples/inputs/` | `strafe_square.csv`: scripted controller input |
-| `examples/pros_projects/` | `minimal_pros4` (its own tracking-wheel odometry, driving a square), `lemlib_template` (LemLib's own example program), `lemlib_bench` (LemLib motions as benchmark controllers), `calibration` (the calibration routine for `full_omni_6m`), `1239e_2026-27` (a real team's code) |
+| `examples/pros_projects/` | `minimal_pros4` (its own tracking-wheel odometry, driving a square), `lemlib_template` (LemLib's own example program), `lemlib_bench` (LemLib motions as benchmark controllers), `calibration` (the calibration routine for `full_omni_6m`), `1239e_2026-27` (a real team's code, and a route, `routes/left_start.yaml`) |
 | `examples/scenarios/` | benchmark scenarios: `s_curve`, `pose_approach`, `lemlib_vs_python` |
 | `examples/scripts/` | `evaluate_1239e.py`: runs every 1239E routine and measures its localization; `replay_1239e_mcl_log.py`: drives a real 1239E MCL log's path in the simulator and compares the two robots' MCL |
 | `examples/logs/` | `full_omni_routine.csv`: the calibration routine as a robot logs it, recorded in the simulator by `full_omni_6m` with its wheels' friction and its battery changed, to fit the parameters back ([section 12](#12-calibrating-to-your-robot)); `left40_simulated.1239e`: an MCL log in 1239E's format, written by the simulated 1239E robot running Left 40, to play and replay ([section 7](#7-the-browser-app-vexsim-ui)) |
@@ -387,6 +387,7 @@ Without `--program`, you drive the robot from the keyboard or a gamepad. To star
 |---|---|
 | `--program` | a Python program file, or a PROS 4 project folder (built automatically) |
 | `--routine NAME` | a PROS project's autonomous routine, from its `include/custom/auton.hpp`, to run in place of the one its `autonomous()` calls ([section 9](#picking-an-autonomous-routine)). Without `--start`, the robot starts where the routine's `setPose` puts it. |
+| `--route FILE` | a route, from a PROS project's `routes/` folder, run as a routine is ([section 9](#autonomous-routes)): its project, robot, field and start, unless given (then `ROBOT.yaml` can be left out) |
 | `--mode` | `autonomous`, `driver`, `match` or `skills` (default: `autonomous` for PROS projects and for Python programs with an `autonomous` function, else `driver`) |
 | `--field FILE` | field YAML (default: an empty field) |
 | `--start x,y,heading` | the robot's true starting pose (in, deg CCW; default `0,0,0`). Write `--start=-12,12,0`, with `=`, when x is negative. |
@@ -472,7 +473,7 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself com
 
 **Running something:**
 1. Pick a **saved run** from the first list to fill in everything at once, start pose and environment included. This repository comes with runs for its examples, every 1239E routine among them. Saved runs live in the folder's `.vexsim/launch.yaml`, so a team can commit them; *Save*, *Save as…* and *Delete* change them. (The app rewrites that file when it saves, so comments in it aren't kept.)
-2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects, scenarios, scripted inputs, telemetry logs, robot logs and MCL logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. (A scenario opens on the *Bench* page and a robot log on *Calibrate*; on those pages, and on *Analyze* and *Build*, a robot or project you click is for the page.) *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. For a PROS project with routines in `include/custom/auton.hpp`, **Routine** picks the one its `autonomous()` runs ([section 9](#picking-an-autonomous-routine)); picking one moves the start to where the routine's `setPose` puts the robot. *More* holds the noise preset, a scripted input file or a robot's log to follow (with its program's sticks and drive curve, [see below](#7-the-browser-app-vexsim-ui)), environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
+2. Or set the run up yourself. The **workspace** list on the left shows everything vexsim can use in the folder, recognized by content rather than name: robots, fields, Python programs, PROS projects and their autonomous routes, scenarios, scripted inputs, telemetry logs, robot logs and MCL logs. A config that doesn't load is listed with the reason. Click an item to use it, or pick from the run bar's lists. (A scenario opens on the *Bench* page and a robot log on *Calibrate*; on those pages, and on *Analyze* and *Build*, a robot or project you click is for the page.) *Refresh* looks again after you add or change files. The **run bar** holds the robot, field, program (a Python file, a PROS project, or none, to drive it yourself), mode, start pose and seed; LemLib's θ for the start heading is shown beside it. For a PROS project with routines in `include/custom/auton.hpp`, **Routine** picks the one its `autonomous()` runs ([section 9](#picking-an-autonomous-routine)), or one of the project's routes ([section 9](#autonomous-routes)); picking one moves the start to where the routine's `setPose` puts the robot (and a route's robot and field come with it). *More* holds the noise preset, a scripted input file or a robot's log to follow (with its program's sticks and drive curve, [see below](#7-the-browser-app-vexsim-ui)), environment variables (`KEY=VALUE`, one per line, like `--env`) and the busy timeout. The browser remembers the form for each folder.
 
    Right-click an item in the workspace list (or click its ⋯) for its menu:
    - *Edit* opens a robot or field config in the app's editor ([below](#7-the-browser-app-vexsim-ui)); any other file opens in your editor (*Open files in* picks VS Code or Cursor; a PROS project opens at its `src/main.cpp`).
@@ -736,6 +737,58 @@ Nothing in your project changes. In vexsim's build (in its cache), the files tha
 - Without `--start`, the robot starts where the routine's `setPose(x, y, θ)` puts it, when that call's arguments are numbers; `vexsim routines` shows where.
 - `autonomous()` must call the routine from another file, as a selector's table does. A call from inside the file that defines the routine doesn't go through the switch, and the run says the routine you picked didn't run.
 - Every function in the header that takes no arguments counts as a routine; one that takes arguments or returns a value is listed as not a routine, with why.
+
+### Autonomous routes
+```
+vexsim route check path/to/project/routes/left_start.yaml --functions   # check it; list the functions it can call
+vexsim route run path/to/project/routes/left_start.yaml                 # run it headless: where each step ended
+vexsim run --route path/to/project/routes/left_start.yaml               # watch it in the viewer
+```
+A **route** is an autonomous routine written as data: a YAML file in a PROS project's `routes/` folder that names the robot and field it's simulated with, where it starts and its steps. vexsim runs it in the project's own `autonomous()`, without changing the project, and says where every step ended. Numbers are in LemLib's convention, as the robot's code has them: inches, and θ in degrees clockwise from +y. This is 1239E's `examples/pros_projects/1239e_2026-27/routes/left_start.yaml`:
+```yaml
+version: 1
+name: Left start
+robot: ../../../robots/1239e_2026-27.yaml   # relative to this file
+field: ../../../fields/1239e_2026-27.yaml
+start: [60, 0, 90]                          # chassis.setPose(60, 0, 90)
+functions: [include/custom/util_funcs.hpp, include/custom/lift_control.hpp]
+steps:
+  - {call: moveForward, args: {inches: -10, timeout: 800, minSpeed: 1}}
+  - {turn_to_heading: 270, timeout: 800, max_speed: 100}
+  - {move_to_point: [14, 0], timeout: 1000, max_speed: 60}
+  - {call: startFrontIntake}
+  - {wait: 100}
+  - {move_to_point: [36, 0], timeout: 1000, forwards: false, min_speed: 60, early_exit: 3, async: false}
+```
+
+| Step | Makes the call |
+|---|---|
+| `{move_to_point: [x, y], timeout: ms}` | `chassis.moveToPoint(x, y, ms, {...}, async)` |
+| `{move_to_pose: [x, y, theta], timeout: ms}` | `chassis.moveToPose(...)` |
+| `{turn_to_heading: theta, timeout: ms}`, `{turn_to_point: [x, y], timeout: ms}` | `chassis.turnToHeading(...)`, `chassis.turnToPoint(...)` |
+| `{swing_to_heading: theta, locked_side: left, timeout: ms}`, `{swing_to_point: [x, y], locked_side: right, timeout: ms}` | `chassis.swingToHeading(theta, lemlib::DriveSide::LEFT, ...)`, `chassis.swingToPoint(...)` |
+| `{wait: ms}` | `pros::delay(ms)` |
+| `{wait_until: distance}` | `chassis.waitUntil(distance)`: inches (degrees for a turn) along the motion before it |
+| `wait_until_done` | `chassis.waitUntilDone()` |
+| `{call: name, args: {param: value}}` | one of the team's functions |
+
+A motion's options are LemLib's (each left out keeps LemLib's default): `forwards`, `max_speed`, `min_speed` (0 to 127; whole numbers for turns, as LemLib takes them), `early_exit`, `lead` and `horizontal_drift` (`move_to_pose`), `direction` (`cw`, `ccw` or `auto`) and `async` (`true`, LemLib's default: the motion starts and the route goes on; LemLib queues a motion called while another runs, so it starts when that one ends).
+
+**The team's own functions.** `functions:` lists headers, relative to the project. Every function they declare that returns `void` and takes numbers, `bool`s or values of an enum (the project's own, or LemLib's `DriveSide` and `AngularDirection`) can be a step, its arguments given by parameter name (an enum's by its value's name: `{call: setLift, args: {target: SECOND_STACK}}`). An argument left out takes its default; when a later one is given, a default that isn't a plain value (a number, `true`, an enum's value) must be given too. `vexsim route check --functions` lists them all, and why each other one can't be a step (it's overloaded, or takes a pointer, a reference, a class...).
+
+**How it runs.** vexsim's build of the project (in its cache, beside its other builds) adds a runner: the route's headers, a table of their functions, and the project's chassis, found by its declaration (`lemlib::Chassis chassis(...);` in a header or a source file). The runner reads the steps when the run starts, so a changed step reruns at once, without a rebuild; only changing the headers rebuilds. In a project with routines ([above](#picking-an-autonomous-routine)) it runs in place of the first routine `autonomous()` calls, after the project's own setup, and the console says `vexsim: autonomous() called left40(); running the route instead`; in a project without, it runs in place of `autonomous()`. A function a header declares but no file defines is left out of the table, and a route that calls it can't run.
+
+**Where each step ended.** A step ends when its call has returned and every LemLib motion it started has ended, so an async motion's step ends where the robot was when that motion finished, although the route went on. `vexsim route run` prints, for each step, when it ended (seconds into the autonomous period), how long it took, where the robot really was and where LemLib's odometry put it, and whether a motion used up its timeout:
+```
+Left start: 6 step(s), done 2.79 s into the 15 s autonomous period
+  step  ends at  took (s)  robot (x, y, θ)       LemLib (x, y, θ)      what
+     1    0.520     0.520  50.0, 0.0, 90.0       50.0, -0.0, 90.0      moveForward(inches=-10, timeout=800, minSpeed=1)
+     2    1.320     1.310  48.3, 0.6, 273.4      48.8, 0.6, 273.4      turn_to_heading 270 max_speed 100 (used up its timeout)
+     ...
+```
+`--json` prints the same as JSON. Before it runs, a route is checked, and `vexsim route check` says what's wrong, where: a step a header doesn't declare (with the name it's likely to be), an argument of the wrong type or a missing one, an option out of range, a target off the field, a start on top of a field element, a `wait_until` after a motion that isn't async.
+
+In the browser app, a project's routes are listed under *Autonomous routes* in the workspace list, and in the run bar's **Routine** list: picking one sets its robot, field and start.
 
 ### What's simulated
 | PROS 4 API | In the simulator |
@@ -1266,11 +1319,14 @@ vexsim/
 | `build.py` | `vexsim build`: finds g++ (`find_toolchain`), stages the project without the PROS SDK, compiles incrementally with dependency tracking, embeds `static/` for `ASSET()`, builds the shared runtime, and links `robot_host`. Reads the templates in `project.pros`. |
 | `lemlib.py` | Finds the project's LemLib version, fetches and caches its source, and compiles it once per version; detects edited LemLib headers. |
 | `host.py` | `RobotHost`: starts `robot_host` and speaks its line protocol over pipes. Readings and `RUN <time>` go in; motor commands, console text, LCD lines, the reported pose and the next wake-up time come out. |
-| `program.py` | `CppProgram`: a built project as a simulation program. It sends readings, applies commands, maps competition modes to status bits, and sets `VEXSIM_SEED`, `VEXSIM_START`, `VEXSIM_ROUTINE` and `--env` variables. |
-| `routines.py` | A project's autonomous routines (`find_routines`: the no-argument functions in `include/custom/auton.hpp`, read with a small C++ tokenizer, each with the file that defines it and its `setPose` start), and the switch that runs the one picked: `rename_header`, force-included in each file that defines routines, renames them with `asm` labels; `switch_source` takes their own names. |
+| `program.py` | `CppProgram`: a built project as a simulation program. It sends readings, applies commands, maps competition modes to status bits, and sets `VEXSIM_SEED`, `VEXSIM_START`, `VEXSIM_ROUTINE`, `VEXSIM_ROUTE` (a route's steps, written to a file for its runner) and `--env` variables. |
+| `routines.py` | A project's autonomous routines (`find_routines`: the no-argument functions in `include/custom/auton.hpp`, read with a small C++ tokenizer, each with the file that defines it and its `setPose` start), and the switch that runs the one picked (or a route build's route): `rename_header`, force-included in each file that defines routines, renames them with `asm` labels; `switch_source` takes their own names. |
+| `functions.py` | The team's functions a route can call (`find_functions`): the `void` functions a route's headers declare that take numbers, `bool`s or enum values, with their parameters' names, types and defaults, and why each other one can't be called; the enums they take (`find_enums`, from the headers and the project headers they include). |
+| `runner.py` | Route builds: `find_chassis` finds the project's `lemlib::Chassis` by its declaration; `runner_source` generates the build's extra file (the headers, `cpp/route/runner.cpp`, a call wrapper for each function and a table of each enum's values); `RouteRecord` reads the runner's console lines into when, and where, each step ended. |
 | `doctor.py` | `vexsim doctor`: toolchain checks, and a test build and run. |
 | `cpp/include/` | The PROS 4 shim headers robot code compiles against: `api.h`; `pros/*.h(pp)` (motors, IMU, rotation, distance, GPS, rtos, misc, llemu, screen, adi, and stubs for unsimulated devices); `liblvgl/` (LLEMU and the LVGL stand-in); `vexsim/sim.hpp` (`report_pose`, `benchmark_task`); `vexsim/newlib_compat.h` (newlib extras). |
-| `cpp/runtime/` | The C++ side, linked into every build: `host.cpp` (process setup, the protocol loop, console capture, crash reports), `scheduler.cpp` (the lockstep FreeRTOS-style scheduler: tasks, delays, mutexes, notifications), `devices.cpp` (the PROS device C API over a device table), `lvgl.cpp` (the LVGL stand-in), `defaults/` (empty competition functions, used only when the code has none, like PROS's weak defaults). |
+| `cpp/route/runner.cpp` | The route runner, compiled into route builds: it reads the steps from the file `VEXSIM_ROUTE` names, makes LemLib's calls and the team's, and says on the console as each step starts and its call returns, and as each LemLib motion starts and ends. |
+| `cpp/runtime/` | The C++ side, linked into every build: `host.cpp` (process setup, the protocol loop, console capture, crash reports; a route build's runner in place of `autonomous()`), `scheduler.cpp` (the lockstep FreeRTOS-style scheduler: tasks, delays, mutexes, notifications, and the tasks the route runner follows: those LemLib starts for its async motions), `devices.cpp` (the PROS device C API over a device table), `lvgl.cpp` (the LVGL stand-in), `defaults/` (empty competition functions, used only when the code has none, like PROS's weak defaults). |
 
 ### `bench/`: benchmarks
 | Module | What it does |
@@ -1300,10 +1356,11 @@ vexsim/
 ### `app/`: the services behind the browser app
 | Module | What it does |
 |---|---|
-| `runspec.py` | `RunSpec`: everything `vexsim run` takes (a log to follow, `Follow`, included), converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files (and warns, through `start_blocked`, when the robot would start on top of a field element), `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
+| `routes.py` | Autonomous routes: `read_route` and `check_route` read a route's YAML and check it against its project, robot, field and functions (`check_text` places each issue at its line, for the editor); `runner_input` writes its steps as the runner reads them; `run_route` runs one headless (the `route` job, `vexsim route run`) and returns where each step ended. |
+| `runspec.py` | `RunSpec`: everything `vexsim run` takes (a log to follow, `Follow`, and a route included), converted to and from its arguments (`from_args`, `to_args`, `command_line`). `check` loads and checks the files (and warns, through `start_blocked`, when the robot would start on top of a field element), `build` builds a PROS project, and `program_factory` and `simulation_factory` make the program and the simulation. `vexsim run` uses them too. |
 | `launch.py` | Saved runs: the workspace's `.vexsim/launch.yaml`, named run specs the app's *Saved run* list reads and writes (`read_configurations`, `write_configurations`). |
-| `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects, inputs, telemetry logs, robot logs, MCL logs), and refuses paths outside it. |
-| `jobs.py` | `JobManager`: long tasks (builds, analyses, benchmarks, fits, sweeps; `JOB_KINDS` names each kind's function), each in a process of its own, with their output, progress and the parts of their result that come early (a sweep's finished trials), cancel, and one job at a time per key (a second build of a project joins the first). |
+| `workspace.py` | `Workspace`: finds what vexsim can use in a folder, by content (robots, fields, scenarios, Python programs, PROS projects and their routes, inputs, telemetry logs, robot logs, MCL logs), and refuses paths outside it. |
+| `jobs.py` | `JobManager`: long tasks (builds, analyses, benchmarks, fits, sweeps, route runs; `JOB_KINDS` names each kind's function), each in a process of its own, with their output, progress and the parts of their result that come early (a sweep's finished trials), cancel, and one job at a time per key (a second build of a project joins the first). |
 | `results.py` | What the long jobs found, kept in the workspace's `.vexsim/bench/`, `sweeps/` and `calibrations/`: a folder per result with its `result.json` and files; the newest 20 of each kind stay. |
 | `sweeps.py` | Sweeps: `.vexsim/sweeps.yaml` (`read_sweeps`, `write_sweeps`), a sweep's trials (`expand`: saved runs × variations × seeds, with placement errors drawn as `evaluate_1239e.py` draws them), one trial run headless and measured (`run_trial`, `measure`), and the sweep as a job (`run_sweep`). |
 | `benchmarks.py`, `calibrate.py`, `analyze.py` | The *Bench*, *Calibrate* and *Analyze* pages' jobs: `vexsim bench`, `calibration-routine`, `calibrate`, `motor-curves`, `drift` and `odometry`, returning what their charts draw (and saving their results), with `describe_scenario` and `routine_plan` for what the pages show before a run. |

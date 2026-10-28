@@ -138,6 +138,29 @@ test("runs the routine picked inside the project's autonomous(), from where it s
   await expect(routine).toHaveCount(0);
 });
 
+test("lists a project's routes; picking one sets its run up", async ({ page }) => {
+  const project = "examples/pros_projects/1239e_2026-27";
+  const route = `${project}/routes/left_start.yaml`;
+  const item = page.getByTestId(`item-${route}`);
+  await expect(item).toContainText("Left start");
+  await expect(item).toContainText("6 steps, from setPose(60, 0, 90)");
+  await item.click(); // its project, robot, field and start
+  await expect(page.getByTestId("program")).toHaveValue(project);
+  await expect(page.getByTestId("robot")).toHaveValue("examples/robots/1239e_2026-27.yaml");
+  await expect(page.getByTestId("field-select")).toHaveValue("examples/fields/1239e_2026-27.yaml");
+  const routine = page.getByTestId("routine");
+  await expect(routine).toHaveValue(`route:${route}`);
+  expect([await startValue(page, "x"), await startValue(page, "y"), await startValue(page, "heading")]).toEqual([60, 0, 0]);
+  await expect(item).toHaveClass(/\bselected\b/);
+  // the run bar lists it with the project's routines: a routine instead, then the route again
+  await expect(routine.locator("optgroup[label='Routes (routes/)'] option")).toHaveText(["Left start"]);
+  await routine.selectOption("left40");
+  await expect(item).not.toHaveClass(/\bselected\b/);
+  await page.getByLabel("Start x (in)").fill("0");
+  await routine.selectOption(`route:${route}`);
+  expect(await startValue(page, "x")).toBe(60);
+});
+
 test("drags the robot to where it starts, and turns it by its handle", async ({ page }) => {
   await page.getByTestId("robot").selectOption(ROBOT);
   await page.getByTestId("field-select").selectOption(FIELD);
