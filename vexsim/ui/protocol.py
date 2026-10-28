@@ -1158,6 +1158,40 @@ class MirroredRoute(_Message):
     notes: list[str]  # what it couldn't mirror
 
 
+class RoutesExportRequest(_Message):
+    """Write a PROS project's routes into it as routines (``POST /api/routes/export``)."""
+
+    project: str
+
+
+class ExportedRoutine(_Message):
+    """A route as a routine: ``name()``, from ``route`` (relative to the project), starting at
+    LemLib's x, y, theta."""
+
+    name: str
+    route: str
+    start: tuple[float, float, float]
+
+
+class ExportedFile(_Message):
+    """A file an export writes (relative to the project), and its change as a unified diff."""
+
+    path: str
+    state: Literal["new", "changed", "unchanged"]
+    diff: str
+
+
+class RoutesExport(_Message):
+    """A project's routes as routines (`vexsim.app.autons`): what an export would write
+    (``GET``), or wrote (``POST``); the routes it leaves out, and why."""
+
+    project: str
+    routines: list[ExportedRoutine]
+    files: list[ExportedFile]
+    left_out: list[str]
+    notes: list[str]
+
+
 class ConfigOverridesRequest(_Message):
     """Set ``overrides`` in a robot config's text (``POST /api/config/overrides``)."""
 
@@ -1271,6 +1305,10 @@ MODELS: list[type[BaseModel]] = [
     NewRoute,
     MirrorRouteRequest,
     MirroredRoute,
+    RoutesExportRequest,
+    ExportedRoutine,
+    ExportedFile,
+    RoutesExport,
     RunProblem,
     PreviewRequest,
     Preview,

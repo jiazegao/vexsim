@@ -28,6 +28,7 @@ import type {
   RouteEdit,
   RouteFile,
   RoutePatched,
+  RoutesExport,
   RunConfiguration,
   RunConfigurations,
   RunDetails,
@@ -189,6 +190,9 @@ export const api = {
   newRoute: (route: NewRouteRequest) => request<NewRoute>("/api/routes/new", post(route)),
   /** A mirrored copy of a route beside it (across x = 0 or y = 0): its path, and what it couldn't mirror. */
   mirrorRoute: (path: string, text: string, axis: "x" | "y") => request<MirroredRoute>("/api/routes/mirror", post({ path, text, axis })),
+  /** What exporting a project's routes into it as routines would write; and writing it. */
+  planExport: (project: string) => request<RoutesExport>(`/api/routes/export?project=${encodeURIComponent(project)}`),
+  exportRoutes: (project: string) => request<RoutesExport>("/api/routes/export", post({ project })),
   duplicateFile: (path: string) => request<WorkspaceFile>("/api/files/duplicate", { method: "POST", body: JSON.stringify({ path }) }),
   deleteFile: (path: string) => request<void>(`/api/files?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
 

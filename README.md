@@ -572,6 +572,7 @@ A robot that localizes with Monte Carlo localization can log every update to its
 - **Planned at once, then simulated.** The plan follows LemLib's targets: `move_to_point` ends facing the way it went, `move_to_pose` is drawn as the curve LemLib's carrot point makes, a turn stays where it is, a swing pivots on its locked side; and the team's functions move as their `// vexsim:` comments say ([section 9](#autonomous-routes)). It changes with every edit, and follows a drag as it goes. A moment after each change the route runs headless, as `vexsim route run` does (a project's first run builds it): the path the robot drove is drawn, and where each step really ended, a dot joined to its planned end.
 - **Mirror ↔ and Mirror ↕** make the route for the other side of the field, across x = 0 or y = 0: a copy beside it, named *(mirrored)*, its targets and headings mirrored, its turns the other way round, its swings on the other side, and the team's functions' arguments mirrored as their comments say. What it couldn't mirror (a function that doesn't say how it moves the robot) is listed.
 - **Watch** saves the route and runs it on the *Simulate* page, recorded like any run, with its timeline and plots.
+- **Export…** writes the project's routes into it as routines, for the robot ([section 9](#autonomous-routes)). It saves the route first, then shows what it would write: the routines, each file it changes (new, changed or as it is), with the change, and the routes it leaves out, and why. *Export* writes it, and the run bar's routine list has the new routines.
 - **It all goes into the route's YAML,** in place, as in the Design view: every comment stays. *YAML* shows the text, where a problem's place is a click away; *Undo* and *Redo* step through every change, from either view. Nothing is written to the file until *Save* (Ctrl+S).
 
 The tabs along the top hold a page for each of the other commands: *Sweeps*, *Bench*, *Calibrate*, *Analyze* and *Build*.
@@ -755,6 +756,7 @@ Nothing in your project changes. In vexsim's build (in its cache), the files tha
 vexsim route check path/to/project/routes/left_start.yaml --functions   # check it; list the functions it can call
 vexsim route run path/to/project/routes/left_start.yaml                 # run it headless: where each step ended
 vexsim run --route path/to/project/routes/left_start.yaml               # watch it in the viewer
+vexsim route export path/to/project [--dry-run] [--diff]                # write the routes into it as routines
 ```
 A **route** is an autonomous routine written as data: a YAML file in a PROS project's `routes/` folder that names the robot and field it's simulated with, where it starts and its steps. vexsim runs it in the project's own `autonomous()`, without changing the project, and says where every step ended. Numbers are in LemLib's convention, as the robot's code has them: inches, and θ in degrees clockwise from +y. This is 1239E's `examples/pros_projects/1239e_2026-27/routes/left_start.yaml`:
 ```yaml
@@ -808,6 +810,21 @@ In the browser app, a project's routes are listed under *Autonomous routes* in t
 void moveForward(float inches, int timeout, float maxSpeed=127, float minSpeed=1, bool async=true);
 ```
 The comment is one of `drive(inches)` (straight along the heading; back if negative), `turn_by(degrees)` (in place, clockwise), `arc(radius, degrees)` (along an arc, turning clockwise through the angle), `point(x, y)` (as `move_to_point`), `pose(x, y, theta)` (as `move_to_pose`) or `none` (it doesn't move the robot), each argument one of the function's number parameters, by name, or a number (`arc(18, degrees)`). A function without one is carried on unmoved in the plan, dashed, until a run says where it ended; one whose comment doesn't read says why in its step's form. Mirroring a route follows the comments too. On the robot it's just a comment. 1239E's `moveForward` has this one.
+
+**Export: the routes, for the robot.** `vexsim route export PROJECT` (or *Export…* in the maker) writes each of the project's routes as a C++ routine, named after the route (*Left start* is `left_start()`), into `src/vexsim_autons.cpp`, and declares them in `include/custom/auton.hpp` between two comments, `// vexsim routes: begin` and `// vexsim routes: end` (added at its end the first time; a new `auton.hpp` if there's none). Each step is the call the route runner made, so the routine drives as the route did: it starts with the route's `chassis.setPose(...)`, and a motion's options are LemLib's, as designated initializers in the order LemLib declares them:
+```cpp
+// Left start (routes/left_start.yaml)
+void left_start() {
+    chassis.setPose(60, 0, 90);
+    moveForward(-10, 800, 127, 1);
+    chassis.turnToHeading(270, 800, {.maxSpeed = 100});
+    chassis.moveToPoint(14, 0, 1000, {.maxSpeed = 60});
+    startFrontIntake();
+    pros::delay(100);
+    chassis.moveToPoint(36, 0, 1000, {.forwards = false, .minSpeed = 60, .earlyExitRange = 3}, false);
+}
+```
+vexsim rewrites `src/vexsim_autons.cpp` whole on every export, so change the routes, not the file; everything else in `auton.hpp` stays as it is. Only files that change are written, so exporting the same routes again changes nothing; `--dry-run` says what would change, and `--diff` shows it. A route with errors, or whose routine's name the project already has, is left out, with why. The routines are then in vexsim's routine list, like the team's own (run one, and it runs in place of the routine `autonomous()` calls, [above](#picking-an-autonomous-routine)); for the robot to run one, call it from `autonomous()` or the team's selector.
 
 ### What's simulated
 | PROS 4 API | In the simulator |
@@ -1389,6 +1406,7 @@ vexsim/
 | `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape with the robot code's drawings, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape, and `mcl_tape` an MCL log into one to play beside a run. |
 | `yamledit.py` | The Design view's and the autonomous maker's changes to a config's or a route's text: a `Change` sets a value of any kind (a missing key is added), adds a list item, inserts one before another, moves one (with the comments above it), removes an item or a key with its lines, or renames a key, each written in place in its neighbours' style with every comment kept. `apply` makes them, and the diagram's numbers (`configs.Edit`), in order. |
 | `files.py` | The workspace list's *Duplicate*: `duplicate` copies a file beside itself, never over one, a robot's or field's named as a copy in its own text. |
+| `autons.py` | Routes exported into their project (`vexsim route export`, *Export…*): `plan_export` works out the routines (`routine_source`, each step's call as `step_call` writes it) and what they change in `src/vexsim_autons.cpp` and `include/custom/auton.hpp` (`declarations`), and the routes it leaves out; `export` writes the files that change. |
 | `newrobot.py` | New robots: `robot_text` writes the commented template (a rectangle on a drive preset), `create` writes it (or a copy of a robot) where no file is, and `preset_changes` puts a preset's drive on a robot: on its base, inside its shape, its motors on free ports. |
 | `configs.py` | Robot and field configs for the editors: `check_text` validates YAML text as `validate-config` does and places each issue at its line and column; `patch_text` rewrites numbers in place (or adds a missing key in its mapping's style) using PyYAML's node positions, and refuses values that come through anchors, aliases or merges; `set_overrides` writes a calibration's fitted values under `overrides` the same way; `read_config` and `write_config` keep a file's line endings and byte order mark. |
 | `frames.py` | A run as messages: the scene (robot and field), each frame (poses, wheels and their forces, the controller, sensors, motors, mechanisms, pieces, screens, the period's time left) and the active motion's path and target. `preview_of` gives the robot and field before any run, to drag the robot to its start. |

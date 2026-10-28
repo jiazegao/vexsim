@@ -85,6 +85,8 @@ from vexsim.ui.protocol import (
     ConfigPatchRequest,
     ConfigSave,
     ConfigSaved,
+    ExportedFile,
+    ExportedRoutine,
     JobInfo,
     MirroredRoute,
     MirrorRouteRequest,
@@ -111,6 +113,8 @@ from vexsim.ui.protocol import (
     RouteParamInfo,
     RoutePatched,
     RoutePatchRequest,
+    RoutesExport,
+    RoutesExportRequest,
     RouteStepData,
     RoutineInfo,
     RoutinePlan,
@@ -915,6 +919,35 @@ def create_app(
         except (ValueError, OSError, configs.PatchError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
         return MirroredRoute(path=server.workspace.relative(made), notes=notes)
+
+    def _routes_export(project: str, write: bool) -> RoutesExport | JSONResponse:
+        from vexsim.app import autons
+
+        ws = server.workspace
+        try:
+            folder = ws.path(project)
+            done = (autons.export if write else autons.plan_export)(folder)
+        except (ValueError, OSError) as exc:  # ExportError is a ValueError
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return RoutesExport(
+            project=ws.relative(folder),
+            routines=[
+                ExportedRoutine(name=r.name, route=r.route, start=r.start) for r in done.routines
+            ],
+            files=[ExportedFile(path=f.path, state=f.state, diff=f.diff()) for f in done.files],
+            left_out=done.left_out,
+            notes=done.notes,
+        )
+
+    @app.get("/api/routes/export", responses={422: {}})
+    def plan_routes_export(project: str):
+        """What exporting a project's routes would write (``RoutesExport``), written nowhere."""
+        return _routes_export(project, write=False)
+
+    @app.post("/api/routes/export", responses={422: {}})
+    def routes_export(request: RoutesExportRequest):
+        """A project's routes written into it as routines: only the files that change."""
+        return _routes_export(request.project, write=True)
 
     @app.post("/api/config/new", responses={422: {}})
     def new_robot(request: NewRobotRequest):

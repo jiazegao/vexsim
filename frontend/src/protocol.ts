@@ -344,6 +344,34 @@ export interface MirroredRoute {
   notes: string[];
 }
 
+/** Write a PROS project's routes into it as routines (`POST /api/routes/export`). */
+export interface RoutesExportRequest {
+  project: string;
+}
+
+/** A route as a routine: `name()`, from `route` (relative to the project), starting at LemLib's x, y, theta. */
+export interface ExportedRoutine {
+  name: string;
+  route: string;
+  start: [number, number, number];
+}
+
+/** A file an export writes (relative to the project), and its change as a unified diff. */
+export interface ExportedFile {
+  path: string;
+  state: "new" | "changed" | "unchanged";
+  diff: string;
+}
+
+/** A project's routes as routines (`vexsim.app.autons`): what an export would write (`GET`), or wrote (`POST`); the routes it leaves out, and why. */
+export interface RoutesExport {
+  project: string;
+  routines: ExportedRoutine[];
+  files: ExportedFile[];
+  left_out: string[];
+  notes: string[];
+}
+
 /** Why a run can't start (HTTP 422). */
 export interface RunProblem {
   error: string;

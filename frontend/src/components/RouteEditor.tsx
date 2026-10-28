@@ -3,9 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { spanRange } from "../configdoc";
 import { isActive, useJob } from "../jobs";
-import type { RouteCheck, RouteEdit, RouteFile, RouteFunctionInfo, RouteParamInfo, RouteRun, RouteStepData, TextSpan, WorkspaceInfo } from "../protocol";
+import type { RouteCheck, RouteEdit, RouteFile, RouteFunctionInfo, RouteParamInfo, RouteRun, RoutesExport, RouteStepData, TextSpan, WorkspaceInfo } from "../protocol";
 import type { Dragged, LemPose, Motion, Point, StepValue } from "../route";
 import { bearing, copiedSteps, copySteps, describe, dropEdit, isMotion, MOTION_INFO, MOTIONS, newStep, OPTION_DEFAULTS, plan, relativePath, stepValue, withDrag } from "../route";
+import { ExportDialog } from "./ExportDialog";
 import { marksOf, RouteField } from "./RouteField";
 import type { YamlEditorHandle } from "./YamlEditor";
 import { YamlEditor } from "./YamlEditor";
@@ -58,6 +59,7 @@ export function RouteEditor(props: {
   const [tool, setTool] = useState<Motion | null>(null);
   const [snap, setSnap] = useState<Snap>("half");
   const [run, setRun] = useState<{ text: string; result: RouteRun } | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [runError, setRunError] = useState<{ text: string; message: string } | null>(null);
   const editor = useRef<YamlEditorHandle>(null);
   const textRef = useRef(text);
@@ -272,6 +274,17 @@ export function RouteEditor(props: {
     if (dirty && !(await save())) return;
     props.onWatch(path);
   };
+  const exportRoutes = async () => {
+    if (dirty && !(await save())) return; // an export reads the routes' files
+    setExporting(true);
+  };
+  const exported = (done: RoutesExport) => {
+    setExporting(false);
+    const written = done.files.filter((f) => f.state !== "unchanged").map((f) => f.path);
+    const routines = done.routines.map((r) => `${r.name}()`).join(", ");
+    setNotice({ bad: false, text: `Exported ${routines} into ${done.project}: ${written.length ? `wrote ${written.join(" and ")}` : "nothing changed"}.` });
+    props.onSaved(path); // the routine list picks them up
+  };
   const mirror = async (axis: "x" | "y") => {
     try {
       const made = await api.mirrorRoute(path, textRef.current, axis);
@@ -372,6 +385,9 @@ export function RouteEditor(props: {
         </button>
         <button type="button" onClick={watch} disabled={!route || errors > 0 || saving} title="Run it on the Simulate page, with its timeline and plots (saving it first)" data-testid="watch">
           Watch
+        </button>
+        <button type="button" onClick={exportRoutes} disabled={!shown?.project || saving} title="Write the project's routes into it as routines, for the robot (saving this one first): see what changes before it's written" data-testid="export">
+          Export…
         </button>
         <button type="button" onClick={() => saved && editor.current?.replace(saved.text)} disabled={!dirty || saving} title="Back to the file as it was saved (Undo undoes this too)">
           Revert
@@ -566,6 +582,7 @@ export function RouteEditor(props: {
           </p>
         </div>
       </div>
+      {exporting && shown?.project && <ExportDialog project={shown.project} onClose={() => setExporting(false)} onExported={exported} />}
       <div className="editor-foot">
         <ul className="config-problems" data-testid="route-problems">
           {issues.length === 0 ? (

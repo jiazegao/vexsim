@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, type Locator, test } from "@playwright/test";
 import { TOKEN } from "../playwright.config";
@@ -166,5 +166,44 @@ test("builds a route from scratch: a dragged end is planned at once and simulate
       const file = resolve(WORKSPACE, path);
       if (existsSync(file)) rmSync(file);
     }
+  }
+});
+
+test("exports the project's routes: the files it changes, shown first; then the routine list has them", async ({ page }) => {
+  const route = `${PROJECT}/routes/left_start.yaml`;
+  const header = resolve(WORKSPACE, PROJECT, "include/custom/auton.hpp");
+  const generated = resolve(WORKSPACE, PROJECT, "src/vexsim_autons.cpp");
+  const original = readFileSync(header, "utf-8");
+  try {
+    await page.getByTestId(`item-${route}`).click({ button: "right" });
+    await page.getByTestId(`edit-${route}`).click();
+    const editor = page.locator('[data-testid="route-editor"]:not([hidden])');
+    await expect(editor).toHaveAttribute("data-path", route);
+    await editor.getByTestId("export").click();
+    const dialog = page.getByTestId("export-dialog");
+    await expect(dialog.getByTestId("export-routines")).toHaveText("left_start() from routes/left_start.yaml");
+    await expect(dialog.getByTestId("export-file-src/vexsim_autons.cpp")).toHaveAttribute("data-state", "new");
+    await expect(dialog.getByTestId("export-file-include/custom/auton.hpp")).toHaveAttribute("data-state", "changed");
+    expect(existsSync(generated)).toBe(false); // nothing's written yet
+    await dialog.getByTestId("export-write").click();
+    await expect(dialog).toHaveCount(0);
+    await expect(editor.getByTestId("route-notice")).toHaveText(`Exported left_start() into ${PROJECT}: wrote src/vexsim_autons.cpp and include/custom/auton.hpp.`);
+    expect(readFileSync(generated, "utf-8")).toContain("void left_start() {\n    chassis.setPose(60, 0, 90);\n    moveForward(-10, 800, 127, 1);\n");
+    expect(readFileSync(header, "utf-8")).toBe(
+      original.replace(/\n*$/, "\n\n// vexsim routes: begin (vexsim writes these from routes/ when it exports the routes)\nvoid left_start();  // routes/left_start.yaml\n// vexsim routes: end\n"),
+    );
+    // again: nothing changes
+    await editor.getByTestId("export").click();
+    await expect(page.getByTestId("export-write")).toHaveText("Up to date");
+    await expect(page.getByTestId("export-write")).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("export-dialog")).toHaveCount(0);
+    // the run bar lists it with the project's routines
+    await page.getByTestId("page-simulate").click();
+    await page.getByTestId("program").selectOption(PROJECT);
+    await expect(page.getByTestId("routine").locator("option", { hasText: /^left_start$/ })).toHaveCount(1);
+  } finally {
+    writeFileSync(header, original);
+    if (existsSync(generated)) rmSync(generated);
   }
 });

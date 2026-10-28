@@ -290,6 +290,38 @@ def cmd_route(args: argparse.Namespace) -> int:
     return EXIT_OK if result["error"] is None else EXIT_INVALID
 
 
+def cmd_route_export(args: argparse.Namespace) -> int:
+    """``vexsim route export PROJECT``: the project's routes written into it as routines."""
+    from vexsim.app.autons import ExportError, export, plan_export
+
+    try:
+        done = (plan_export if args.dry_run else export)(args.project)
+    except ExportError as exc:
+        print(f"error: {exc}")
+        return EXIT_INVALID
+    print(f"Routes of {args.project}, as routines:")
+    for routine in done.routines:
+        x, y, theta = routine.start
+        print(f"  {routine.name}()  from {routine.route}, starts at ({x:g}, {y:g}, {theta:g})")
+    for why in done.left_out:
+        print(f"  left out: {why}")
+    for change in done.files:
+        print(f"  {change.path}: {change.state}")
+        if args.diff and change.state != "unchanged":
+            print(
+                "".join("    " + line for line in change.diff().splitlines(keepends=True)), end=""
+            )
+    for note in done.notes:
+        print(f"  note: {note}")
+    if not done.changes:
+        print("Up to date: nothing to write.")
+    elif args.dry_run:
+        print("Nothing written (--dry-run).")
+    else:
+        print(f"Wrote {sum(f.state != 'unchanged' for f in done.files)} file(s).")
+    return EXIT_OK
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from vexsim.bridge.doctor import run_doctor
 
@@ -682,7 +714,8 @@ def build_parser() -> argparse.ArgumentParser:
             "A route is a YAML file in a PROS project's routes/ folder: a start pose and steps "
             "(LemLib motions, pauses and calls of the team's functions), run in the project's "
             "own autonomous() without changing the project. check reads and checks it; run "
-            "runs it headless and prints where each step ended."
+            "runs it headless and prints where each step ended; export writes a project's "
+            "routes into it as C++ routines."
         ),
     )
     actions = p.add_subparsers(dest="action", required=True)
@@ -698,6 +731,22 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--noise", choices=["ideal", "default", "harsh"], help="sensor noise preset")
     run.add_argument("--json", action="store_true", help="print the endpoints as JSON")
     run.set_defaults(func=cmd_route)
+    export = actions.add_parser(
+        "export",
+        help="write a project's routes into it as routines (src/vexsim_autons.cpp)",
+        description=(
+            "Write each of a PROS project's routes as a C++ routine into src/vexsim_autons.cpp "
+            "(rewritten whole each time) and declare them in include/custom/auton.hpp, between "
+            "the comments // vexsim routes: begin and // vexsim routes: end, so the routine "
+            "list and the team's selector can call them. Only files that change are written."
+        ),
+    )
+    export.add_argument("project", help="PROS project folder (its routes are in routes/)")
+    export.add_argument(
+        "--dry-run", action="store_true", help="say what would change; write nothing"
+    )
+    export.add_argument("--diff", action="store_true", help="show each change as a diff")
+    export.set_defaults(func=cmd_route_export)
 
     p = sub.add_parser(
         "build",
