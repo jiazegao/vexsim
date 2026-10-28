@@ -85,8 +85,14 @@ from vexsim.ui.protocol import (
     ConfigSave,
     ConfigSaved,
     JobInfo,
+    MirroredRoute,
+    MirrorRouteRequest,
+    MotionHintInfo,
     NewRobot,
     NewRobotRequest,
+    NewRoute,
+    NewRouteRequest,
+    NotRouteFunctionInfo,
     NotRoutineInfo,
     PlacedIssue,
     Preview,
@@ -95,7 +101,16 @@ from vexsim.ui.protocol import (
     ReplayRequest,
     ResultAbout,
     ResultReplayRequest,
+    RouteCheck,
+    RouteCheckRequest,
+    RouteData,
+    RouteFile,
+    RouteFunctionInfo,
     RouteInfo,
+    RouteParamInfo,
+    RoutePatched,
+    RoutePatchRequest,
+    RouteStepData,
     RoutineInfo,
     RoutinePlan,
     RoutineRequest,
@@ -506,6 +521,103 @@ def _checked(checked: configs.CheckedConfig) -> ConfigCheck:
     )
 
 
+def _span(place: configs.Span | None) -> TextSpan | None:
+    if place is None:
+        return None
+    return TextSpan(
+        line=place.line, column=place.column, end_line=place.end_line, end_column=place.end_column
+    )
+
+
+def _route_checked(ws: Workspace, file: Path, text: str) -> RouteCheck:
+    """A route's text, checked, as the editor takes it (``RouteCheck``)."""
+    from vexsim.app import routes
+    from vexsim.runtime.follow import drive_geometry
+
+    checked, located = routes.check_text(text, file)
+    route = checked.route
+    issues = [
+        PlacedIssue(severity=i.severity, location=i.location, message=i.message, span=_span(i.span))
+        for i in located
+    ]
+    data = None
+    places: dict[str, TextSpan] = {}
+    if route is not None:
+        data = RouteData(
+            name=route.name, start=route.start, robot=route.robot, field=route.field,
+            functions=list(route.functions),
+            steps=[
+                RouteStepData(
+                    kind=step.kind, target=list(step.target), timeout=step.timeout,
+                    side=step.side, options=dict(step.options), function=step.function,
+                    args=dict(step.args), label=routes.label(step),
+                )  # fmt: skip
+                for step in route.steps
+            ],
+        )  # fmt: skip
+        try:
+            root, _ = configs._compose(text)
+        except Exception:  # it read a moment ago
+            root = None
+        for where in ["start", *(f"steps[{k}]" for k in range(len(route.steps)))]:
+            place = _span(configs.locate(root, where, text, exact=True))
+            if place is not None:
+                places[where] = place
+    found = checked.functions
+    enums = found.enums if found is not None else {}
+
+    def param(p) -> RouteParamInfo:
+        values = list(enums[p.enum].values) if p.enum and p.enum in enums else []
+        return RouteParamInfo(
+            name=p.name, type=p.type, kind=p.kind, default=p.default,
+            value=p.literal(tuple(values)), values=values,
+        )  # fmt: skip
+
+    functions = [
+        RouteFunctionInfo(
+            name=f.name,
+            header=f.header,
+            line=f.line,
+            declaration=f.declaration(),
+            params=[param(p) for p in f.params],
+            required=f.required,
+            hint=None
+            if f.hint is None
+            else MotionHintInfo(motion=f.hint.motion, args=list(f.hint.args)),
+            hint_problem=f.hint_problem,
+        )  # fmt: skip
+        for f in (found.functions if found is not None else [])
+    ]
+    others = [
+        NotRouteFunctionInfo(name=o.name, header=o.header, line=o.line, why=o.why)
+        for o in (found.others if found is not None else [])
+    ]
+    preview = track = None
+    if checked.robot is not None:
+        preview = Preview.model_validate(preview_of(checked.robot, checked.field or FieldConfig()))
+        track = drive_geometry(checked.robot)[0]
+    project = routes.project_of(file)
+
+    def listed(path: Path | None) -> str | None:
+        try:
+            return None if path is None else ws.relative(path)
+        except ValueError:
+            return None
+
+    named = {
+        key: (file.parent / getattr(route, key))
+        if route is not None and getattr(route, key)
+        else None
+        for key in ("robot", "field")
+    }
+    return RouteCheck(
+        issues=issues, route=data, functions=functions, others=others,
+        headers=routes.project_headers(project) if project is not None else [],
+        preview=preview, track=track, places=places, project=listed(project),
+        robot_path=listed(named["robot"]), field_path=listed(named["field"]),
+    )  # fmt: skip
+
+
 def create_app(
     workspace: str | Path,
     *,
@@ -699,6 +811,107 @@ def create_app(
                     {"detail": f"can't save {request.path}: {exc}"}, status_code=500
                 )
         return ConfigSaved(version=version)
+
+    def _route_file(relative: str) -> Path:
+        path = _config_file(relative)
+        from vexsim.app.routes import project_of
+
+        if project_of(path) is None:
+            raise ValueError(f"{relative} isn't in a PROS project's routes/ folder")
+        return path
+
+    @app.get("/api/route", responses={400: {}, 404: {}, 422: {}})
+    def open_route(path: str):
+        """A route to edit (``RouteFile``), checked."""
+        try:
+            file = _route_file(path)
+            read = configs.read_config(file)
+        except FileNotFoundError:
+            return JSONResponse({"detail": f"{path} doesn't exist"}, status_code=404)
+        except UnicodeDecodeError:
+            return JSONResponse({"detail": f"{path} isn't UTF-8 text"}, status_code=422)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return RouteFile(
+            path=server.workspace.relative(file),
+            text=read.text,
+            version=read.version,
+            check=_route_checked(server.workspace, file, read.text),
+        )
+
+    @app.post("/api/route/check", responses={400: {}})
+    def check_route(request: RouteCheckRequest):
+        """A route's text as it's being edited, checked."""
+        try:
+            file = _route_file(request.path)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return _route_checked(server.workspace, file, request.text)
+
+    @app.post("/api/route/patch", responses={400: {}, 422: {}})
+    def patch_route(request: RoutePatchRequest):
+        """A route's text changed in place (a value set, a step added, inserted, moved or
+        removed), everything else in it, comments and all, as it was."""
+        try:
+            file = _route_file(request.path)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        changes = [yamledit.Change(e.op, e.location, e.value) for e in request.edits]
+        try:
+            text = yamledit.apply(request.text, changes)
+        except configs.PatchError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return RoutePatched(text=text, check=_route_checked(server.workspace, file, text))
+
+    @app.post("/api/routes/new", responses={422: {}})
+    def new_route(request: NewRouteRequest):
+        """A new route in a PROS project's routes/ folder, with no steps (never over a
+        file): its robot and field relative to it, its start as LemLib has it."""
+        from vexsim.app import routes
+        from vexsim.bridge.build import is_pros_project
+
+        ws = server.workspace
+        try:
+            project = ws.path(request.project)
+            if not is_pros_project(project):
+                raise ValueError(f"{request.project} isn't a PROS project")
+            folder = project / routes.FOLDER
+            name = request.name.strip() or "New route"
+            file = folder / routes.route_file_name(name)
+            stem, count = file.stem, 2
+            while file.exists():
+                file, count = folder / f"{stem}_{count}.yaml", count + 1
+            relative = {
+                key: Path(os.path.relpath(ws.path(value), folder)).as_posix() if value else None
+                for key, value in (("robot", request.robot), ("field", request.field))
+            }
+            x, y, heading = request.start
+            start = (x, y, (90.0 - heading) % 360.0)  # LemLib's theta
+            text = routes.new_route_text(name, relative["robot"], relative["field"], start)
+            folder.mkdir(exist_ok=True)
+            with open(file, "x", encoding="utf-8", newline="\n") as out:
+                out.write(text)
+        except (ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return NewRoute(path=ws.relative(file))
+
+    @app.post("/api/routes/mirror", responses={400: {}, 422: {}})
+    def mirror_route(request: MirrorRouteRequest):
+        """A copy of a route beside it, mirrored for the other side of the field (never over
+        a file): its path, and what couldn't be mirrored."""
+        from vexsim.app import routes
+
+        try:
+            file = _route_file(request.path)
+            text, notes = routes.mirror_text(request.text, file, request.axis)
+            made, count = file.with_name(f"{file.stem}_mirrored.yaml"), 2
+            while made.exists():
+                made, count = file.with_name(f"{file.stem}_mirrored_{count}.yaml"), count + 1
+            with open(made, "x", encoding="utf-8", newline="") as out:
+                out.write(text)
+        except (ValueError, OSError, configs.PatchError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        return MirroredRoute(path=server.workspace.relative(made), notes=notes)
 
     @app.post("/api/config/new", responses={422: {}})
     def new_robot(request: NewRobotRequest):

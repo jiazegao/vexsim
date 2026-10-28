@@ -191,18 +191,23 @@ class RunSpec(BaseModel):
         )
 
 
-def route_defaults(route: str, base: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+def route_defaults(
+    route: str, base: str | os.PathLike[str] | None = None, text: str | None = None
+) -> dict[str, Any]:
     """What a run of ``route`` takes from it: its robot, project, field and start, paths as
     ``route`` is given (relative to ``base``, or the working directory); what it can't read
-    is left out, for ``check`` to explain."""
+    is left out, for ``check`` to explain. ``text``: the route's, if it isn't saved yet."""
+    import yaml
+
     from vexsim.app.routes import project_of, read_route
     from vexsim.config.issues import ConfigError
-    from vexsim.config.yaml_io import load_yaml_file
+    from vexsim.config.yaml_io import load_yaml_file, parse_yaml
 
     path = Path(base or ".") / route
     try:
-        found, _ = read_route(load_yaml_file(path), path.stem)
-    except ConfigError:
+        data = load_yaml_file(path) if text is None else parse_yaml(text)
+        found, _ = read_route(data, path.stem)
+    except (ConfigError, yaml.YAMLError):
         found = None
     folder = os.path.dirname(route)
 
@@ -301,8 +306,11 @@ class Prepared:
     warnings: list[ConfigIssue] = field(default_factory=list)
 
 
-def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared:
+def check(
+    spec: RunSpec, base: str | os.PathLike[str] | None = None, *, route_text: str | None = None
+) -> Prepared:
     """Load and validate what ``spec`` names, relative to ``base``. No robot code runs.
+    ``route_text``: the route's text, when the editor's isn't saved.
 
     Raises RunError: the robot's or the field's config issues, or a missing file.
     """
@@ -333,7 +341,7 @@ def check(spec: RunSpec, base: str | os.PathLike[str] | None = None) -> Prepared
     if spec.routine:
         _check_routine(prepared, named)
     if spec.route:
-        _check_route(prepared, named)
+        _check_route(prepared, named, route_text)
     if spec.input and not Path(spec.input).is_file():
         raise RunError(f"input not found: {named.input}")
     if spec.follow is not None:
@@ -375,16 +383,16 @@ def _check_routine(prepared: Prepared, named: RunSpec) -> None:
         prepared.warnings.append(ConfigIssue("warning", "routine", message))
 
 
-def _check_route(prepared: Prepared, named: RunSpec) -> None:
+def _check_route(prepared: Prepared, named: RunSpec, text: str | None = None) -> None:
     """The route reads and checks, and the run is its project's, in the autonomous period."""
     from vexsim.app.routes import load_route
 
     spec = prepared.spec
     if spec.routine:
         raise RunError("a run picks a routine or runs a route, not both")
-    if not Path(spec.route).is_file():
+    if text is None and not Path(spec.route).is_file():
         raise RunError(f"route not found: {named.route}")
-    checked = load_route(spec.route)
+    checked = load_route(spec.route, text)
     if checked.route is None or checked.errors:
         raise RunError(f"{named.route}: the route has errors", checked.errors, source=named.route)
     project = checked.project

@@ -221,6 +221,7 @@ class RouteJob(_Message):
     route: str  # its file, in the workspace
     seed: Annotated[int, Field(ge=0)] = 0
     noise: Literal["ideal", "default", "harsh"] | None = None
+    text: str | None = None  # the route as the editor has it, when that isn't saved
 
 
 StartJob = Annotated[
@@ -257,6 +258,7 @@ class RouteRun(_Message):
     ended_s: float | None  # when the last step ended
     period_s: float  # the autonomous period it's measured against
     steps: list[RouteStepEnd]
+    path: list[tuple[float, float, float, float]] = []  # where it drove: time, x, y, theta
 
 
 class RunProblem(_Message):
@@ -1012,6 +1014,150 @@ class CalibrationResult(_Message):
     files: list[str]
 
 
+class RouteParamInfo(_Message):
+    name: str
+    type: str  # as C++ has it
+    kind: Literal["integer", "number", "bool", "enum"]
+    default: str | None  # as written
+    value: float | bool | str | None  # the default as a value a route can pass, if it's plain
+    values: list[str] = []  # an enum's values
+
+
+class MotionHintInfo(_Message):
+    """How a function moves the robot, as the ``// vexsim:`` comment above it says."""
+
+    motion: Literal["drive", "turn_by", "arc", "point", "pose", "none"]
+    args: list[str | float]  # each a parameter's name, or a number
+
+
+class RouteFunctionInfo(_Message):
+    """One of the team's functions a route can call (``vexsim.bridge.functions``)."""
+
+    name: str
+    header: str
+    line: int
+    declaration: str
+    params: list[RouteParamInfo]
+    required: int  # how many arguments a call needs
+    hint: MotionHintInfo | None
+    hint_problem: str | None  # why its vexsim: comment doesn't read
+
+
+class NotRouteFunctionInfo(_Message):
+    name: str
+    header: str
+    line: int
+    why: str
+
+
+class RouteStepData(_Message):
+    """A step as the route's file has it: `kind` is a motion's (move_to_point...), a pause's,
+    `call`, or `invalid` (it doesn't read)."""
+
+    kind: str
+    target: list[float]  # a motion's x, y (and theta), or theta; a wait's ms or distance
+    timeout: int | None
+    side: Literal["left", "right"] | None
+    options: dict[str, float | bool | str]
+    function: str | None
+    args: dict[str, float | bool | str]
+    label: str
+
+
+class RouteData(_Message):
+    """A route (``vexsim.app.routes.Route``), its numbers in LemLib's convention."""
+
+    name: str
+    start: tuple[float, float, float]
+    robot: str | None  # as written, relative to its file
+    field: str | None
+    functions: list[str]
+    steps: list[RouteStepData]
+
+
+class RouteCheck(_Message):
+    """A route's text, checked: its issues where they're written, and when it reads, the
+    route, the functions its headers declare, its robot and field to draw, and where each
+    step is written (`steps[3]`)."""
+
+    issues: list[PlacedIssue]
+    route: RouteData | None
+    functions: list[RouteFunctionInfo]
+    others: list[NotRouteFunctionInfo]
+    headers: list[str]  # the project's own headers, any of which `functions` can list
+    preview: Preview | None
+    track: float | None  # the drive's track width (in): a swing turns about one side
+    places: dict[str, TextSpan]
+    project: str | None  # workspace paths: its project, robot and field
+    robot_path: str | None
+    field_path: str | None
+
+
+class RouteFile(_Message):
+    """A route, opened for editing. `version` is of the bytes on disk."""
+
+    path: str
+    text: str
+    version: str
+    check: RouteCheck
+
+
+class RouteCheckRequest(_Message):
+    path: str  # the route's file in the workspace, which its paths are relative to
+    text: str
+
+
+class RouteEdit(_Message):
+    """A change to a route's text: `set` a value at `location`, `add` one to the end of the
+    list there, `remove` the item or key there, `insert` one as the list item at `location`
+    (`steps[2]`), or `move` the item there to the index `value` (``vexsim.app.yamledit``)."""
+
+    op: Literal["set", "add", "remove", "rename", "insert", "move"]
+    location: str
+    value: Any = None
+
+
+class RoutePatchRequest(_Message):
+    path: str
+    text: str
+    edits: list[RouteEdit]
+
+
+class RoutePatched(_Message):
+    """The text with the edits made in place (nothing else in it changed), checked."""
+
+    text: str
+    check: RouteCheck
+
+
+class NewRouteRequest(_Message):
+    """A new route in a PROS project's routes/ folder (never over a file), with the robot and
+    field given (workspace paths) and its start where the run bar has it (x, y, heading)."""
+
+    project: str
+    name: str
+    robot: str | None = None
+    field: str | None = None
+    start: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+class NewRoute(_Message):
+    path: str
+
+
+class MirrorRouteRequest(_Message):
+    """A mirrored copy of a route: across x = 0 (`x`: x becomes -x) or y = 0 (`y`)."""
+
+    path: str
+    text: str
+    axis: Literal["x", "y"]
+
+
+class MirroredRoute(_Message):
+    path: str  # the copy
+    notes: list[str]  # what it couldn't mirror
+
+
 class ConfigOverridesRequest(_Message):
     """Set ``overrides`` in a robot config's text (``POST /api/config/overrides``)."""
 
@@ -1109,6 +1255,22 @@ MODELS: list[type[BaseModel]] = [
     RouteJob,
     RouteStepEnd,
     RouteRun,
+    RouteParamInfo,
+    MotionHintInfo,
+    RouteFunctionInfo,
+    NotRouteFunctionInfo,
+    RouteStepData,
+    RouteData,
+    RouteCheck,
+    RouteFile,
+    RouteCheckRequest,
+    RouteEdit,
+    RoutePatchRequest,
+    RoutePatched,
+    NewRouteRequest,
+    NewRoute,
+    MirrorRouteRequest,
+    MirroredRoute,
     RunProblem,
     PreviewRequest,
     Preview,

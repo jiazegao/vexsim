@@ -35,7 +35,7 @@ from vexsim.app.configs import (
 )
 from vexsim.config.yaml_io import parse_yaml
 
-Op = Literal["set", "add", "remove", "rename"]
+Op = Literal["set", "add", "remove", "rename", "insert", "move"]
 INDENT = 2  # for blocks that have no neighbours to copy
 
 
@@ -43,7 +43,10 @@ INDENT = 2  # for blocks that have no neighbours to copy
 class Change:
     """``set`` a value (a word, a number, a list or a mapping) at ``location``, adding the
     key if it's missing; ``add`` it to the end of the list there (making the list if there's
-    none); ``remove`` the list item or the key there; ``rename`` the key there to it."""
+    none); ``remove`` the list item or the key there; ``rename`` the key there to it;
+    ``insert`` it as the list item at ``location`` (``steps[2]``: before the item there, and
+    the comments just above it); ``move`` the list item there to the place it says (an
+    index), its text, comments and all, as it was."""
 
     op: Op
     location: str
@@ -77,6 +80,19 @@ def change(text: str, edit: Change) -> str:
     path = parse_location(edit.location)
     if not path:
         raise PatchError("say where the change goes")
+    if edit.op in ("insert", "move"):
+        if not isinstance(path[-1], int):
+            raise PatchError(f"{edit.location} isn't a place in a list")
+        listed = _walk(root, path[:-1])
+        if listed.merged or any(id(node) in shared for node in listed.chain):
+            raise PatchError(
+                f"{edit.location} comes from an anchor, an alias or a merge (<<): change it in "
+                "the text, where it's written"
+            )
+        doc = _Doc(text)
+        if edit.op == "insert":
+            return doc.insert(listed, path[-1], edit.value, edit.location)
+        return doc.move(listed, path[-1], edit.value, edit.location)
     found = _walk(root, path)
     if found.merged or any(id(node) in shared for node in found.chain):
         raise PatchError(
@@ -227,6 +243,69 @@ class _Doc:
         item = _item(value, indent, last, self.newline)
         at = _line_end(self.text, _text_end(last))
         return self._replace(at, at, f"{self.newline}{' ' * indent}- {item}")
+
+    # --- insert and move ---------------------------------------------------------------------
+
+    def insert(self, listed: _Found, index: int, value: Any, location: str) -> str:
+        sequence = None if listed.missing else listed.chain[-1]
+        count = len(sequence.value) if isinstance(sequence, SequenceNode) else 0
+        if not 0 <= index <= count:
+            raise PatchError(f"{location} is past the end of its list")
+        if index == count:  # at the end, as add puts it
+            return self.add(listed, value, location)
+        item = sequence.value[index]
+        if sequence.flow_style:
+            at = item.start_mark.index
+            return self._replace(at, at, (_word(value) if _scalar(value) else _flow(value)) + ", ")
+        dash = _dash(self.text, item)
+        if dash is None:
+            raise PatchError(f"{location} isn't written one item to a line")
+        indent = dash - _line_start(self.text, dash)
+        written = _item(value, indent, item, self.newline)
+        at = self._lead(dash)
+        return self._replace(at, at, f"{' ' * indent}- {written}{self.newline}")
+
+    def move(self, listed: _Found, index: int, to: Any, location: str) -> str:
+        sequence = None if listed.missing else listed.chain[-1]
+        if not isinstance(sequence, SequenceNode) or not 0 <= index < len(sequence.value):
+            raise PatchError(f"{location} isn't in the file")
+        count = len(sequence.value)
+        if isinstance(to, bool) or not isinstance(to, int) or not 0 <= to < count:
+            raise PatchError(f"{location} can only move to a place in its list (0 to {count - 1})")
+        if to == index:
+            return self.text
+        if sequence.flow_style:
+            start, end = sequence.value[0].start_mark.index, _text_end(sequence.value[-1])
+            if "\n" in self.text[start:end]:
+                raise PatchError(f"{location} is in a list written over lines: move it in the text")
+            items = [self.text[i.start_mark.index : _text_end(i)] for i in sequence.value]
+            items.insert(to, items.pop(index))
+            return self._replace(start, end, ", ".join(items))
+        spans = []  # each item's lines, the comments just above it with it: (first, end)
+        for item in sequence.value:
+            dash = _dash(self.text, item)
+            if dash is None:
+                raise PatchError(f"{location} is in a list not written one item to a line")
+            last = _line_end(self.text, _text_end(item))
+            spans.append((self._lead(dash), last))
+        text = self.text if self.text.endswith(("\n", "\r")) else self.text + self.newline
+        block = [(first, end + len(self.newline)) for first, end in spans]
+        moved = text[block[index][0] : block[index][1]]
+        rest = text[: block[index][0]] + text[block[index][1] :]
+        at = block[to][0] if to < index else block[to][1] - len(moved)
+        text = rest[:at] + moved + rest[at:]
+        return text if self.text.endswith(("\n", "\r")) else text[: -len(self.newline)]
+
+    def _lead(self, dash: int) -> int:
+        """Where a list item's lines begin: its own (``dash`` is on it), or the comment
+        lines just above it, which are about it."""
+        start = _line_start(self.text, dash)
+        while start > 0:
+            above = _line_start(self.text, start - 1)
+            if not self.text[above : start - 1].strip().startswith("#"):
+                break
+            start = above
+        return start
 
     # --- remove ------------------------------------------------------------------------------
 

@@ -188,6 +188,7 @@ export interface RouteJob {
   route: string;
   seed?: number;
   noise?: "ideal" | "default" | "harsh" | null;
+  text?: string | null;
 }
 
 /** Where a step of a route ended in a run (LemLib's convention: x, y in inches, theta in degrees clockwise from +y); times are seconds into the autonomous period. */
@@ -212,6 +213,135 @@ export interface RouteRun {
   ended_s: number | null;
   period_s: number;
   steps: RouteStepEnd[];
+  path?: [number, number, number, number][];
+}
+
+export interface RouteParamInfo {
+  name: string;
+  type: string;
+  kind: "integer" | "number" | "bool" | "enum";
+  default: string | null;
+  value: number | boolean | string | null;
+  values?: string[];
+}
+
+/** How a function moves the robot, as the `// vexsim:` comment above it says. */
+export interface MotionHintInfo {
+  motion: "drive" | "turn_by" | "arc" | "point" | "pose" | "none";
+  args: (string | number)[];
+}
+
+/** One of the team's functions a route can call (`vexsim.bridge.functions`). */
+export interface RouteFunctionInfo {
+  name: string;
+  header: string;
+  line: number;
+  declaration: string;
+  params: RouteParamInfo[];
+  required: number;
+  hint: MotionHintInfo | null;
+  hint_problem: string | null;
+}
+
+export interface NotRouteFunctionInfo {
+  name: string;
+  header: string;
+  line: number;
+  why: string;
+}
+
+/** A step as the route's file has it: `kind` is a motion's (move_to_point...), a pause's, `call`, or `invalid` (it doesn't read). */
+export interface RouteStepData {
+  kind: string;
+  target: number[];
+  timeout: number | null;
+  side: "left" | "right" | null;
+  options: Record<string, number | boolean | string>;
+  function: string | null;
+  args: Record<string, number | boolean | string>;
+  label: string;
+}
+
+/** A route (`vexsim.app.routes.Route`), its numbers in LemLib's convention. */
+export interface RouteData {
+  name: string;
+  start: [number, number, number];
+  robot: string | null;
+  field: string | null;
+  functions: string[];
+  steps: RouteStepData[];
+}
+
+/** A route's text, checked: its issues where they're written, and when it reads, the route, the functions its headers declare, its robot and field to draw, and where each step is written (`steps[3]`). */
+export interface RouteCheck {
+  issues: PlacedIssue[];
+  route: RouteData | null;
+  functions: RouteFunctionInfo[];
+  others: NotRouteFunctionInfo[];
+  headers: string[];
+  preview: Preview | null;
+  track: number | null;
+  places: Record<string, TextSpan>;
+  project: string | null;
+  robot_path: string | null;
+  field_path: string | null;
+}
+
+/** A route, opened for editing. `version` is of the bytes on disk. */
+export interface RouteFile {
+  path: string;
+  text: string;
+  version: string;
+  check: RouteCheck;
+}
+
+export interface RouteCheckRequest {
+  path: string;
+  text: string;
+}
+
+/** A change to a route's text: `set` a value at `location`, `add` one to the end of the list there, `remove` the item or key there, `insert` one as the list item at `location` (`steps[2]`), or `move` the item there to the index `value` (`vexsim.app.yamledit`). */
+export interface RouteEdit {
+  op: "set" | "add" | "remove" | "rename" | "insert" | "move";
+  location: string;
+  value?: unknown;
+}
+
+export interface RoutePatchRequest {
+  path: string;
+  text: string;
+  edits: RouteEdit[];
+}
+
+/** The text with the edits made in place (nothing else in it changed), checked. */
+export interface RoutePatched {
+  text: string;
+  check: RouteCheck;
+}
+
+/** A new route in a PROS project's routes/ folder (never over a file), with the robot and field given (workspace paths) and its start where the run bar has it (x, y, heading). */
+export interface NewRouteRequest {
+  project: string;
+  name: string;
+  robot?: string | null;
+  field?: string | null;
+  start?: [number, number, number];
+}
+
+export interface NewRoute {
+  path: string;
+}
+
+/** A mirrored copy of a route: across x = 0 (`x`: x becomes -x) or y = 0 (`y`). */
+export interface MirrorRouteRequest {
+  path: string;
+  text: string;
+  axis: "x" | "y";
+}
+
+export interface MirroredRoute {
+  path: string;
+  notes: string[];
 }
 
 /** Why a run can't start (HTTP 422). */

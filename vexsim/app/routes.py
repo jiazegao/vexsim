@@ -48,6 +48,7 @@ from vexsim.config.issues import ConfigIssue
 VERSION = 1
 FOLDER = "routes"  # a project's routes are in <project>/routes/*.yaml
 AUTONOMOUS_S = 15.0  # a match's autonomous period, which a route's time is measured against
+PATH_MS = 20  # how often a route's run notes where the robot is
 
 Value = int | float | bool | str
 
@@ -101,6 +102,7 @@ MOTIONS: dict[str, Motion] = {
     ),
 }
 PAUSES = ("wait", "wait_until", "wait_until_done")
+INVALID = "invalid"  # a step that doesn't read (the editor's routes keep its place)
 _FUNCTION = re.compile(r"(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*")  # a function's name, with namespaces
 KINDS = (*MOTIONS, *PAUSES, "call")
 TOP_KEYS = ("version", "name", "robot", "field", "start", "functions", "steps")
@@ -209,8 +211,12 @@ class _Reader:
         return value
 
 
-def read_route(data: Any, default_name: str = "") -> tuple[Route | None, list[ConfigIssue]]:
-    """A route from its YAML data, and the problems with it (an error leaves it None)."""
+def read_route(
+    data: Any, default_name: str = "", *, partial: bool = False
+) -> tuple[Route | None, list[ConfigIssue]]:
+    """A route from its YAML data, and the problems with it (an error leaves it None).
+    ``partial``: for the editor, a route even when some steps don't read, each of those an
+    ``invalid`` step in its place (None only when its name, start or paths don't read)."""
     reader = _Reader()
     if not isinstance(data, Mapping):
         reader.error("", "the top level of the file must be a mapping of keys")
@@ -256,7 +262,12 @@ def read_route(data: Any, default_name: str = "") -> tuple[Route | None, list[Co
         step = _read_step(reader, item, f"steps[{k}]")
         if step is not None:
             steps.append(step)
-    if any(i.severity == "error" for i in reader.issues):
+        elif partial:
+            steps.append(Step(INVALID))
+    errors = [i for i in reader.issues if i.severity == "error"]
+    if partial:
+        errors = [i for i in errors if not i.location.startswith("steps[")]
+    if errors:
         return None, reader.issues
     route = Route(
         name=name.strip(), start=start, robot=paths["robot"], field=paths["field"],
@@ -459,6 +470,8 @@ def check_route(route: Route, path: str | os.PathLike[str]) -> CheckedRoute:
         checked.functions = find_functions(project, inside)
     for k, step in enumerate(route.steps):
         where = f"steps[{k}]"
+        if step.kind == INVALID:
+            continue
         if step.kind == "call":
             _check_call(checked, step, where, error)
         elif (
@@ -610,7 +623,7 @@ def check_text(text: str, path: str | os.PathLike[str]) -> tuple[CheckedRoute, l
     except yaml.YAMLError as exc:
         issue = ConfigIssue("error", "", f"invalid YAML: {exc}")
         return CheckedRoute(None, [issue]), [LocatedIssue("error", "", issue.message, None)]
-    route, issues = read_route(data, path.stem)
+    route, issues = read_route(data, path.stem, partial=True)
     checked = check_route(route, path) if route is not None else CheckedRoute(None, [])
     checked.issues[:0] = issues
     located = [
@@ -620,16 +633,21 @@ def check_text(text: str, path: str | os.PathLike[str]) -> tuple[CheckedRoute, l
     return checked, located
 
 
-def load_route(path: str | os.PathLike[str]) -> CheckedRoute:
-    """A route's file read and checked (a missing or unreadable file is an error)."""
+def load_route(path: str | os.PathLike[str], text: str | None = None) -> CheckedRoute:
+    """A route's file read and checked (a missing or unreadable file is an error); with
+    ``text``, that text as the file at ``path`` (the editor's, not saved yet)."""
+    import yaml
+
     from vexsim.config.issues import ConfigError
-    from vexsim.config.yaml_io import load_yaml_file
+    from vexsim.config.yaml_io import load_yaml_file, parse_yaml
 
     path = Path(path)
     try:
-        data = load_yaml_file(path)
+        data = load_yaml_file(path) if text is None else parse_yaml(text)
     except ConfigError as exc:
         return CheckedRoute(None, exc.issues)
+    except yaml.YAMLError as exc:
+        return CheckedRoute(None, [ConfigIssue("error", "", f"invalid YAML: {exc}")])
     route, issues = read_route(data, path.stem)
     if route is None:
         return CheckedRoute(None, issues)
@@ -661,6 +679,8 @@ def call_arguments(step: Step, functions) -> list[Value]:
 def runner_input(route: Route, functions) -> str:
     """The route as vexsim's route runner reads it (bridge/runner.py): a line for its start,
     then one for each step, numbered from 1."""
+    if any(step.kind == INVALID for step in route.steps):
+        raise ValueError("a route with steps that don't read can't run")
     lines = [f"vexsim-route {VERSION}", "start " + " ".join(_text(v) for v in route.start)]
     for number, step in enumerate(route.steps, 1):
         words = [str(number), step.kind]
@@ -691,6 +711,8 @@ def _text(value: Value) -> str:
 
 def label(step: Step) -> str:
     """A step in a few words: ``move_to_point (14, 0) max_speed 60``, ``wait 100 ms``."""
+    if step.kind == INVALID:
+        return "a step that doesn't read"
     if step.kind == "call":
         args = ", ".join(f"{name}={_text(value)}" for name, value in step.args)
         return f"{step.function}({args})"
@@ -718,11 +740,13 @@ def run_route(
     noise: str | None = None,
     log=None,
     max_seconds: float = 120.0,
+    text: str | None = None,
 ) -> dict:
     """Run a route headless until each step it started has ended (or the autonomous period
     is over), and say where each step ended: where the robot really was, and where LemLib
     thought it was (LemLib's convention), when (seconds into the autonomous period), and
-    whether a motion used up its timeout. ``path`` is relative to ``root``."""
+    whether a motion used up its timeout; and the path the robot drove. ``path`` is relative
+    to ``root``; ``text``: the route as the editor has it, not saved yet."""
     from vexsim.app.runspec import (
         RunSpec,
         build,
@@ -734,17 +758,28 @@ def run_route(
     from vexsim.bridge.host import HostError
     from vexsim.runtime.simulation import MODES
 
-    given = route_defaults(str(path), root)
+    given = route_defaults(str(path), root, text)
     spec = RunSpec(
         robot=given.get("robot") or "", program=given.get("program"), route=str(path),
         field=given.get("field"), start=given.get("start", (0.0, 0.0, 0.0)), seed=seed,
         noise=noise,
     )  # fmt: skip
-    prepared = check(spec, root)
+    prepared = check(spec, root, route_text=text)
     executable = build(prepared, log=log)
     make_program, mode = program_factory(prepared, executable)
     sim = simulation_factory(prepared, make_program, mode, echo=None)()
-    record = sim.program.route_record
+    program = sim.program
+    record = program.route_record
+    driven: list[list[float]] = []
+
+    def sample(world) -> None:  # where the robot is, from the autonomous period's start
+        if program.autonomous_us is None:
+            return
+        x, y, heading = (*_inches(sim.robot.pose[:2]), math.degrees(sim.robot.pose[2]))
+        time_s = (world.clock.us - program.autonomous_us) / 1e6
+        driven.append([round(time_s, 3), round(x, 2), round(y, 2), round((90 - heading) % 360, 1)])
+
+    sim.world.every(PATH_MS, sample, name="route path")
     try:  # autonomous() may return while the last motion goes on: wait for it
         sim.world.run_until(lambda w: record.done, timeout_s=max_seconds)
     except HostError as exc:  # where the steps before it ended still counts
@@ -752,7 +787,13 @@ def run_route(
     finally:
         sim.close()
     period = dict(MODES[mode]).get("autonomous") or AUTONOMOUS_S
-    return endpoints(prepared.route.route, record, period)
+    return {**endpoints(prepared.route.route, record, period), "path": driven}
+
+
+def _inches(xy) -> tuple[float, float]:
+    from vexsim.units import m_to_in
+
+    return m_to_in(xy[0]), m_to_in(xy[1])
 
 
 def endpoints(route: Route, record, period_s: float | None = None) -> dict:
@@ -805,8 +846,183 @@ def endpoints(route: Route, record, period_s: float | None = None) -> dict:
 
 
 def route_job(params: dict, report) -> dict:
-    """A ``route`` job: ``run_route`` on ``params["route"]`` (relative to ``params["root"]``)."""
+    """A ``route`` job: ``run_route`` on ``params["route"]`` (relative to ``params["root"]``),
+    or on ``params["text"]`` as that file, when the editor's text isn't saved."""
     return run_route(
         params["route"], params.get("root"), seed=params.get("seed", 0),
-        noise=params.get("noise"), log=report,
+        noise=params.get("noise"), log=report, text=params.get("text"),
     )  # fmt: skip
+
+
+# --- for the editor ------------------------------------------------------------------------------
+
+
+def project_headers(project: str | os.PathLike[str]) -> list[str]:
+    """The project's own headers, relative to it, for a route's ``functions``: those under
+    include/ that aren't a template's (PROS, LemLib...)."""
+    from vexsim.bridge.functions import TEMPLATE_DIRS
+
+    include = Path(project) / "include"
+    found = []
+    for path in sorted(include.rglob("*")) if include.is_dir() else []:
+        rel = path.relative_to(include)
+        if path.suffix in (".h", ".hpp", ".hh", ".hxx") and rel.parts[0] not in TEMPLATE_DIRS:
+            found.append(f"include/{rel.as_posix()}")
+    return [h for h in found if h != "include/main.h" and h != "include/api.h"]
+
+
+def new_route_text(
+    name: str,
+    robot: str | None,
+    field: str | None,
+    start: tuple[float, float, float],
+) -> str:
+    """A new route's YAML: no steps yet. ``robot`` and ``field`` are relative to the route's
+    file; ``start`` is LemLib's x, y, theta."""
+    words = [_text(round(v, 2)) for v in start]
+    lines = [
+        "# An autonomous route, for vexsim (its README: Autonomous routes). Numbers are",
+        "# LemLib's: inches, and theta in degrees clockwise from +y.",
+        f"version: {VERSION}",
+        f"name: {json_word(name)}",
+    ]
+    if robot:
+        lines.append(f"robot: {json_word(robot)}   # relative to this file")
+    if field:
+        lines.append(f"field: {json_word(field)}")
+    lines += [
+        f"start: [{', '.join(words)}]   # chassis.setPose(x, y, theta)",
+        "functions: []   # headers whose functions steps can call",
+        "steps: []",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def json_word(text: str) -> str:
+    """A word as YAML reads it back: plain when it can be, else quoted."""
+    from vexsim.app.yamledit import _word
+
+    return _word(text)
+
+
+def route_file_name(name: str) -> str:
+    """A route's file name from its name: ``Left 40`` is ``left_40.yaml``."""
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    return (slug or "route") + ".yaml"
+
+
+# --- mirroring ------------------------------------------------------------------------------------
+
+
+def mirror_changes(route: Route, functions, axis: str) -> tuple[list, list[str]]:
+    """The changes that make ``route`` the one for the other side of the field: mirrored
+    across its middle line x = 0 (``axis`` "x": x becomes -x) or y = 0 ("y"). Turns go the
+    other way and swings lock the other side; the team's functions are mirrored as their
+    ``// vexsim:`` comments say. Also, what it can't mirror."""
+    from vexsim.app.yamledit import Change
+
+    if axis not in ("x", "y"):
+        raise ValueError("mirror across x = 0 (axis x) or y = 0 (axis y)")
+
+    def point(x: float, y: float) -> list[float]:
+        return [-x, y] if axis == "x" else [x, -y]
+
+    def heading(theta: float) -> float:
+        mirrored = (-theta if axis == "x" else 180.0 - theta) % 360.0
+        return 0.0 if abs(mirrored - 360.0) < 1e-9 else mirrored
+
+    def tidy(values: list[float]) -> list[float]:
+        return [round(v, 6) + 0.0 for v in values]
+
+    x, y, theta = route.start
+    changes = [Change("set", "start", tidy([*point(x, y), heading(theta)]))]
+    notes: list[str] = []
+    for k, step in enumerate(route.steps):
+        where = f"steps[{k}]"
+        if step.motion is not None:
+            target = step.target
+            if len(target) == 1:
+                value = tidy([heading(target[0])])[0]
+            elif len(target) == 2:
+                value = tidy(point(*target))
+            else:
+                value = tidy([*point(target[0], target[1]), heading(target[2])])
+            changes.append(Change("set", f"{where}.{step.kind}", value))
+            direction = step.option("direction")
+            if direction in ("cw", "ccw"):
+                changes.append(
+                    Change("set", f"{where}.direction", "ccw" if direction == "cw" else "cw")
+                )
+            if step.side is not None:
+                other = "right" if step.side == "left" else "left"
+                changes.append(Change("set", f"{where}.locked_side", other))
+        elif step.kind == "call" and functions is not None:
+            changes += _mirror_call(step, where, functions, axis, notes, point, heading)
+    return changes, notes
+
+
+def _mirror_call(step: Step, where: str, functions, axis: str, notes: list[str], point, heading):
+    from vexsim.app.yamledit import Change
+
+    fn = functions.named(step.function)
+    hint = fn.hint if fn is not None else None
+    if hint is None:
+        notes.append(
+            f"step {int(where.removeprefix('steps[').rstrip(']')) + 1}: {step.function}() is as "
+            "it was: nothing says how it moves the robot (a // vexsim: comment above it would)"
+        )
+        return []
+    given = dict(step.args)
+
+    def value(arg) -> float | None:
+        if not isinstance(arg, str):
+            return None
+        if arg in given:
+            return given[arg]
+        param = fn.param(arg)
+        literal = param.literal() if param is not None else None
+        return (
+            literal if isinstance(literal, int | float) and not isinstance(literal, bool) else None
+        )
+
+    changes = []
+
+    def put(arg, mirrored: float) -> None:
+        changes.append(Change("set", f"{where}.args.{arg}", round(mirrored, 6) + 0.0))
+
+    angles = {"turn_by": [0], "arc": [1], "pose": [2]}.get(hint.motion, [])
+    for index in angles:
+        arg = hint.args[index]
+        current = value(arg)
+        if current is None:
+            notes.append(
+                f"{step.function}() turns by a fixed angle, so its mirror image is another "
+                "function: change that step by hand"
+            )  # (its own step stays as it was)
+            return []
+        put(arg, -current if hint.motion != "pose" else heading(current))
+    if hint.motion in ("point", "pose"):
+        xs, ys = hint.args[0], hint.args[1]
+        px, py = value(xs), value(ys)
+        if px is None or py is None:
+            notes.append(f"{step.function}()'s point can't be mirrored: change that step by hand")
+            return []
+        mx, my = point(px, py)
+        if mx != px:
+            put(xs, mx)
+        if my != py:
+            put(ys, my)
+    return changes
+
+
+def mirror_text(text: str, path: str | os.PathLike[str], axis: str) -> tuple[str, list[str]]:
+    """A route's text mirrored (``mirror_changes``), named as the mirror image, and what
+    couldn't be mirrored."""
+    from vexsim.app.yamledit import Change, apply
+
+    checked = load_route(path, text)
+    if checked.route is None:
+        raise ValueError("the route doesn't read: fix it before mirroring it")
+    changes, notes = mirror_changes(checked.route, checked.functions, axis)
+    changes.append(Change("set", "name", f"{checked.route.name} (mirrored)"))
+    return apply(text, changes), notes

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -35,6 +35,19 @@ LEMLIB_ENUMS = {
 # headers of the templates a PROS project holds, never the team's own
 TEMPLATE_DIRS = ("pros", "lemlib", "liblvgl", "fmt", "display", "okapi")
 _INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*[<"]([^>"\n]+)[>"]', re.M)
+# A comment just above a function's declaration that says how it moves the robot, for the
+# maker's plan (PLAN.md 13.2): `// vexsim: drive(inches)`, each argument one of the
+# function's parameters or a number
+HINTS = {
+    "drive": ("inches",),  # straight along the heading (back, if negative)
+    "turn_by": ("degrees",),  # in place, clockwise (LemLib's sense)
+    "arc": ("radius", "degrees"),  # along an arc, turning clockwise through the angle
+    "point": ("x", "y"),  # as move_to_point
+    "pose": ("x", "y", "theta"),  # as move_to_pose
+    "none": (),  # it doesn't move the robot
+}
+_HINT = re.compile(r"//\s*vexsim:\s*(.*?)\s*$")
+_HINT_CALL = re.compile(r"([A-Za-z_]\w*)\s*(?:\((.*)\))?")
 _HEX = re.compile(r"([-+]?)0[xX]([0-9a-fA-F]+)[uUlL]*")
 _DECIMAL = re.compile(r"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)[fFlLuU]*")
 
@@ -72,6 +85,15 @@ class Param:
 
 
 @dataclass(frozen=True)
+class Hint:
+    """How a function moves the robot, as its ``// vexsim:`` comment says: one of ``HINTS``,
+    each argument a parameter's name or a number."""
+
+    motion: str
+    args: tuple[str | float, ...] = ()
+
+
+@dataclass(frozen=True)
 class Function:
     """A function a route can call: ``name`` as C++ calls it (``moveForward``,
     ``auton::wiggle``)."""
@@ -81,6 +103,8 @@ class Function:
     line: int
     params: tuple[Param, ...] = ()
     defined: bool = False  # the header defines it too (so every file that includes it can call it)
+    hint: Hint | None = None  # how it moves the robot, if a comment says
+    hint_problem: str | None = None  # why its vexsim: comment doesn't read
 
     @property
     def required(self) -> int:
@@ -149,11 +173,14 @@ def find_functions(project: str | Path, headers: Iterable[str]) -> Functions:
     for header in headers:
         if header in found.missing:
             continue
-        for statement in _read_statements(project / header):
+        statements, lines = _read_header(project / header)
+        for statement in statements:
             for fn in _functions(statement):
                 if fn.deleted or fn.name.split("::")[-1].startswith("vexsim"):
                     continue
                 made = _read(fn, header, found.enums)
+                if isinstance(made, Function):
+                    made = _hinted(made, lines)
                 before = seen.get(fn.name)
                 if before is None:
                     seen[fn.name] = made
@@ -167,6 +194,43 @@ def find_functions(project: str | Path, headers: Iterable[str]) -> Functions:
         else:
             found.others.append(made)
     return found
+
+
+def _hinted(fn: Function, lines: list[str]) -> Function:
+    """``fn`` with what the ``// vexsim:`` comment just above its declaration says."""
+    line = fn.line - 2  # the line above, from 0
+    while line >= 0 and lines[line].strip().startswith("//"):
+        match = _HINT.search(lines[line])
+        if match:
+            hint = read_hint(match.group(1), fn)
+            if isinstance(hint, str):
+                return replace(fn, hint_problem=hint)
+            return replace(fn, hint=hint)
+        line -= 1
+    return fn
+
+
+def read_hint(text: str, fn: Function) -> Hint | str:
+    """A ``// vexsim:`` comment's words (``drive(inches)``) for ``fn``, or why they don't read."""
+    call = _HINT_CALL.fullmatch(text.strip())
+    if not call or call.group(1) not in HINTS:
+        known = (f"{k}({', '.join(v)})" if v else k for k, v in HINTS.items())
+        return f"vexsim: {text} isn't one of " + ", ".join(known)
+    motion, wanted = call.group(1), HINTS[call.group(1)]
+    words = [w.strip() for w in (call.group(2) or "").split(",") if w.strip()]
+    if len(words) != len(wanted):
+        return f"vexsim: {motion} takes {len(wanted)} argument(s): " + ", ".join(wanted)
+    args: list[str | float] = []
+    for word in words:
+        param = fn.param(word)
+        if param is not None and param.kind in ("integer", "number"):
+            args.append(word)
+            continue
+        try:
+            args.append(float(word))
+        except ValueError:
+            return f"vexsim: {word} isn't a number, or one of {fn.name}()'s number parameters"
+    return Hint(motion, tuple(args))
 
 
 def _signature(made: Function | NotFunction) -> object:
@@ -300,15 +364,20 @@ def _template_header(path: Path, include: Path) -> bool:
 
 
 def _read_statements(path: Path) -> list[_Statement]:
+    return _read_header(path)[0]
+
+
+def _read_header(path: Path) -> tuple[list[_Statement], list[str]]:
     try:
         stat = path.stat()
     except OSError:
-        return []
-    return _statements_of(str(path), stat.st_mtime_ns, stat.st_size)
+        return [], []
+    return _header_of(str(path), stat.st_mtime_ns, stat.st_size)
 
 
 @lru_cache(maxsize=256)
-def _statements_of(path: str, mtime_ns: int, size: int) -> list[_Statement]:
-    """A header's statements, read once while it's unchanged (a route is checked often)."""
+def _header_of(path: str, mtime_ns: int, size: int) -> tuple[list[_Statement], list[str]]:
+    """A header's statements and lines, read once while it's unchanged (a route is checked
+    often)."""
     text = Path(path).read_text(encoding="utf-8", errors="replace")
-    return list(_statements(_tokens(text)))
+    return list(_statements(_tokens(text))), text.splitlines()
