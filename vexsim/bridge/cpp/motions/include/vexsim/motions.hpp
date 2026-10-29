@@ -7,7 +7,7 @@
 //   vexsim::Motions motions(chassis, {.kS = 0.9, .kV = 0.16, .kA = 0.03});
 //   chassis.setPose(0, 0, 0);
 //   motions.ramsete({{24, 24}, {48, 0}}, 3000);              // through (24, 24) to (48, 0)
-//   motions.moveArc(18, -90, 2000, {.forwards = false});    // 18 in back, turning 90° left
+//   motions.moveArc(18, -90, 2000, {.forwards = false});    // 18 in back, turning 90 degrees left
 //
 // Poses and headings are LemLib's: inches, and degrees clockwise from +y. vexsim's autonomous
 // maker writes these calls when it exports a route; this file is a copy of vexsim's, to read

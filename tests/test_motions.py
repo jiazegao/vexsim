@@ -234,14 +234,14 @@ def test_arcs_and_paths_are_checked_and_run_with_the_routes_drive_model(tmp_path
 def test_arcs_and_paths_are_mirrored(tmp_path):
     project = team_project(tmp_path)
     path = route_file(project, HEAD + STEPS)
-    text, notes = mirror_text(path.read_text(), path, "x")
+    text, notes = mirror_text(path.read_text(encoding="utf-8"), path, "x")
     assert notes == []
     assert text.splitlines()[-2:] == [
         "  - {move_arc: [18, -90], timeout: 1500}",
         "  - {ramsete: [[-24, 24], [-48, 0]], timeout: 3000, forwards: false, max_velocity: 40, "
         "end_heading: 270}",
     ]
-    across, _ = mirror_text(path.read_text(), path, "y")
+    across, _ = mirror_text(path.read_text(encoding="utf-8"), path, "y")
     assert "{ramsete: [[24, -24], [48, 0]]," in across and "end_heading: 90}" in across
 
 
@@ -299,10 +299,10 @@ def test_a_route_with_an_arc_and_a_path_exports_with_the_motion_library(tmp_path
     ours = {rel: change.after for rel, change in ((f.path, f) for f in plan.files[2:])}
     export(project)
     for rel in LIBRARY:
-        assert (project / rel).read_text() == ours[rel]
+        assert (project / rel).read_text(encoding="utf-8") == ours[rel]
     # the project's own copy, changed, stays: the export says so
     header = project / LIBRARY[0]
-    header.write_text(header.read_text() + "// ours\n")
+    header.write_text(header.read_text(encoding="utf-8") + "// ours\n", encoding="utf-8")
     again = plan_export(project)
     assert [f.path for f in again.files if f.path in LIBRARY] == list(LIBRARY[1:])
     assert all(f.state == "unchanged" for f in again.files)
@@ -321,9 +321,13 @@ def test_a_calibration_fits_the_drive_model_to_its_log(tmp_path):
         },
         lambda text: None,
     )
-    drive = json.loads((tmp_path / found["id"] / "result.json").read_text())["drive"]
+    drive = json.loads((tmp_path / found["id"] / "result.json").read_text(encoding="utf-8"))[
+        "drive"
+    ]
     assert drive["turned"] and drive["r2"] > 0.99 and drive["section"].startswith("drive: {kS: ")
-    assert (tmp_path / found["id"] / "drive.yaml").read_text() == drive["section"] + "\n"
+    assert (tmp_path / found["id"] / "drive.yaml").read_text(encoding="utf-8") == drive[
+        "section"
+    ] + "\n"
 
 
 # --- the done-when: a route with a RAMSETE path and an arc runs, and exported, drives the same --
@@ -367,10 +371,11 @@ def test_a_route_with_a_path_and_an_arc_runs_and_exported_drives_the_same(
     made = export(project)
     assert [f.path for f in made.files if f.state == "new"][-3:] == list(LIBRARY)
     main = project / "src" / "main.cpp"
-    text = main.read_text()
+    text = main.read_text(encoding="utf-8")
     main.write_text(
         '#include "custom/auton.hpp"\n'
-        + text.replace("void autonomous() {", "void autonomous() {\n    arcs();\n    return;", 1)
+        + text.replace("void autonomous() {", "void autonomous() {\n    arcs();\n    return;", 1),
+        encoding="utf-8",
     )
     lemlib_build(project)
     ends = [(s["ended_s"], s["pose"]) for s in ran["steps"]]
