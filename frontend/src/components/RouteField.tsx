@@ -15,8 +15,13 @@ const HANDLE_GAP_PX = 18; // from the robot's front to a heading handle
 const HANDLE_PX = 7;
 const MARKER_PX = 9;
 const TURN_STEP = 15; // degrees a heading snaps to (1 with Shift)
-const FINE_MOVE = 0.1; // inches, with Shift
+const POINT_STEP = 0.1; // inches a dragged or clicked point is written to: it follows the pointer
 const SPEED_SHADES = 16; // a trajectory's speed is drawn in this many shades
+
+/** `v` to the nearest `step`, without float dust (0.30000000000000004) or -0. */
+const snapTo = (v: number, step: number) => Number((Math.round(v / step) * step).toFixed(4)) + 0;
+/** Where a point dragged or clicked to `point` goes. */
+const placed = (point: Point): [number, number] => [snapTo(point[0], POINT_STEP), snapTo(point[1], POINT_STEP)];
 
 /** The steps that end in one place, as the field is drawn: one numbered marker. */
 interface Marker {
@@ -59,7 +64,6 @@ export function RouteField(props: {
   selected: number | null;
   run: RouteRun | null; // the last simulated run, if it's of this route as it is
   stale: boolean; // the drawn route isn't the text's just now
-  snap: number; // inches a target snaps to
   tool: Motion | null;
   onSelect: (index: number | null) => void;
   onDrag: (dragged: Dragged | null) => void; // as it goes (null: over)
@@ -417,12 +421,10 @@ export function RouteField(props: {
     };
     const valueFor = (grip: Grip, point: Point, fine: boolean): number[] => {
       const p = live.current;
-      const step = fine ? FINE_MOVE : p.snap;
-      const snapTo = (v: number, s: number) => Number((Math.round(v / s) * s).toFixed(4)) + 0;
       const turn = (from: Point) => snapTo(bearing(from, point), fine ? 1 : TURN_STEP) % 360;
-      if (grip.kind === "start") return [snapTo(point[0], step), snapTo(point[1], step), p.start![2]];
+      if (grip.kind === "start") return [...placed(point), p.start![2]];
       if (grip.kind === "start-heading") return [p.start![0], p.start![1], turn([p.start![0], p.start![1]])];
-      if (grip.kind === "target" || grip.kind === "waypoint") return [snapTo(point[0], step), snapTo(point[1], step)];
+      if (grip.kind === "target" || grip.kind === "waypoint") return placed(point);
       const pose = p.planned[grip.index].pose;
       return [turn([pose[0], pose[1]])];
     };
@@ -453,9 +455,7 @@ export function RouteField(props: {
         return;
       }
       if (p.tool && !p.stale) {
-        const [x, y] = toField(view, px, py);
-        const s = event.shiftKey ? FINE_MOVE : p.snap;
-        p.onAdd(p.tool, [Number((Math.round(x / s) * s).toFixed(4)) + 0, Number((Math.round(y / s) * s).toFixed(4)) + 0]);
+        p.onAdd(p.tool, placed(toField(view, px, py)));
         return;
       }
       panning = { x: px, y: py, id: event.pointerId };

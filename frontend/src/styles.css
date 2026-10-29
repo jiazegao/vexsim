@@ -2856,6 +2856,66 @@ ol.steps {
   margin-top: 8px;
 }
 
+/* "Add a step": what's typed, and the steps that match it in a list under the box */
+.step-picker-list {
+  z-index: 50;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.step-picker-list [role="option"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.step-picker-list [role="option"].on {
+  background: var(--accent-wash);
+}
+
+.step-picker-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.step-picker-title mark {
+  background: none;
+  color: inherit;
+  font-weight: 700;
+}
+
+.step-picker-group {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.step-picker-detail {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.step-picker-none {
+  padding: 6px 8px;
+}
+
 .route-headers summary,
 .route-drive summary {
   margin-top: 6px;

@@ -5,22 +5,18 @@ import { spanRange } from "../configdoc";
 import { isActive, useJob } from "../jobs";
 import type { RouteCheck, RouteDriveInfo, RouteEdit, RouteFile, RouteFunctionInfo, RouteParamInfo, RouteRun, RoutesExport, RouteStepData, TextSpan, WorkspaceInfo } from "../protocol";
 import type { Dragged, LemPose, Motion, Planned, Point, StepValue } from "../route";
-import { ahead, bearing, copiedSteps, copySteps, describe, dropEdit, isMotion, isOwn, MOTION_INFO, MOTIONS, newStep, OPTION_DEFAULTS, plan, pointsOf, relativePath, stepValue, withDrag } from "../route";
+import { ahead, bearing, copiedSteps, copySteps, describe, dropEdit, isMotion, isOwn, MOTION_INFO, newStep, OPTION_DEFAULTS, plan, pointsOf, relativePath, stepValue, withDrag } from "../route";
+import type { StepOption } from "../stepsearch";
+import { stepOptions } from "../stepsearch";
 import { ExportDialog } from "./ExportDialog";
 import { marksOf, RouteField } from "./RouteField";
+import { StepPicker } from "./StepPicker";
 import type { YamlEditorHandle } from "./YamlEditor";
 import { YamlEditor } from "./YamlEditor";
 
 const CHECK_DELAY_MS = 250; // after the last keystroke
 const RUN_DELAY_MS = 600; // after the last edit: then the route runs headless
 const FIELD_TOOLS: readonly Motion[] = ["move_to_point", "move_to_pose", "turn_to_point", "swing_to_point", "ramsete"];
-const SNAPS = [
-  ["tile", "Tiles"],
-  ["half", "Half tiles"],
-  ["quarter", "Quarter tiles"],
-  ["inch", "Inches"],
-] as const;
-type Snap = (typeof SNAPS)[number][0];
 
 interface Checked {
   text: string; // the text this is the check of
@@ -57,7 +53,6 @@ export function RouteEditor(props: {
   const [saving, setSaving] = useState(false);
   const [dragged, setDragged] = useState<Dragged | null>(null);
   const [tool, setTool] = useState<Motion | null>(null);
-  const [snap, setSnap] = useState<Snap>("half");
   const [run, setRun] = useState<{ text: string; result: RouteRun } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [runError, setRunError] = useState<{ text: string; message: string } | null>(null);
@@ -150,9 +145,7 @@ export function RouteEditor(props: {
   const drive = shown?.drive ?? null;
   const planned = useMemo(() => (drawn ? plan(drawn, functions, track, ran, drive) : []), [drawn, functions, track, ran, drive]);
   const marks = useMemo(() => marksOf(planned, shown?.preview ?? null), [planned, shown]);
-  const fieldSize = shown?.preview?.field.size ?? [144, 144];
-  const tile = fieldSize[0] / 6;
-  const snapInches = { tile, half: tile / 2, quarter: tile / 4, inch: 1 }[snap];
+  const options = useMemo(() => stepOptions(functions, shown?.more_functions ?? []), [functions, shown]);
 
   useEffect(() => {
     if (selected !== null && selected >= steps.length) setSelected(steps.length ? steps.length - 1 : null);
@@ -200,6 +193,28 @@ export function RouteEditor(props: {
     const at = afterSelected();
     const step = newStep(kind, before(at), fn, undefined, drive, track);
     insert(stepValue(step), at, `Added step ${at + 1}: ${describe(step)}.`);
+  };
+  /** A step picked in "Add a step": a function from a header the route doesn't list yet
+   * lists the header too, in the same change (once, though the list it was picked from is a
+   * check behind). */
+  const headersAdding = useRef(new Set<string>());
+  useEffect(() => {
+    for (const header of route?.functions ?? []) headersAdding.current.delete(header);
+  }, [route]);
+  const pickStep = (option: StepOption) => {
+    const header = option.header;
+    if (!header) return addKind(option.kind, option.fn);
+    const add = !route?.functions.includes(header) && !headersAdding.current.has(header);
+    if (add) headersAdding.current.add(header);
+    const at = afterSelected();
+    const step = newStep("call", before(at), option.fn);
+    const edits: RouteEdit[] = [
+      ...(add ? [{ op: "add" as const, location: "functions", value: header }] : []),
+      { op: "insert", location: `steps[${at}]`, value: stepValue(step) },
+    ];
+    change(edits, `Added step ${at + 1}: ${describe(step)}${add ? `, and ${header} to the route's functions` : ""}.`)
+      .then(() => setSelected(at))
+      .catch(() => add && headersAdding.current.delete(header));
   };
   const addAt = (kind: Motion, point: Point) => {
     const at = afterSelected();
@@ -522,7 +537,7 @@ export function RouteEditor(props: {
                     })}
                   </ol>
                   {!steps.length && <p className="muted small">No steps yet: add one, or pick a motion tool and click the field.</p>}
-                  <AddStep functions={functions} onAdd={addKind} />
+                  <StepPicker options={options} onPick={pickStep} />
                 </section>
               </fieldset>
             )}
@@ -546,16 +561,6 @@ export function RouteEditor(props: {
                 Mirror ↕
               </button>
             </span>
-            <label className="small">
-              Snap{" "}
-              <select value={snap} onChange={(e) => setSnap(e.target.value as Snap)} data-testid="route-snap">
-                {SNAPS.map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
           <RouteField
             preview={shown?.preview ?? null}
@@ -567,7 +572,6 @@ export function RouteEditor(props: {
             selected={selected}
             run={simulated}
             stale={stale}
-            snap={snapInches}
             tool={tool}
             onSelect={setSelected}
             onDrag={(d) => d && setDragged(d)}
@@ -787,54 +791,6 @@ function DriveModel(props: { route: Record<string, number>; drive: RouteDriveInf
         by driving the robot's config; for the real robot, fit them to its log on the Calibrate page and write them here.
       </p>
     </details>
-  );
-}
-
-/** "Add": a motion, a pause or one of the team's functions, after the selected step. */
-function AddStep(props: { functions: readonly RouteFunctionInfo[]; onAdd: (kind: string, fn?: RouteFunctionInfo) => void }) {
-  const byHeader = new Map<string, RouteFunctionInfo[]>();
-  for (const fn of props.functions) byHeader.set(fn.header, [...(byHeader.get(fn.header) ?? []), fn]);
-  return (
-    <select
-      className="route-add"
-      value=""
-      aria-label="Add a step"
-      onChange={(e) => {
-        const [kind, name] = e.target.value.split(":");
-        if (kind) props.onAdd(kind, props.functions.find((f) => f.name === name));
-      }}
-      data-testid="add-step"
-    >
-      <option value="">Add a step…</option>
-      <optgroup label="LemLib motions">
-        {MOTIONS.filter((kind) => !isOwn(kind)).map((kind) => (
-          <option key={kind} value={kind}>
-            {MOTION_INFO[kind].title}
-          </option>
-        ))}
-      </optgroup>
-      <optgroup label="vexsim's motions (planned on a speed profile)">
-        {MOTIONS.filter(isOwn).map((kind) => (
-          <option key={kind} value={kind}>
-            {MOTION_INFO[kind].title}
-          </option>
-        ))}
-      </optgroup>
-      <optgroup label="Pauses">
-        <option value="wait">Wait (ms)</option>
-        <option value="wait_until">Wait until the motion is this far along</option>
-        <option value="wait_until_done">Wait until the motion is done</option>
-      </optgroup>
-      {[...byHeader].map(([header, list]) => (
-        <optgroup key={header} label={header}>
-          {list.map((fn) => (
-            <option key={fn.name} value={`call:${fn.name}`} title={fn.declaration}>
-              {fn.name}()
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
   );
 }
 

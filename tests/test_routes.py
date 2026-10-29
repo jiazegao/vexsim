@@ -567,6 +567,47 @@ def test_the_server_opens_checks_and_changes_a_route_in_place(tmp_path):
         assert again["path"] == "project/routes/test_mirrored_2.yaml"
 
 
+def test_the_server_offers_the_functions_of_the_headers_a_route_doesnt_list(tmp_path):
+    """For *Add a step* to find: picking one lists its header in the route's functions."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from tests.test_pages import TOKEN
+    from vexsim.ui.server import create_app
+
+    project = team_project(tmp_path)
+    moves = project / "include" / "moves.hpp"
+    moves.write_text(MOVES + "void startIntake();\n")  # team.hpp has one too: the route's
+    route_file(project, HEAD + "  - {wait: 100}\n")
+    path = "project/routes/test.yaml"
+    app = create_app(
+        tmp_path, token=TOKEN, port=8642, hosts={"testserver"}, origins={"http://testserver"}
+    )
+    with TestClient(app) as client:
+        client.headers["authorization"] = f"Bearer {TOKEN}"
+        checked = client.get("/api/route", params={"path": path}).json()["check"]
+        assert "startIntake" in [f["name"] for f in checked["functions"]]
+        more = {f["name"]: f for f in checked["more_functions"]}
+        assert list(more) == [
+            "turnBy", "goPoint", "sweep", "ahead", "quarter", "clamp", "notAParameter",
+            "notANumber", "notAMotion", "tooMany", "unsaid",
+        ]  # fmt: skip
+        assert {f["header"] for f in more.values()} == {"include/moves.hpp"}
+        turn = more["turnBy"]
+        assert turn["declaration"] == "void turnBy(float degrees, int timeout = 800)"
+        assert [p["name"] for p in turn["params"]] == ["degrees", "timeout"]
+        assert turn["hint"] == {"motion": "turn_by", "args": ["degrees"]}
+
+        moves.write_text(MOVES.replace("void unsaid(float inches);", "void later();"))
+        again = client.post("/api/route/check", json={"path": path, "text": HEAD}).json()
+        assert [f["name"] for f in again["more_functions"]][-1] == "later"  # read again
+
+        listing = HEAD.replace("[include/team.hpp]", "[include/team.hpp, include/moves.hpp]")
+        both = client.post("/api/route/check", json={"path": path, "text": listing}).json()
+        assert "later" in [f["name"] for f in both["functions"]]
+        assert both["more_functions"] == []
+
+
 # --- where routes show up -------------------------------------------------------------------------
 
 

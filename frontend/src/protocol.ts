@@ -291,6 +291,7 @@ export interface RouteCheck {
   issues: PlacedIssue[];
   route: RouteData | null;
   functions: RouteFunctionInfo[];
+  more_functions?: RouteFunctionInfo[];
   others: NotRouteFunctionInfo[];
   headers: string[];
   preview: Preview | null;

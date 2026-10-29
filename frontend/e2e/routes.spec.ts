@@ -18,6 +18,13 @@ async function onField(canvas: Locator, x: number, y: number): Promise<[number, 
   return [box.x + box.width / 2 + (x - cx) * scale, box.y + box.height / 2 - (y - cy) * scale];
 }
 
+/** "Add a step": `query` typed in its box, then the option `id` (a kind, or call:name) picked from
+ * the steps it finds. */
+async function addStep(editor: Locator, query: string, id: string): Promise<void> {
+  await editor.getByTestId("add-step").fill(query);
+  await editor.getByTestId(`add-step-option-${id}`).click();
+}
+
 /** How far the simulated end of a step is from (x, y), in inches (NaN while it's simulated). */
 async function simulatedFrom(editor: Locator, step: number, x: number, y: number): Promise<number> {
   const pose = ((await editor.getByTestId(`step-end-${step}`).getAttribute("data-pose")) || "NaN,NaN").split(",").map(Number);
@@ -68,21 +75,21 @@ test("builds a route from scratch: a dragged end is planned at once and simulate
     await expect(editor.getByTestId("route-start-y")).toHaveValue("-24");
 
     // LemLib's motions, a pause and one of the team's functions, each after the one before
-    const add = editor.getByTestId("add-step");
-    await add.selectOption("move_to_point"); // 24 in ahead
+    await addStep(editor, "move to point", "move_to_point"); // 24 in ahead
     await expect(steps).toHaveCount(1);
-    await add.selectOption("turn_to_heading"); // a quarter turn on
+    await addStep(editor, "turn to heading", "turn_to_heading"); // a quarter turn on
     await expect(steps).toHaveCount(2);
-    await add.selectOption("wait");
+    await addStep(editor, "wait", "wait");
     await expect(steps).toHaveCount(3);
     await editor.getByTestId("header-include/custom/util_funcs.hpp").click(); // its functions
-    await add.selectOption("call:moveForward");
+    await expect(editor.getByTestId("header-include/custom/util_funcs.hpp")).toBeChecked();
+    await addStep(editor, "moveForward", "call:moveForward");
     await expect(steps).toHaveCount(4);
     await editor.getByTestId("step-3-arg-inches").fill("12");
     await editor.getByTestId("step-3-arg-inches").press("Enter");
     // its "// vexsim: drive(inches)" comment says where it goes: 12 in along the heading
     await expect(steps.nth(3)).toHaveAttribute("data-planned", "-24.00,-36.00,180.00");
-    // a motion tool: a step where the field is clicked (to the nearest half tile)
+    // a motion tool: a step where the field is clicked
     await editor.getByTestId("tool-move_to_point").click();
     const canvas = editor.getByTestId("route-canvas");
     await page.mouse.click(...(await onField(canvas, 0, -47)));
@@ -93,7 +100,7 @@ test("builds a route from scratch: a dragged end is planned at once and simulate
       "Turn to 180° · waits",
       "Wait 250 ms",
       "moveForward(inches 12, timeout 1000)",
-      "Move to (0, -46.8) · waits",
+      "Move to (0, -47) · waits",
     ]);
 
     // a comment, typed in its YAML
@@ -144,7 +151,7 @@ test("builds a route from scratch: a dragged end is planned at once and simulate
         "  - {turn_to_heading: 180, timeout: 1000, async: false}   # face the far wall",
         "  - {wait: 250}",
         "  - {call: moveForward, args: {inches: 12, timeout: 1000}}",
-        "  - {move_to_point: [0, -46.8], timeout: 1900, async: false}",
+        "  - {move_to_point: [0, -47], timeout: 1900, async: false}",
         "",
       ].join("\n"),
     );
@@ -191,11 +198,10 @@ test("plans a RAMSETE path and an arc whole, shaded by speed: a point dragged, l
     const steps = editor.locator("[data-testid^='step-'][data-planned]");
 
     // vexsim's own motions: a RAMSETE path curving off to the right, then an arc
-    const add = editor.getByTestId("add-step");
-    await add.selectOption("ramsete");
+    await addStep(editor, "ramsete", "ramsete");
     await expect(steps).toHaveCount(1);
     await expect(steps.nth(0)).toHaveAttribute("data-planned", "0.00,-24.00,116.57"); // the way its last stretch goes
-    await add.selectOption("move_arc");
+    await addStep(editor, "arc", "move_arc");
     await expect(steps).toHaveCount(2);
     await editor.getByTestId("step-1-degrees").fill("-90"); // counter-clockwise
     await editor.getByTestId("step-1-degrees").press("Enter");
@@ -209,8 +215,7 @@ test("plans a RAMSETE path and an arc whole, shaded by speed: a point dragged, l
     await expect(drive).toContainText("vexsim's, from the robot");
     await expect(drive.getByTestId("route-drive-kV")).toHaveAttribute("placeholder", /^0\.1\d+$/);
 
-    // the path's first point dragged on the field (to the inch): its plan follows at once
-    await editor.getByTestId("route-snap").selectOption("inch");
+    // the path's first point dragged on the field: its plan follows at once
     await steps.nth(0).locator(".design-item-head").click();
     const before = await canvas.getAttribute("data-trajectories");
     await page.mouse.move(...(await onField(canvas, -24, -12)));
@@ -243,6 +248,51 @@ test("plans a RAMSETE path and an arc whole, shaded by speed: a point dragged, l
     const saved = readFileSync(resolve(WORKSPACE, route), "utf-8");
     expect(saved).toMatch(/\n {2}- \{ramsete: \[\[-24, 0\], \[0, -24\]\], timeout: 5000, async: false, max_velocity: 40\}\n {2}- \{move_arc: \[18, -90\], timeout: \d+, async: false\}\n/);
     expect(saved).toContain("\ndrive: {max_lateral_accel: 10}\n");
+  } finally {
+    const file = resolve(WORKSPACE, route);
+    if (existsSync(file)) rmSync(file);
+  }
+});
+
+test("finds a step by typing: a function from a header the route doesn't list adds the header too", async ({ page }) => {
+  const route = `${PROJECT}/routes/e2e_search.yaml`; // made, then deleted
+  try {
+    await page.getByTestId("new-route").click();
+    const dialog = page.getByTestId("new-route-dialog");
+    await dialog.getByTestId("new-route-name").fill("E2E search");
+    await dialog.getByTestId("new-route-project").selectOption(PROJECT);
+    await dialog.getByTestId("new-route-robot").selectOption(ROBOT);
+    await expect(dialog.getByTestId("new-route-path")).toHaveText(route);
+    await dialog.getByTestId("new-route-create").click();
+    const editor = page.locator('[data-testid="route-editor"]:not([hidden])');
+    await expect(editor).toHaveAttribute("data-path", route);
+    const steps = editor.locator("[data-testid^='step-'][data-planned]");
+    const box = editor.getByTestId("add-step");
+    const list = editor.getByTestId("add-step-list");
+
+    // empty, it lists every step there is: LemLib's motions first
+    await box.click();
+    await expect(list.getByRole("option").first()).toHaveAttribute("data-testid", "add-step-option-move_to_point");
+    // typed, the ones that match, best first: here, 1239E's intake functions in a header the route doesn't list
+    await box.fill("front intake");
+    await expect(list.getByRole("option")).toHaveText([/^startFrontIntake\(\)lift_control\.hpp \(adds it\)/, /^reverseFrontIntake\(\)/, /^stopFrontIntake\(\)/]);
+    await page.keyboard.press("ArrowDown");
+    await expect(list.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Enter"); // picks it: the step, and its header in the route's functions
+    await expect(steps).toHaveCount(1);
+    await expect(steps.locator(".step-label")).toHaveText(["reverseFrontIntake()"]);
+    await expect(editor.getByTestId("header-include/custom/lift_control.hpp")).toBeChecked();
+    await expect(box).toHaveValue("");
+    await expect(list).toHaveCount(0);
+    // a motion by its C++ name; Esc closes the list, then empties the box
+    await box.fill("moveToPose");
+    await expect(list.getByRole("option")).toHaveText([/^Move to a poseLemLib/]);
+    await page.keyboard.press("Escape");
+    await expect(list).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(box).toHaveValue("");
+    await box.fill("no such step");
+    await expect(list).toHaveText(/Nothing matches/);
   } finally {
     const file = resolve(WORKSPACE, route);
     if (existsSync(file)) rmSync(file);

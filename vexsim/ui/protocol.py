@@ -1120,6 +1120,8 @@ class RouteCheck(_Message):
     issues: list[PlacedIssue]
     route: RouteData | None
     functions: list[RouteFunctionInfo]
+    # the functions of the project's other headers: adding one as a step lists its header too
+    more_functions: list[RouteFunctionInfo] = []
     others: list[NotRouteFunctionInfo]
     headers: list[str]  # the project's own headers, any of which `functions` can list
     preview: Preview | None
