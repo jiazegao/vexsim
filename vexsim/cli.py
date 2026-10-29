@@ -239,6 +239,22 @@ def cmd_route(args: argparse.Namespace) -> int:
         print(f"  starts at ({x:g}, {y:g}, {theta:g}), {len(route.steps)} step(s)")
         for number, step in enumerate(route.steps, 1):
             print(f"  {number:>3}  {label(step)}")
+        drive = checked.drive
+        if drive is not None:  # its arcs and paths drive with it
+            given = (
+                f"its drive: section gives {', '.join(route.drive)}"
+                if route.drive
+                else "vexsim's, from the robot"
+            )
+            print(
+                f"Drive model ({given}): kS {drive.kS:g} V, "
+                f"kV {drive.kV:g} V per in/s, kA {drive.kA:g} V per in/s², kT {drive.kT:g} V, "
+                f"kP {drive.kP:g} V per in/s"
+            )
+            print(
+                f"  plans within {drive.max_velocity:g} in/s, {drive.max_accel:g} in/s², and "
+                f"{drive.max_lateral_accel:g} in/s² turning at speed"
+            )
         functions = checked.functions
         if args.functions and functions is not None:
             print(f"Functions a step can call ({', '.join(route.functions) or 'no headers'}):")
@@ -995,6 +1011,12 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
         for name, value in overrides.items():
             print(f"  {name}: {value:g}")
 
+    from vexsim.calibration.feedforward import drive_section, fit_log
+
+    drive = fit_log(config, log)  # for vexsim's own motions, on the real robot
+    if drive is not None:
+        print(f"\nDrive model for vexsim's own motions (arcs, RAMSETE paths): {drive.describe()}")
+        print(f"For the robot's routes, add to them:\n  {drive_section(drive)}")
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
@@ -1002,6 +1024,8 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
             text = "overrides:\n" + "".join(f"  {k}: {v:g}\n" for k, v in overrides.items())
             (out / "overrides.yaml").write_text(text, encoding="utf-8")
         after.write(out / "simulated.csv")
+        if drive is not None:
+            (out / "drive.yaml").write_text(drive_section(drive) + "\n", encoding="utf-8")
         try:
             from vexsim.viz import calibration as cal_plot
 

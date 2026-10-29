@@ -9,6 +9,7 @@ as overrides.yaml and the simulation's own log as simulated.csv.
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -76,6 +77,7 @@ def calibrate(params: dict, report: Report) -> dict:
     ``max_iterations`` and ``workers``."""
     from vexsim.app import results
     from vexsim.app.analyze import robot_config
+    from vexsim.calibration.feedforward import drive_section, fit_log
     from vexsim.calibration.fit import UNITS, compare, fit, worker_count
     from vexsim.calibration.log import RobotLog
 
@@ -132,6 +134,9 @@ def calibrate(params: dict, report: Report) -> dict:
         if overrides:
             text = "overrides:\n" + "".join(f"  {k}: {v:g}\n" for k, v in overrides.items())
             (folder / "overrides.yaml").write_text(text, encoding="utf-8")
+        drive = fit_log(config, log)  # for vexsim's own motions, on the real robot
+        if drive is not None:
+            (folder / "drive.yaml").write_text(drive_section(drive) + "\n", encoding="utf-8")
         after.write(folder / "simulated.csv")
         robot_name = params.get("robot_name") or Path(params["robot"]).name
         fitted_text = (
@@ -154,6 +159,9 @@ def calibrate(params: dict, report: Report) -> dict:
                 "rms": rms,
                 "overrides": overrides,
                 "replays": replays,
+                "drive": None
+                if drive is None
+                else {**dataclasses.asdict(drive), "section": drive_section(drive)},
                 "panels": _panels(config, log, before, after),
                 "files": sorted(p.name for p in folder.iterdir() if p.suffix in (".csv", ".yaml")),
             },

@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { spanRange } from "../configdoc";
 import { isActive, useJob } from "../jobs";
-import type { RouteCheck, RouteEdit, RouteFile, RouteFunctionInfo, RouteParamInfo, RouteRun, RoutesExport, RouteStepData, TextSpan, WorkspaceInfo } from "../protocol";
-import type { Dragged, LemPose, Motion, Point, StepValue } from "../route";
-import { bearing, copiedSteps, copySteps, describe, dropEdit, isMotion, MOTION_INFO, MOTIONS, newStep, OPTION_DEFAULTS, plan, relativePath, stepValue, withDrag } from "../route";
+import type { RouteCheck, RouteDriveInfo, RouteEdit, RouteFile, RouteFunctionInfo, RouteParamInfo, RouteRun, RoutesExport, RouteStepData, TextSpan, WorkspaceInfo } from "../protocol";
+import type { Dragged, LemPose, Motion, Planned, Point, StepValue } from "../route";
+import { ahead, bearing, copiedSteps, copySteps, describe, dropEdit, isMotion, isOwn, MOTION_INFO, MOTIONS, newStep, OPTION_DEFAULTS, plan, pointsOf, relativePath, stepValue, withDrag } from "../route";
 import { ExportDialog } from "./ExportDialog";
 import { marksOf, RouteField } from "./RouteField";
 import type { YamlEditorHandle } from "./YamlEditor";
@@ -13,7 +13,7 @@ import { YamlEditor } from "./YamlEditor";
 
 const CHECK_DELAY_MS = 250; // after the last keystroke
 const RUN_DELAY_MS = 600; // after the last edit: then the route runs headless
-const FIELD_TOOLS: readonly Motion[] = ["move_to_point", "move_to_pose", "turn_to_point", "swing_to_point"];
+const FIELD_TOOLS: readonly Motion[] = ["move_to_point", "move_to_pose", "turn_to_point", "swing_to_point", "ramsete"];
 const SNAPS = [
   ["tile", "Tiles"],
   ["half", "Half tiles"],
@@ -146,7 +146,9 @@ export function RouteEditor(props: {
   // the plan: each step's end as LemLib's targets say, following a drag as it goes
   const ran = useMemo(() => simulated?.steps.map((s) => (s.pose ? ([...s.pose] as unknown as LemPose) : null)) ?? [], [simulated]);
   const drawn = useMemo(() => (route ? withDrag(route, dragged) : null), [route, dragged]);
-  const planned = useMemo(() => (drawn ? plan(drawn, functions, shown?.track ?? 12, ran) : []), [drawn, functions, shown, ran]);
+  const track = shown?.track ?? 12;
+  const drive = shown?.drive ?? null;
+  const planned = useMemo(() => (drawn ? plan(drawn, functions, track, ran, drive) : []), [drawn, functions, track, ran, drive]);
   const marks = useMemo(() => marksOf(planned, shown?.preview ?? null), [planned, shown]);
   const fieldSize = shown?.preview?.field.size ?? [144, 144];
   const tile = fieldSize[0] / 6;
@@ -196,14 +198,14 @@ export function RouteEditor(props: {
   const afterSelected = () => (selected === null ? steps.length : selected + 1);
   const addKind = (kind: string, fn?: RouteFunctionInfo) => {
     const at = afterSelected();
-    const step = newStep(kind, before(at), fn);
+    const step = newStep(kind, before(at), fn, undefined, drive, track);
     insert(stepValue(step), at, `Added step ${at + 1}: ${describe(step)}.`);
   };
   const addAt = (kind: Motion, point: Point) => {
     const at = afterSelected();
     const from = before(at);
     const target = kind === "move_to_pose" ? [point[0], point[1], Math.round(bearing([from[0], from[1]], point))] : [point[0], point[1]];
-    const step = newStep(kind, from, undefined, target);
+    const step = newStep(kind, from, undefined, target, drive, track);
     insert(stepValue(step), at, `Added step ${at + 1}: ${describe(step)}.`);
   };
   const remove = (index: number) =>
@@ -494,6 +496,7 @@ export function RouteEditor(props: {
                               {end?.ended_s != null ? ` ${end.ended_s.toFixed(2)} s` : ""}
                               {off != null ? ` · ${off.toFixed(1)} in off` : ""}
                               {end?.timed_out ? <span className="bad" title="It used up its timeout"> ⏱</span> : null}
+                              {end?.ended_s == null && planned[i]?.seconds != null ? <span className="muted" title="How long its plan takes"> {planned[i].seconds!.toFixed(2)} s planned</span> : null}
                             </span>
                           </div>
                           {i === selected && (
@@ -502,7 +505,12 @@ export function RouteEditor(props: {
                               index={i}
                               functions={functions}
                               issues={found.map((x) => x.message)}
+                              from={before(i)}
+                              planned={planned[i]}
+                              drive={drive}
                               onSet={(key, value) => set(`steps[${i}].${key}`, value)}
+                              onAdd={(key, value) => change([{ op: "add", location: `steps[${i}].${key}`, value }]).catch(() => {})}
+                              onTakeOut={(key) => change([{ op: "remove", location: `steps[${i}].${key}` }]).catch(() => {})}
                               onUnset={(key) => unset(i, key)}
                               onReplace={(value) => set(`steps[${i}]`, value)}
                               onDuplicate={() => duplicate(i)}
@@ -554,6 +562,7 @@ export function RouteEditor(props: {
             start={drawn?.start ?? null}
             steps={drawn?.steps ?? []}
             planned={planned}
+            topSpeed={drive?.max_velocity ?? null}
             marks={marks}
             selected={selected}
             run={simulated}
@@ -641,6 +650,18 @@ function NumberBox(props: { value: number | null | undefined; label: string; pla
   );
 }
 
+/** A route's drive: section, its keys as the form shows them: label, unit. */
+const DRIVE_FIELDS: readonly (readonly [keyof RouteDriveInfo, string, string])[] = [
+  ["kS", "kS", "V"],
+  ["kV", "kV", "V per in/s"],
+  ["kA", "kA", "V per in/s²"],
+  ["kT", "kT", "V, turning"],
+  ["kP", "kP", "V per in/s behind"],
+  ["max_velocity", "Max speed", "in/s"],
+  ["max_accel", "Max accel", "in/s²"],
+  ["max_lateral_accel", "Max turning accel", "in/s²"],
+];
+
 function Row(props: { label: string; children: ReactNode; unit?: string }) {
   return (
     <div className="design-row">
@@ -721,6 +742,7 @@ function RouteHead(props: {
           ))}
         </select>
       </Row>
+      {props.check.drive && route.steps.some((step) => isOwn(step.kind)) && <DriveModel route={route.drive ?? {}} drive={props.check.drive} onSet={props.onSet} onRemove={props.onRemove} />}
       <details className="route-headers" open={route.functions.length === 0 && props.check.headers.length > 0}>
         <summary className="small">
           The team's functions: {route.functions.length ? route.functions.map((h) => h.split("/").at(-1)).join(", ") : "none yet"}
@@ -742,6 +764,32 @@ function RouteHead(props: {
   );
 }
 
+/** The model of the drive its arcs and RAMSETE paths drive with: each number the route's
+ * drive: section gives, or (empty) vexsim's. */
+function DriveModel(props: { route: Record<string, number>; drive: RouteDriveInfo; onSet: (location: string, value: unknown) => void; onRemove: (location: string) => void }) {
+  const given = Object.keys(props.route).length;
+  return (
+    <details className="route-drive" open={given > 0} data-testid="route-drive">
+      <summary className="small">Drive model for its arcs and RAMSETE paths: {given ? "its own numbers, and vexsim's for the rest" : "vexsim's, from the robot"}</summary>
+      {DRIVE_FIELDS.map(([key, label, unit]) => (
+        <Row key={key} label={label} unit={unit}>
+          <NumberBox
+            value={props.route[key] ?? null}
+            label={`${label} (empty: vexsim's, ${props.drive[key]})`}
+            placeholder={String(props.drive[key])}
+            onCommit={(v) => (v === null ? key in props.route && props.onRemove(`drive.${key}`) : props.onSet(`drive.${key}`, v))}
+            testid={`route-drive-${key}`}
+          />
+        </Row>
+      ))}
+      <p className="muted small">
+        How the drive answers voltage: each side gets kS + kV × its speed + kA × its acceleration, kT more on the outside of a turn (against the wheels' scrub), and kP more for each in/s its wheels are behind. And the limits its arcs and paths are planned within. vexsim works them out
+        by driving the robot's config; for the real robot, fit them to its log on the Calibrate page and write them here.
+      </p>
+    </details>
+  );
+}
+
 /** "Add": a motion, a pause or one of the team's functions, after the selected step. */
 function AddStep(props: { functions: readonly RouteFunctionInfo[]; onAdd: (kind: string, fn?: RouteFunctionInfo) => void }) {
   const byHeader = new Map<string, RouteFunctionInfo[]>();
@@ -759,7 +807,14 @@ function AddStep(props: { functions: readonly RouteFunctionInfo[]; onAdd: (kind:
     >
       <option value="">Add a step…</option>
       <optgroup label="LemLib motions">
-        {MOTIONS.map((kind) => (
+        {MOTIONS.filter((kind) => !isOwn(kind)).map((kind) => (
+          <option key={kind} value={kind}>
+            {MOTION_INFO[kind].title}
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="vexsim's motions (planned on a speed profile)">
+        {MOTIONS.filter(isOwn).map((kind) => (
           <option key={kind} value={kind}>
             {MOTION_INFO[kind].title}
           </option>
@@ -789,7 +844,12 @@ function StepForm(props: {
   index: number;
   functions: readonly RouteFunctionInfo[];
   issues: string[];
+  from: LemPose; // where the robot is before it, as planned
+  planned: Planned | undefined;
+  drive: RouteDriveInfo | null; // what vexsim's own motions drive with
   onSet: (key: string, value: unknown) => void;
+  onAdd: (key: string, value: unknown) => void; // to the end of the list there
+  onTakeOut: (key: string) => void; // a list's item
   onUnset: (key: string) => void;
   onReplace: (value: StepValue) => void;
   onDuplicate: () => void;
@@ -803,29 +863,78 @@ function StepForm(props: {
     const target = step.target;
     const setTarget = (i: number, value: number | null) => value !== null && props.onSet(info.target === "heading" ? step.kind : `${step.kind}[${i}]`, value);
     const option = (key: string) => step.options[key];
-    const number = (key: string, label: string, whole = false) => (
-      <Row label={label} key={key}>
-        <NumberBox
-          value={typeof option(key) === "number" ? (option(key) as number) : null}
-          label={`${label} (empty: LemLib's ${OPTION_DEFAULTS[key]})`}
-          placeholder={String(OPTION_DEFAULTS[key])}
-          whole={whole}
-          onCommit={(v) => (v === null ? props.onUnset(key) : props.onSet(key, v))}
-          testid={id(key)}
-        />
-      </Row>
-    );
+    const drive = props.drive;
+    // vexsim's own motions' options: what one left empty is, and as its box shows it
+    const owned: Record<string, [string, string, string, string]> = {
+      max_velocity: ["Max speed", "in/s", drive ? `the drive's, ${drive.max_velocity}` : "the drive's", drive ? String(drive.max_velocity) : "auto"],
+      max_accel: ["Max accel", "in/s²", drive ? `the drive's, ${drive.max_accel}` : "the drive's", drive ? String(drive.max_accel) : "auto"],
+      end_heading: ["Ends facing", "°", "the way the path goes (degrees clockwise from +y)", "auto"],
+    };
+    const number = (key: string, label: string, whole = false) => {
+      const [, unit, empty, shown] = owned[key] ?? [label, "", `LemLib's ${OPTION_DEFAULTS[key]}`, String(OPTION_DEFAULTS[key])];
+      return (
+        <Row label={label} key={key} unit={unit}>
+          <NumberBox
+            value={typeof option(key) === "number" ? (option(key) as number) : null}
+            label={`${label} (empty: ${empty})`}
+            placeholder={shown}
+            whole={whole}
+            onCommit={(v) => (v === null ? props.onUnset(key) : props.onSet(key, v))}
+            testid={id(key)}
+          />
+        </Row>
+      );
+    };
+    const points = pointsOf(step);
+    /** A point after the path's last: as far on again as its last stretch goes (24 in, if it's short). */
+    const nextPoint = (): number[] => {
+      const last = points[points.length - 1];
+      const before = points.length > 1 ? points[points.length - 2] : ([props.from[0], props.from[1]] as const);
+      const length = Math.hypot(last[0] - before[0], last[1] - before[1]);
+      const [dx, dy] = length > 1 ? [(last[0] - before[0]) / length, (last[1] - before[1]) / length] : ahead(props.from[2]);
+      return [Math.round((last[0] + dx * 24) * 10) / 10, Math.round((last[1] + dy * 24) * 10) / 10];
+    };
+    const seconds = props.planned?.seconds;
+    const short = seconds != null && step.timeout != null && step.timeout < seconds * 1000;
     body = (
       <>
-        <Row label={info.target === "heading" ? "Heading" : info.target === "pose" ? "Pose" : "Point"} unit={info.target === "heading" ? "°" : "in"}>
-          {info.target !== "heading" && (
-            <>
-              <NumberBox value={target[0]} label="x (in)" onCommit={(v) => setTarget(0, v)} testid={id("x")} />
-              <NumberBox value={target[1]} label="y (in)" onCommit={(v) => setTarget(1, v)} testid={id("y")} />
-            </>
-          )}
-          {info.target !== "point" && <NumberBox value={info.target === "pose" ? target[2] : target[0]} label="θ (degrees clockwise from +y)" onCommit={(v) => setTarget(info.target === "pose" ? 2 : 0, v)} testid={id("theta")} />}
-        </Row>
+        {info.target === "arc" && (
+          <Row label="Arc" unit="in, °">
+            <NumberBox value={target[0]} label="Radius (in)" onCommit={(v) => setTarget(0, v)} testid={id("radius")} />
+            <NumberBox value={target[1]} label="Turns (degrees clockwise; negative: counter-clockwise)" onCommit={(v) => setTarget(1, v)} testid={id("degrees")} />
+          </Row>
+        )}
+        {info.target === "path" && (
+          <>
+            {points.map(([x, y], k) => (
+              <Row key={k} label={`Point ${k + 1}`} unit="in">
+                <NumberBox value={x} label={`Point ${k + 1}: x (in)`} onCommit={(v) => v !== null && props.onSet(`ramsete[${k}][0]`, v)} testid={id(`point-${k}-x`)} />
+                <NumberBox value={y} label={`Point ${k + 1}: y (in)`} onCommit={(v) => v !== null && props.onSet(`ramsete[${k}][1]`, v)} testid={id(`point-${k}-y`)} />
+                {points.length > 1 && (
+                  <button type="button" className="ghost small" onClick={() => props.onTakeOut(`ramsete[${k}]`)} title="Take this point out" aria-label={`Take point ${k + 1} out`} data-testid={id(`point-${k}-remove`)}>
+                    ×
+                  </button>
+                )}
+              </Row>
+            ))}
+            <Row label="">
+              <button type="button" className="small" onClick={() => props.onAdd("ramsete", nextPoint())} title="Another point at the path's end, to go through after the others (drag it on the field)" data-testid={id("add-point")}>
+                Add a point
+              </button>
+            </Row>
+          </>
+        )}
+        {(info.target === "point" || info.target === "pose" || info.target === "heading") && (
+          <Row label={info.target === "heading" ? "Heading" : info.target === "pose" ? "Pose" : "Point"} unit={info.target === "heading" ? "°" : "in"}>
+            {info.target !== "heading" && (
+              <>
+                <NumberBox value={target[0]} label="x (in)" onCommit={(v) => setTarget(0, v)} testid={id("x")} />
+                <NumberBox value={target[1]} label="y (in)" onCommit={(v) => setTarget(1, v)} testid={id("y")} />
+              </>
+            )}
+            {info.target !== "point" && <NumberBox value={info.target === "pose" ? target[2] : target[0]} label="θ (degrees clockwise from +y)" onCommit={(v) => setTarget(info.target === "pose" ? 2 : 0, v)} testid={id("theta")} />}
+          </Row>
+        )}
         {info.swing && (
           <Row label="Locked side">
             <select value={step.side ?? "left"} onChange={(e) => props.onSet("locked_side", e.target.value)} data-testid={id("side")} aria-label="Locked side">
@@ -857,7 +966,7 @@ function StepForm(props: {
                 </select>
               </Row>
             );
-          const labels: Record<string, string> = { max_speed: "Max speed", min_speed: "Min speed", early_exit: "Exit early", lead: "Lead", horizontal_drift: "Drift" };
+          const labels: Record<string, string> = { max_speed: "Max speed", min_speed: "Min speed", early_exit: "Exit early", lead: "Lead", horizontal_drift: "Drift", ...Object.fromEntries(Object.entries(owned).map(([k, v]) => [k, v[0]])) };
           return number(key, labels[key] ?? key, (key === "max_speed" || key === "min_speed") && !!info.wholeSpeeds);
         })}
         <Row label="Then">
@@ -866,6 +975,12 @@ function StepForm(props: {
             <option value="wait">waits until it's done</option>
           </select>
         </Row>
+        {seconds != null && (
+          <p className={`small ${short ? "bad" : "muted"}`} data-testid={id("plan")}>
+            Its plan takes {seconds.toFixed(2)} s
+            {short ? `: more than its timeout, which would stop it short (make the timeout ${Math.ceil((seconds + 0.5) * 10) * 100} ms or more)` : ", and it's over when the plan is."}
+          </p>
+        )}
       </>
     );
   } else if (step.kind === "wait" || step.kind === "wait_until") {

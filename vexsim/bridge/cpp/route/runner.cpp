@@ -6,8 +6,11 @@
 // The route is a text file, a line for each thing:
 //   vexsim-route 1
 //   start X Y THETA                          chassis.setPose(X, Y, THETA)
+//   drive KS KV KA KT KP MAXV MAXA MAXLAT    the vexsim::Drive vexsim's own motions drive with
 //   N move_to_point X Y TIMEOUT [KEY=VALUE]  a motion: its target (a swing's locked side
 //   N turn_to_heading THETA TIMEOUT ...      after it), timeout, options and async
+//   N move_arc RADIUS DEGREES TIMEOUT ...    vexsim's own motions (vexsim/motions.hpp)
+//   N ramsete X1 Y1 X2 Y2... TIMEOUT ...
 //   N call NAME [ARGUMENT]...                one of the team's functions
 //   N wait MS | N wait_until DISTANCE | N wait_until_done
 //
@@ -32,6 +35,8 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "vexsim/motions.hpp"
 
 extern "C" {
 void vexsim_set_route(void (*run)(void));
@@ -173,7 +178,7 @@ lemlib::DriveSide side(const std::string& word) {
 }
 
 // One step, made as an export makes it: nullptr once done, else why it couldn't be
-const char* run_step(const Step& s, lemlib::Chassis& c) {
+const char* run_step(const Step& s, lemlib::Chassis& c, vexsim::Motions& motions) {
 	const std::string* async = s.option("async");
 	bool go_on = async ? *async == "true" : true;  // LemLib's default
 	if (s.kind == "wait") {
@@ -220,6 +225,22 @@ const char* run_step(const Step& s, lemlib::Chassis& c) {
 		speeds(s, p);
 		c.swingToPoint(s.number_at(0), s.number_at(1), side(s.words.size() > 2 ? s.words[2] : ""), s.whole_at(3),
 		               p, go_on);
+	} else if (s.kind == "move_arc") {
+		vexsim::ArcParams p;
+		set(s, "forwards", p.forwards);
+		set(s, "max_velocity", p.maxVelocity);
+		set(s, "max_accel", p.maxAccel);
+		motions.moveArc(s.number_at(0), s.number_at(1), s.whole_at(2), p, go_on);
+	} else if (s.kind == "ramsete") {
+		vexsim::PathParams p;
+		set(s, "forwards", p.forwards);
+		set(s, "max_velocity", p.maxVelocity);
+		set(s, "max_accel", p.maxAccel);
+		set(s, "end_heading", p.endHeading);
+		if (s.words.size() < 3) return "no points to go through";
+		std::vector<vexsim::Waypoint> points;
+		for (std::size_t k = 0; k + 2 < s.words.size(); k += 2) points.push_back({s.number_at(k), s.number_at(k + 1)});
+		motions.ramsete(points, s.whole_at(s.words.size() - 1), p, go_on);
 	} else {
 		return "this runner doesn't know that kind of step";
 	}
@@ -241,7 +262,7 @@ std::vector<std::string> split(const char* line) {
 	return words;
 }
 
-bool read(const char* path, std::vector<Step>& steps, double start[3], std::string& why) {
+bool read(const char* path, std::vector<Step>& steps, double start[3], vexsim::Drive& drive, std::string& why) {
 	std::FILE* file = path ? std::fopen(path, "r") : nullptr;
 	if (!file) {
 		why = std::string("can't open ") + (path ? path : "the route");
@@ -257,6 +278,10 @@ bool read(const char* path, std::vector<Step>& steps, double start[3], std::stri
 			if (!header) break;
 		} else if (words[0] == "start" && words.size() == 4) {
 			for (int k = 0; k < 3; k++) start[k] = std::strtod(words[k + 1].c_str(), nullptr);
+		} else if (words[0] == "drive" && words.size() == 9) {
+			float* fields[] = {&drive.kS, &drive.kV,          &drive.kA,       &drive.kT,
+			                   &drive.kP, &drive.maxVelocity, &drive.maxAccel, &drive.maxLateralAccel};
+			for (int k = 0; k < 8; k++) *fields[k] = std::strtof(words[k + 1].c_str(), nullptr);
 		} else if (words.size() >= 2) {
 			Step step;
 			step.number = std::atoi(words[0].c_str());
@@ -287,18 +312,20 @@ void motion_ended(std::uint32_t k) {
 void run() {
 	std::vector<Step> steps;
 	double start[3] = {0, 0, 0};
+	vexsim::Drive drive;
 	std::string why;
-	if (!read(std::getenv("VEXSIM_ROUTE"), steps, start, why)) {
+	if (!read(std::getenv("VEXSIM_ROUTE"), steps, start, drive, why)) {
 		note("can't run: %s", why.c_str());
 		return;
 	}
 	lemlib::Chassis& c = chassis();
+	vexsim::Motions motions(c, drive);
 	vexsim_follow_tasks(handle_of(motion_mutex(c)), motion_started, motion_ended);
 	c.setPose(start[0], start[1], start[2]);
 	note("starts");
 	for (const Step& s : steps) {
 		note("step %d starts %u", s.number, static_cast<unsigned>(vexsim_followed_count()));
-		if (const char* failed = run_step(s, c)) {
+		if (const char* failed = run_step(s, c, motions)) {
 			note("can't run: step %d (%s): %s", s.number, s.kind.c_str(), failed);
 			return;
 		}

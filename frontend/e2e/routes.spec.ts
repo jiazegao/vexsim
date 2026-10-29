@@ -169,6 +169,86 @@ test("builds a route from scratch: a dragged end is planned at once and simulate
   }
 });
 
+test("plans a RAMSETE path and an arc whole, shaded by speed: a point dragged, limits set, simulated close", async ({ page }) => {
+  test.setTimeout(BUILD + 180_000);
+  const route = `${PROJECT}/routes/e2e_motions.yaml`; // made, then deleted
+  try {
+    await page.getByTestId("new-route").click();
+    const dialog = page.getByTestId("new-route-dialog");
+    await dialog.getByTestId("new-route-name").fill("E2E motions");
+    await dialog.getByTestId("new-route-project").selectOption(PROJECT);
+    await dialog.getByTestId("new-route-robot").selectOption(ROBOT);
+    await dialog.getByTestId("new-route-field").selectOption(FIELD);
+    await expect(dialog.getByTestId("new-route-path")).toHaveText(route);
+    await dialog.getByTestId("new-route-create").click();
+    const editor = page.locator('[data-testid="route-editor"]:not([hidden])');
+    await expect(editor).toHaveAttribute("data-path", route);
+    for (const [box, value] of [["x", "-48"], ["y", "0"], ["theta", "90"]]) {
+      await editor.getByTestId(`route-start-${box}`).fill(value);
+      await editor.getByTestId(`route-start-${box}`).press("Enter");
+    }
+    await expect(editor.getByTestId("route-start-theta")).toHaveValue("90");
+    const steps = editor.locator("[data-testid^='step-'][data-planned]");
+
+    // vexsim's own motions: a RAMSETE path curving off to the right, then an arc
+    const add = editor.getByTestId("add-step");
+    await add.selectOption("ramsete");
+    await expect(steps).toHaveCount(1);
+    await expect(steps.nth(0)).toHaveAttribute("data-planned", "0.00,-24.00,116.57"); // the way its last stretch goes
+    await add.selectOption("move_arc");
+    await expect(steps).toHaveCount(2);
+    await editor.getByTestId("step-1-degrees").fill("-90"); // counter-clockwise
+    await editor.getByTestId("step-1-degrees").press("Enter");
+    await expect(steps.nth(1)).toHaveAttribute("data-planned", "24.15,-15.95,26.57"); // a quarter turn on, 18 in round
+    const canvas = editor.getByTestId("route-canvas");
+    await expect(canvas).toHaveAttribute("data-trajectories", /^1:\d+\.\d\ds 2:\d+\.\d\ds$/); // each drawn whole, with its speeds
+    await expect(editor.getByTestId("step-1-plan")).toContainText("Its plan takes");
+
+    // the drive model they drive with: vexsim's, worked out from the robot
+    const drive = editor.getByTestId("route-drive");
+    await expect(drive).toContainText("vexsim's, from the robot");
+    await expect(drive.getByTestId("route-drive-kV")).toHaveAttribute("placeholder", /^0\.1\d+$/);
+
+    // the path's first point dragged on the field (to the inch): its plan follows at once
+    await editor.getByTestId("route-snap").selectOption("inch");
+    await steps.nth(0).locator(".design-item-head").click();
+    const before = await canvas.getAttribute("data-trajectories");
+    await page.mouse.move(...(await onField(canvas, -24, -12)));
+    await page.mouse.down();
+    await page.mouse.move(...(await onField(canvas, -24, 0)), { steps: 8 });
+    await expect(editor.getByTestId("route-drag-readout")).toHaveText("step 1, point 1: (-24, 0)");
+    await page.mouse.up();
+    await expect(editor.getByTestId("step-0-point-0-y")).toHaveValue("0");
+    await expect(canvas).not.toHaveAttribute("data-trajectories", before!);
+    await expect(steps.nth(0)).toHaveAttribute("data-planned", "0.00,-24.00,135.00");
+    await expect(steps.nth(1)).toHaveAttribute("data-planned", "25.46,-24.00,45.00"); // the arc goes on from there
+
+    // its own top speed and timeout, and a gentler limit on turning for both
+    await drive.locator("summary").click();
+    for (const [box, value] of [["step-0-max_velocity", "40"], ["step-0-timeout", "5000"], ["route-drive-max_lateral_accel", "10"]]) {
+      await editor.getByTestId(box).fill(value);
+      await editor.getByTestId(box).press("Enter");
+    }
+    await expect(steps.locator(".step-label")).toHaveText(["RAMSETE path through (-24, 0), (0, -24) · max 40 in/s · waits", "Arc 90° counter-clockwise, radius 18 in · waits"]);
+    await expect(drive).toContainText("its own numbers, and vexsim's for the rest");
+
+    // simulated: each ends close to where it's planned to
+    await expect(editor.getByTestId("route-sim")).toContainText("Simulated: done", { timeout: BUILD });
+    for (let i = 0; i < 2; i++) {
+      const [x, y] = ((await steps.nth(i).getAttribute("data-planned")) ?? "").split(",").map(Number);
+      expect(await simulatedFrom(editor, i, x, y)).toBeLessThan(3);
+    }
+    await editor.getByTestId("save-route").click();
+    await expect(editor.getByTestId("route-notice")).toHaveText("Saved.");
+    const saved = readFileSync(resolve(WORKSPACE, route), "utf-8");
+    expect(saved).toMatch(/\n {2}- \{ramsete: \[\[-24, 0\], \[0, -24\]\], timeout: 5000, async: false, max_velocity: 40\}\n {2}- \{move_arc: \[18, -90\], timeout: \d+, async: false\}\n/);
+    expect(saved).toContain("\ndrive: {max_lateral_accel: 10}\n");
+  } finally {
+    const file = resolve(WORKSPACE, route);
+    if (existsSync(file)) rmSync(file);
+  }
+});
+
 test("exports the project's routes: the files it changes, shown first; then the routine list has them", async ({ page }) => {
   const route = `${PROJECT}/routes/left_start.yaml`;
   const header = resolve(WORKSPACE, PROJECT, "include/custom/auton.hpp");

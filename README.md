@@ -567,8 +567,8 @@ A robot that localizes with Monte Carlo localization can log every update to its
 ![A route for team 1239E's robot in the autonomous maker: its steps on the left, the swing selected and open in its form; on the field, each step's planned end (the robot's outline, numbered), the way there, and where the simulated robot really went](docs/img/ui_maker.png)
 
 *Edit*, in a route's menu in the workspace list, opens an autonomous route ([section 9](#autonomous-routes)) in the **autonomous maker**, a tab of its own: its steps beside its field. *New…*, beside *Autonomous routes*, makes one: give it a name, and pick the PROS project it's for (one that uses LemLib), the robot and the field. Its file goes in the project's `routes/` folder (never over a file), with no steps yet, starting where the run bar's start is.
-- **Its steps:** a numbered list, each step in a few words, with what the last simulated run says about it: when it ended (seconds into the autonomous period), how far from its planned end, ⏱ if a motion used up its timeout, and ⚠ if its end runs into a wall or a field element. Click a step to open its form: its target, timeout and LemLib's options (each left empty keeps LemLib's default), or a function's arguments (empty: the function's default). *Add a step…* puts one after the selected step: one of LemLib's motions, a pause, or one of the team's functions (tick its header under *The team's functions* first). A motion added here waits until it's done (`async: false`), so the route runs as it's drawn, one step after another, with a timeout for how far it goes and turns; its form's *Then* makes it go on at once instead, as LemLib's default does. Drag a step to another place in the list (or Alt+↑/↓). Ctrl+C and Ctrl+V copy a step and paste it after the selected one, in this route or another; Ctrl+D duplicates it, Delete takes it out, ↑/↓ select.
-- **The field:** the robot where it starts (drag it; its round handle turns it) and where each step is planned to end: the robot's outline there and the step's number, joined to the step before by the way there. Steps that end in one place share a number (`1–3`: a move, then a turn and a pause there); click it to select them in turn. The selected step's target (a square) and heading (a round handle) drag, snapped to tiles, half tiles (the default), quarter tiles or inches (Shift: 0.1 in and 1°). The tools above the field add a step where you click: a move to a point or a pose, a turn or a swing to face it. The wheel zooms, dragging the field pans, a double-click shows it all.
+- **Its steps:** a numbered list, each step in a few words, with what the last simulated run says about it: when it ended (seconds into the autonomous period), how far from its planned end, ⏱ if a motion used up its timeout, and ⚠ if its end runs into a wall or a field element. Click a step to open its form: its target, timeout and LemLib's options (each left empty keeps LemLib's default), or a function's arguments (empty: the function's default). *Add a step…* puts one after the selected step: one of LemLib's motions, one of vexsim's own (an arc, or a RAMSETE path through points: [section 9](#autonomous-routes)), a pause, or one of the team's functions (tick its header under *The team's functions* first). A motion added here waits until it's done (`async: false`), so the route runs as it's drawn, one step after another, with a timeout for how far it goes and turns; its form's *Then* makes it go on at once instead, as LemLib's default does. Drag a step to another place in the list (or Alt+↑/↓). Ctrl+C and Ctrl+V copy a step and paste it after the selected one, in this route or another; Ctrl+D duplicates it, Delete takes it out, ↑/↓ select.
+- **The field:** the robot where it starts (drag it; its round handle turns it) and where each step is planned to end: the robot's outline there and the step's number, joined to the step before by the way there. Steps that end in one place share a number (`1–3`: a move, then a turn and a pause there); click it to select them in turn. The selected step's target (a square) and heading (a round handle) drag, snapped to tiles, half tiles (the default), quarter tiles or inches (Shift: 0.1 in and 1°). The tools above the field add a step where you click: a move to a point or a pose, a turn or a swing to face it, or a RAMSETE path to it. An arc's or a path's planned trajectory is drawn whole, shaded from light to dark by its planned speed (a key in the corner says how fast); a selected path's points are diamonds to drag. The wheel zooms, dragging the field pans, a double-click shows it all.
 - **Planned at once, then simulated.** The plan follows LemLib's targets: `move_to_point` ends facing the way it went, `move_to_pose` is drawn as the curve LemLib's carrot point makes, a turn stays where it is, a swing pivots on its locked side; and the team's functions move as their `// vexsim:` comments say ([section 9](#autonomous-routes)). It changes with every edit, and follows a drag as it goes. A moment after each change the route runs headless, as `vexsim route run` does (a project's first run builds it): the path the robot drove is drawn, and where each step really ended, a dot joined to its planned end.
 - **Mirror ↔ and Mirror ↕** make the route for the other side of the field, across x = 0 or y = 0: a copy beside it, named *(mirrored)*, its targets and headings mirrored, its turns the other way round, its swings on the other side, and the team's functions' arguments mirrored as their comments say. What it couldn't mirror (a function that doesn't say how it moves the robot) is listed.
 - **Watch** saves the route and runs it on the *Simulate* page, recorded like any run, with its timeline and plots.
@@ -825,6 +825,42 @@ void left_start() {
 }
 ```
 vexsim rewrites `src/vexsim_autons.cpp` whole on every export, so change the routes, not the file; everything else in `auton.hpp` stays as it is. Only files that change are written, so exporting the same routes again changes nothing; `--dry-run` says what would change, and `--diff` shows it. A route with errors, or whose routine's name the project already has, is left out, with why. The routines are then in vexsim's routine list, like the team's own (run one, and it runs in place of the routine `autonomous()` calls, [above](#picking-an-autonomous-routine)); for the robot to run one, call it from `autonomous()` or the team's selector.
+
+**vexsim's own motions: arcs and RAMSETE paths.** Beside LemLib's motions, a route can use two of vexsim's, which plan the whole motion ahead, on a speed profile, and then follow the plan:
+```yaml
+  - {move_arc: [18, 90], timeout: 1500}                          # 90° clockwise on an 18 in radius
+  - {ramsete: [[24, 24], [48, 0]], timeout: 3000, end_heading: 90, max_velocity: 40, async: false}
+```
+| Step | Makes the call |
+|---|---|
+| `{move_arc: [radius, degrees], timeout: ms}` | `motions.moveArc(radius, degrees, ms, {...}, async)`: an arc of `radius` inches, turning the robot `degrees` (clockwise positive, as LemLib's θ; negative turns the other way) |
+| `{ramsete: [[x, y], ...], timeout: ms}` | `motions.ramsete({{x, y}, ...}, ms, {...}, async)`: a smooth path from where the robot is through the points: it sets off the way the robot faces and bends through each point (a Catmull-Rom curve), ending facing the way its last stretch goes, or `end_heading` |
+
+Their options: `forwards` (`false`: backwards, the path setting off the way the robot faces away from), `max_velocity` (in/s) and `max_accel` (in/s²), each left out taking the drive's, `end_heading` (`ramsete`) and `async`. A plan keeps each side's wheels under the drive's top speed, speeds up and slows down within its acceleration, and slows for bends so it doesn't turn harder than the wheels hold (its *lateral* limit: speed² × curvature). The robot then follows it with RAMSETE, from LemLib's odometry, driving each side with the voltage a model of the drive says, plus a correction from its motors' measured speeds. A motion is over when its plan is, or at its timeout. They queue with LemLib's motions, and `wait_until`, `wait_until_done` (`waitUntil()`, `waitUntilDone()`) and `cancelMotion()` work on them as on LemLib's.
+
+**The drive model.** How each side of the drive answers voltage: `kS` volts to get it moving, `kV` volts per in/s and `kA` per in/s², `kT` more on the outside of a turn (against the scrub of wheels sliding sideways as the robot turns), and `kP` per in/s its wheels fall behind; and the limits plans keep within. vexsim works it out for the route's robot by driving its config in the simulator, and `vexsim route check` prints it. A route's `drive:` section gives its own numbers, each one left out being vexsim's: the limits follow from the constants given (`max_velocity` is 80% of the top speed `(12 - kS) / kV`, at most the speed the motors' rated rpm turns the wheels at; `max_accel` what a third of 12 V gives; `max_lateral_accel` half the grip of the wheels in the middle of the robot, the only ones a turn doesn't already slide sideways), unless they're given too:
+```yaml
+drive: {kS: 1.1, kV: 0.138, kA: 0.027, kT: 1.3}   # the real robot's, from the Calibrate page
+```
+For the real robot, fit the model to its log: `vexsim calibrate ROBOT LOG` ([section 12](#12-calibrating-to-your-robot)) and the Calibrate page print a route's `drive:` line (the calibration routine's spins and arcs fit `kT`).
+
+![A route for 1239E's robot with a RAMSETE path (driven backwards) and an arc in the autonomous maker: the path's form open beside the field, where each planned trajectory is drawn whole, shaded by its speed, the path's first point a diamond to drag, and the simulated robot's path over them](docs/img/ui_maker_motions.png)
+
+**In the maker,** *Add a step* has them under *vexsim's motions*, and the *RAMSETE path* tool adds a path to wherever the field is clicked. Each one's planned trajectory is drawn whole, shaded by its speed (the key is in the field's corner); the selected path's points are diamonds to drag, and its form lists them (*Add a point*, ×), with the arc's radius and angle, the limits (empty: the drive's, as their boxes show) and how long its plan takes, which must fit its timeout. New ones get a timeout half a second longer than their plan. Once a route has one, *Drive model* under its name shows the numbers it drives with, each one's box empty for vexsim's.
+
+**On the robot.** Exported, a routine that uses them makes their `vexsim::Motions` first, with the drive model the route was simulated with, and the export copies vexsim's motion library into the project: `include/vexsim/motions.hpp`, `include/vexsim/trajectory.hpp` and `src/vexsim/motions.cpp`, plain C++ on LemLib's chassis, to read and change as you like:
+```cpp
+void sweep() {
+    // vexsim's own motions, with the model of the drive the route was simulated with
+    static vexsim::Motions motions(chassis, {.kS = 1.12, .kV = 0.1381, .kA = 0.0275, .kT = 1.367, .kP = 0.5524, .maxVelocity = 61.3, .maxAccel = 131.7, .maxLateralAccel = 12.9});
+    chassis.setPose(60, 0, 90);
+    moveForward(-10, 800, 127, 1);
+    motions.ramsete({{36, 12}, {24, 36}}, 4000, {.forwards = false}, false);
+    motions.moveArc(15, 90, 3000);
+    chassis.waitUntilDone();
+}
+```
+A copy the project already has is left as it is (the export says so, when it differs from vexsim's), and vexsim's own builds use it too, so the simulator runs what the robot runs; to have vexsim's again, delete it and export again. Code of your own can use the library the same way (a `Drive` number left at 0 takes a default: `kV` from the drivetrain's top speed, `kP` 4 × `kV`, and the limits as their comments say).
 
 ### What's simulated
 | PROS 4 API | In the simulator |
@@ -1110,6 +1146,13 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
    ```
    Paste the printed `overrides:` block into the robot YAML. `--out` also saves it as `overrides.yaml`, with the plot and the fitted replay. Options: `--fit` (a comma-separated list of any parameters; `none` only replays and compares), `--max-iterations`, `--workers`.
 
+   It also fits the **drive model** vexsim's own motions drive with (arcs and RAMSETE paths, [above](#autonomous-routes)) straight to the log: how each side of the real drive answers voltage. It prints the line a route's `drive:` section takes (`--out` saves it as `drive.yaml`, and the Calibrate page shows it, to copy), so those motions drive the real robot as its log says it drives:
+   ```
+   Drive model for vexsim's own motions (arcs, RAMSETE paths): kS 1.185 V, kV 0.1363 V per in/s, kA 0.0288 V per in/s^2, kT 1.231 V (fits 535 samples, R² 0.996); top speed 76.6 in/s
+   For the robot's routes, add to them:
+     drive: {kS: 1.185, kV: 0.1363, kA: 0.0288, kT: 1.231}
+   ```
+
 ![A logged calibration run vs. the simulation, before and after the fit](docs/img/calibration.png)
 
 - **What it fits** by default: the parameters of each wheel type on the robot (omni: `longitudinal_mu`, `lateral_mu`, `rolling_resistance`; traction: `mu`, `rolling_resistance`; mecanum: `grip_mu`, `roller_mu`, `rolling_resistance`). The battery's internal resistance is read off the log, as the slope of its voltage against its current.
@@ -1361,7 +1404,8 @@ vexsim/
 | `runner.py` | Route builds: `find_chassis` finds the project's `lemlib::Chassis` by its declaration; `runner_source` generates the build's extra file (the headers, `cpp/route/runner.cpp`, a call wrapper for each function and a table of each enum's values); `RouteRecord` reads the runner's console lines into when, and where, each step ended. |
 | `doctor.py` | `vexsim doctor`: toolchain checks, and a test build and run. |
 | `cpp/include/` | The PROS 4 shim headers robot code compiles against: `api.h`; `pros/*.h(pp)` (motors, IMU, rotation, distance, GPS, rtos, misc, llemu, screen, adi, and stubs for unsimulated devices); `liblvgl/` (LLEMU and the LVGL stand-in); `vexsim/sim.hpp` (`report_pose`, `benchmark_task`); `vexsim/newlib_compat.h` (newlib extras). |
-| `cpp/route/runner.cpp` | The route runner, compiled into route builds: it reads the steps from the file `VEXSIM_ROUTE` names, makes LemLib's calls and the team's, and says on the console as each step starts and its call returns, and as each LemLib motion starts and ends. |
+| `cpp/route/runner.cpp` | The route runner, compiled into route builds: it reads the steps from the file `VEXSIM_ROUTE` names, makes LemLib's calls, vexsim's own motions' and the team's, and says on the console as each step starts and its call returns, and as each motion starts and ends. |
+| `cpp/motions/` | vexsim's own motions for a LemLib chassis: `include/vexsim/trajectory.hpp` (plans: an arc, or a smooth path through points, timed on a speed profile within the drive's limits), `include/vexsim/motions.hpp` and `src/vexsim/motions.cpp` (`vexsim::Motions`: `moveArc` and `ramsete`, followed with RAMSETE and a feedforward model of the drive, queued with LemLib's motions). A LemLib project's builds can include them, a route build compiles them (unless the project has its own copy), and an export copies them into the project. |
 | `cpp/runtime/` | The C++ side, linked into every build: `host.cpp` (process setup, the protocol loop, console capture, crash reports; a route build's runner in place of `autonomous()`), `scheduler.cpp` (the lockstep FreeRTOS-style scheduler: tasks, delays, mutexes, notifications, and the tasks the route runner follows: those LemLib starts for its async motions), `devices.cpp` (the PROS device C API over a device table), `lvgl.cpp` (the LVGL stand-in), `defaults/` (empty competition functions, used only when the code has none, like PROS's weak defaults). |
 
 ### `bench/`: benchmarks
@@ -1382,6 +1426,7 @@ vexsim/
 | `record.py` | `RobotLogger`: writes the same log from a simulation (`--robot-log`). |
 | `replay.py` | Replays a log's commands in the simulator, with ideal sensors and the logged battery voltage, at the log's reading age. |
 | `fit.py` | A Levenberg-Marquardt fit of any parameters to a log; the battery's resistance from voltage against current; `compare`. |
+| `feedforward.py` | The drive model vexsim's own motions drive with (`DriveModel`: kS, kV, kA, kT, kP and the limits plans keep within): `fit` to a robot log by least squares, or `characterize` a robot config by driving it in the simulator and fitting that. |
 
 ### `viz/`: viewer and plots
 | Module | What it does |

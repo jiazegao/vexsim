@@ -30,6 +30,8 @@
   --warning: #fab219;
   --critical: #d03b3b;
   --focus: #2a78d6;
+  --speed-slow: #d9692e; /* a planned trajectory's speed, one hue: slow to fast */
+  --speed-fast: #7a2c06;
   --accent-wash: rgba(42, 120, 214, 0.1);
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -64,6 +66,8 @@
     --wheel: #8d8c86;
     --obstacle: #6b6b67;
     --focus: #3987e5;
+    --speed-slow: #a4481b;
+    --speed-fast: #ffc7a6;
     --accent-wash: rgba(57, 135, 229, 0.16);
   }
 }
@@ -96,6 +100,8 @@
   --wheel: #8d8c86;
   --obstacle: #6b6b67;
   --focus: #3987e5;
+  --speed-slow: #a4481b;
+  --speed-fast: #ffc7a6;
   --accent-wash: rgba(57, 135, 229, 0.16);
 }
 
@@ -2850,10 +2856,15 @@ ol.steps {
   margin-top: 8px;
 }
 
-.route-headers summary {
+.route-headers summary,
+.route-drive summary {
   margin-top: 6px;
   cursor: pointer;
   color: var(--text-secondary);
+}
+
+.route-drive > p {
+  margin: 4px 0 0;
 }
 
 .route-header {
@@ -2994,4 +3005,21 @@ ol.steps {
 
 .dialog.export-routes .actions {
   justify-content: flex-end;
+}
+
+/* the Calibrate page: the drive model fitted to the log, for vexsim's own motions */
+.drive-fit h3 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+}
+
+.drive-fit .snippet {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  user-select: all;
+  overflow-wrap: anywhere;
 }

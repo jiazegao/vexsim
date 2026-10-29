@@ -2,10 +2,10 @@ import { useEffect, useRef } from "react";
 import { frontOf } from "../body";
 import { dot, drawElements, drawField, markFront, place, traceBody } from "../draw";
 import type { Palette } from "../palette";
-import { readPalette, withAlpha } from "../palette";
+import { mix, readPalette, withAlpha } from "../palette";
 import type { Preview, RouteRun, RouteStepData } from "../protocol";
 import type { Dragged, Grip, LemPose, Motion, Planned, Point } from "../route";
-import { bearing, isMotion, MOTION_INFO, numbersText, shortest, toVexsim } from "../route";
+import { bearing, isMotion, MOTION_INFO, numbersText, pointsOf, shortest, toVexsim } from "../route";
 import { blockedBy } from "../startpose";
 import { onThemeChange } from "../theme";
 import type { View } from "../view";
@@ -16,6 +16,7 @@ const HANDLE_PX = 7;
 const MARKER_PX = 9;
 const TURN_STEP = 15; // degrees a heading snaps to (1 with Shift)
 const FINE_MOVE = 0.1; // inches, with Shift
+const SPEED_SHADES = 16; // a trajectory's speed is drawn in this many shades
 
 /** The steps that end in one place, as the field is drawn: one numbered marker. */
 interface Marker {
@@ -27,7 +28,7 @@ interface Marker {
 export function targetOf(step: RouteStepData | undefined): Point | null {
   if (!step || !isMotion(step.kind)) return null;
   const kind = MOTION_INFO[step.kind].target;
-  return kind === "heading" ? null : [step.target[0], step.target[1]];
+  return kind === "point" || kind === "pose" ? [step.target[0], step.target[1]] : null;
 }
 
 /** Whether `steps[index]` ends at a heading the field can turn. */
@@ -44,7 +45,8 @@ export function marksOf(planned: readonly Planned[], preview: Preview | null): s
 
 /** A route on its field: where the robot starts (drag it, and its round handle, to move and
  * turn it), each step's planned end (its outline, numbered, joined to the one before by the
- * way there), the selected step's target and heading to drag, and the last run's path and
+ * way there: vexsim's own motions' trajectories shaded by their planned speed), the selected
+ * step's target, heading or a RAMSETE path's points to drag, and the last run's path and
  * ends beside the plan. With a motion tool, a click adds that step there. Wheel: zoom; drag
  * the background: pan; double-click: the whole field. */
 export function RouteField(props: {
@@ -52,6 +54,7 @@ export function RouteField(props: {
   start: LemPose | null;
   steps: readonly RouteStepData[];
   planned: readonly Planned[];
+  topSpeed: number | null; // in/s: the fastest a trajectory's shade says (null: the fastest planned)
   marks: readonly string[][];
   selected: number | null;
   run: RouteRun | null; // the last simulated run, if it's of this route as it is
@@ -146,6 +149,48 @@ export function RouteField(props: {
       ctx.stroke();
       ctx.setLineDash([]);
     };
+    /** The fastest a trajectory's shade stands for (in/s). */
+    const topSpeed = (): number => {
+      const p = live.current;
+      const fastest = Math.max(0, ...p.planned.flatMap((planned) => planned.speeds ?? []));
+      return p.topSpeed && p.topSpeed > 0 ? Math.max(p.topSpeed, fastest) : fastest || 1;
+    };
+    /** A planned trajectory, each stretch in the shade of its speed (and the selected one on a
+     * wash of the focus color). */
+    const trajectory = (planned: Planned, on: boolean) => {
+      const speeds = planned.speeds!;
+      if (on) line(planned.path, withAlpha(colors.focus, 0.3), 9);
+      const top = topSpeed();
+      const shade = (k: number) => Math.round((Math.min(1, speeds[k] / top) || 0) * (SPEED_SHADES - 1));
+      let first = 0; // a run of points in one shade, drawn as one line
+      for (let k = 1; k < planned.path.length; k++) {
+        if (k < planned.path.length - 1 && shade(k) === shade(first)) continue;
+        line(planned.path.slice(first, k + 1), mix(colors.speedSlow, colors.speedFast, shade(first) / (SPEED_SHADES - 1)), on ? 3.5 : 2.5);
+        first = k;
+      }
+    };
+    /** The speed shades' key, in the field's lower left corner. */
+    const speedKey = () => {
+      const v = view!;
+      const x = 14;
+      const y = v.height - 16;
+      const width = 90;
+      ctx.font = "11px system-ui, -apple-system, 'Segoe UI', sans-serif";
+      const range = `0 – ${Math.round(topSpeed())} in/s`;
+      const gradient = ctx.createLinearGradient(x, 0, x + width, 0);
+      gradient.addColorStop(0, colors.speedSlow);
+      gradient.addColorStop(1, colors.speedFast);
+      ctx.fillStyle = withAlpha(colors.surface, 0.92);
+      ctx.beginPath();
+      ctx.roundRect(x - 8, y - 26, width + ctx.measureText(range).width + 24, 36, 4);
+      ctx.fill();
+      ctx.fillStyle = gradient;
+      ctx.fillRect(x, y - 4, width, 6);
+      ctx.fillStyle = colors.ink2;
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText("Planned speed", x, y - 11);
+      ctx.fillText(range, x + width + 8, y + 3);
+    };
     /** Where the steps end, a numbered marker for each place: the steps whose markers would
      * overlap as the field is drawn (turning or waiting where they are, or back where one was
      * before) share one. */
@@ -184,7 +229,10 @@ export function RouteField(props: {
       let from: Point | null = p.start ? [p.start[0], p.start[1]] : null;
       p.planned.forEach((planned, i) => {
         const on = i === p.selected;
-        if (from && planned.path.length > 1) line(planned.path, on ? colors.focus : colors.target, on ? 3 : 2, planned.known ? [] : [5, 4]);
+        if (from && planned.path.length > 1) {
+          if (planned.speeds) trajectory(planned, on);
+          else line(planned.path, on ? colors.focus : colors.target, on ? 3 : 2, planned.known ? [] : [5, 4]);
+        }
         from = [planned.pose[0], planned.pose[1]];
       });
       // each step's end that moves or turns the robot, the selected one over the others
@@ -228,6 +276,27 @@ export function RouteField(props: {
         ctx.stroke();
       }
       if (turnsTo(step) && planned) drawHandle(planned.pose, drag?.grip.kind === "heading");
+      if (step?.kind === "ramsete" && index !== null) {
+        // its points, joined from where it sets off, to drag
+        const points = pointsOf(step);
+        const setOff = index === 0 ? p.start : p.planned[index - 1]?.pose;
+        if (setOff) line([[setOff[0], setOff[1]], ...points], withAlpha(colors.focus, 0.6), 1, [3, 3]);
+        points.forEach((point, k) => {
+          const [wx, wy] = toScreen(v, point[0], point[1]);
+          const held = drag?.grip.kind === "waypoint" && drag.grip.point === k;
+          ctx.beginPath();
+          ctx.moveTo(wx, wy - HANDLE_PX - 1);
+          ctx.lineTo(wx + HANDLE_PX + 1, wy);
+          ctx.lineTo(wx, wy + HANDLE_PX + 1);
+          ctx.lineTo(wx - HANDLE_PX - 1, wy);
+          ctx.closePath();
+          ctx.fillStyle = held ? colors.focus : colors.surface;
+          ctx.fill();
+          ctx.strokeStyle = colors.focus;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        });
+      }
       // the start: the robot itself, its heading handle
       if (p.start) {
         const blocked = p.preview ? blockedBy(toVexsim(p.start), p.preview.robot, { size: p.preview.field.size, obstacles: p.preview.field.obstacles }).length > 0 : false;
@@ -235,6 +304,7 @@ export function RouteField(props: {
         dot(ctx, v, p.start[0], p.start[1], 3, colors.ink);
         drawHandle(p.start, drag?.grip.kind === "start-heading");
       }
+      if (p.planned.some((planned) => planned.speeds)) speedKey();
       // the step numbers, over everything
       ctx.font = "bold 11px system-ui, -apple-system, 'Segoe UI', sans-serif";
       ctx.textAlign = "center";
@@ -263,6 +333,7 @@ export function RouteField(props: {
       ctx.restore();
       element.dataset.view = `${v.scale.toFixed(4)},${v.cx.toFixed(3)},${v.cy.toFixed(3)}`;
       element.dataset.markers = ends.map((e) => `${e.numbers.join("+")}@${p.planned[shownOf(e)].pose.map((n) => n.toFixed(2)).join(",")}`).join(" ");
+      element.dataset.trajectories = p.planned.flatMap((planned, i) => (planned.speeds ? [`${i + 1}:${planned.seconds?.toFixed(2)}s`] : [])).join(" ");
     };
     const schedule = () => {
       if (!pending) pending = requestAnimationFrame(draw);
@@ -319,6 +390,10 @@ export function RouteField(props: {
         const step = p.steps[index];
         const planned = p.planned[index];
         if (planned && turnsTo(step) && near(px, py, handleAt(planned.pose), HANDLE_PX + 4)) return { kind: "heading", index };
+        if (step?.kind === "ramsete") {
+          const points = pointsOf(step);
+          for (let k = points.length - 1; k >= 0; k--) if (near(px, py, points[k], HANDLE_PX + 4)) return { kind: "waypoint", index, point: k };
+        }
         const target = targetOf(step);
         if (target && near(px, py, target, HANDLE_PX + 4)) return { kind: "target", index };
       }
@@ -347,7 +422,7 @@ export function RouteField(props: {
       const turn = (from: Point) => snapTo(bearing(from, point), fine ? 1 : TURN_STEP) % 360;
       if (grip.kind === "start") return [snapTo(point[0], step), snapTo(point[1], step), p.start![2]];
       if (grip.kind === "start-heading") return [p.start![0], p.start![1], turn([p.start![0], p.start![1]])];
-      if (grip.kind === "target") return [snapTo(point[0], step), snapTo(point[1], step)];
+      if (grip.kind === "target" || grip.kind === "waypoint") return [snapTo(point[0], step), snapTo(point[1], step)];
       const pose = p.planned[grip.index].pose;
       return [turn([pose[0], pose[1]])];
     };
@@ -356,6 +431,7 @@ export function RouteField(props: {
       if (dragged.grip.kind === "start") return `start: (${a}, ${b})`;
       if (dragged.grip.kind === "start-heading") return `start: θ ${c}°`;
       if (dragged.grip.kind === "target") return `step ${dragged.grip.index + 1}: (${a}, ${b})`;
+      if (dragged.grip.kind === "waypoint") return `step ${dragged.grip.index + 1}, point ${dragged.grip.point + 1}: (${a}, ${b})`;
       return `step ${dragged.grip.index + 1}: θ ${a}°`;
     };
 
@@ -454,9 +530,9 @@ export function RouteField(props: {
   const p = props;
   return (
     <div className="diagram route-field" ref={box} data-testid="route-field">
-      <canvas ref={canvas} tabIndex={0} aria-label="The route on its field: drag the start, and the selected step's target and heading" data-testid="route-canvas" />
+      <canvas ref={canvas} tabIndex={0} aria-label="The route on its field: drag the start, and the selected step's target, heading or points" data-testid="route-canvas" />
       <div className="readout-tip" ref={readout} hidden aria-live="polite" data-testid="route-drag-readout" />
-      {p.tool && <div className="hint">Click the field to add {MOTION_INFO[p.tool].title.toLowerCase()} there (Esc: done)</div>}
+      {p.tool && <div className="hint">Click the field to add {p.tool === "ramsete" ? "a RAMSETE path to" : MOTION_INFO[p.tool].title.toLowerCase()} there (Esc: done)</div>}
       {!p.preview && <div className="hint">The robot or field doesn't read: fix the route's robot and field</div>}
     </div>
   );

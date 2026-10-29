@@ -2,24 +2,30 @@
 // one is planned to end, as LemLib's targets say, and the values the editor writes back.
 // Poses here are LemLib's: x, y (inches) and theta, degrees clockwise from +y.
 
-import type { MotionHintInfo, RouteData, RouteFunctionInfo, RouteStepData } from "./protocol";
+import type { MotionHintInfo, RouteData, RouteDriveInfo, RouteFunctionInfo, RouteStepData } from "./protocol";
+import type { Limits } from "./trajectory";
+import { planArc, planPath } from "./trajectory";
 
 export type LemPose = readonly [number, number, number];
 export type Point = readonly [number, number];
 
-export const MOTIONS = ["move_to_point", "move_to_pose", "turn_to_heading", "turn_to_point", "swing_to_heading", "swing_to_point"] as const;
+/** LemLib's motions, then vexsim's own (vexsim/motions.hpp): an arc, and a RAMSETE path. */
+export const MOTIONS = ["move_to_point", "move_to_pose", "turn_to_heading", "turn_to_point", "swing_to_heading", "swing_to_point", "move_arc", "ramsete"] as const;
 export const PAUSES = ["wait", "wait_until", "wait_until_done"] as const;
 export type Motion = (typeof MOTIONS)[number];
 
-/** Each motion's own key: what it's written with, and its options in the order LemLib's
- * params structs have them (the order they're written in). */
-export const MOTION_INFO: Record<Motion, { target: "point" | "pose" | "heading"; options: readonly string[]; swing?: boolean; wholeSpeeds?: boolean; title: string }> = {
+/** Each motion's own key: what it's written with (a point, a pose, a heading, an arc's
+ * radius and degrees, or a path's points), and its options in the order its params struct
+ * has them (the order they're written in). */
+export const MOTION_INFO: Record<Motion, { target: "point" | "pose" | "heading" | "arc" | "path"; options: readonly string[]; swing?: boolean; wholeSpeeds?: boolean; own?: boolean; title: string }> = {
   move_to_point: { target: "point", options: ["forwards", "max_speed", "min_speed", "early_exit"], title: "Move to a point" },
   move_to_pose: { target: "pose", options: ["forwards", "horizontal_drift", "lead", "max_speed", "min_speed", "early_exit"], title: "Move to a pose" },
   turn_to_heading: { target: "heading", options: ["direction", "max_speed", "min_speed", "early_exit"], wholeSpeeds: true, title: "Turn to a heading" },
   turn_to_point: { target: "point", options: ["forwards", "direction", "max_speed", "min_speed", "early_exit"], wholeSpeeds: true, title: "Turn to face a point" },
   swing_to_heading: { target: "heading", options: ["direction", "max_speed", "min_speed", "early_exit"], swing: true, title: "Swing to a heading" },
   swing_to_point: { target: "point", options: ["forwards", "direction", "max_speed", "min_speed", "early_exit"], swing: true, title: "Swing to face a point" },
+  move_arc: { target: "arc", options: ["forwards", "max_velocity", "max_accel"], own: true, title: "Arc" },
+  ramsete: { target: "path", options: ["forwards", "max_velocity", "max_accel", "end_heading"], own: true, title: "RAMSETE path" },
 };
 
 /** LemLib's defaults for the options (as its params structs have them). */
@@ -36,6 +42,18 @@ export const OPTION_DEFAULTS: Record<string, number | boolean | string> = {
 
 export function isMotion(kind: string): kind is Motion {
   return (MOTIONS as readonly string[]).includes(kind);
+}
+
+/** Whether `kind` is one of vexsim's own motions, planned on a speed profile. */
+export function isOwn(kind: string): boolean {
+  return isMotion(kind) && !!MOTION_INFO[kind].own;
+}
+
+/** A RAMSETE step's points, each (x, y): its target is them one after another. */
+export function pointsOf(step: RouteStepData): Point[] {
+  const points: Point[] = [];
+  for (let i = 0; i + 1 < step.target.length; i += 2) points.push([step.target[i], step.target[i + 1]]);
+  return points;
 }
 
 const DEG = Math.PI / 180;
@@ -103,17 +121,20 @@ export interface Planned {
   path: Point[]; // the way there, from where the step before ended (none: it stays put)
   known: boolean; // false: the planner can't tell (one of the team's functions that doesn't say)
   ran: boolean; // its end is where the last run's robot was, which the plan goes on from
+  speeds?: number[]; // vexsim's own motions: the speed (in/s) at each point of the path, every 10 ms
+  seconds?: number; // and how long it takes
 }
 
 /** Where each step of `route` is planned to end, and the way there: LemLib's targets for its
- * motions (a swing turns about its locked side, `track` inches across), and for the team's
- * functions, what their `// vexsim:` comments say. One that doesn't say stays put, unless the
- * last run (`ran`: each step's end in it, or null) says where it ended. */
-export function plan(route: RouteData, functions: readonly RouteFunctionInfo[], track: number, ran: readonly (LemPose | null)[] = []): Planned[] {
+ * motions (a swing turns about its locked side, `track` inches across), vexsim's own motions
+ * as they plan, with the `drive` model's limits, and for the team's functions, what their
+ * `// vexsim:` comments say. One that doesn't say stays put, unless the last run (`ran`: each
+ * step's end in it, or null) says where it ended. */
+export function plan(route: RouteData, functions: readonly RouteFunctionInfo[], track: number, ran: readonly (LemPose | null)[] = [], drive: RouteDriveInfo | null = null): Planned[] {
   const byName = new Map(functions.map((f) => [f.name, f]));
   let at: LemPose = route.start;
   return route.steps.map((step, k) => {
-    const made = planStep(at, step, byName.get(step.function ?? ""), track);
+    const made = planStep(at, step, byName.get(step.function ?? ""), track, drive);
     let planned: Planned = { ...made, ran: false };
     if (!made.known && ran[k]) planned = { pose: ran[k]!, path: [], known: false, ran: true };
     at = planned.pose;
@@ -126,7 +147,7 @@ function option(step: RouteStepData, name: string): number | boolean | string {
 }
 
 /** One step from `at`: where it ends and the way there. */
-export function planStep(at: LemPose, step: RouteStepData, fn: RouteFunctionInfo | undefined, track: number): Omit<Planned, "ran"> {
+export function planStep(at: LemPose, step: RouteStepData, fn: RouteFunctionInfo | undefined, track: number, drive: RouteDriveInfo | null = null): Omit<Planned, "ran"> {
   const here: Point = [at[0], at[1]];
   const forwards = option(step, "forwards") !== false;
   const facing = (to: Point, from: Point = here) => (Math.hypot(to[0] - from[0], to[1] - from[1]) < NEAR ? at[2] : wrap360(bearing(from, to) + (forwards ? 0 : 180)));
@@ -155,6 +176,9 @@ export function planStep(at: LemPose, step: RouteStepData, fn: RouteFunctionInfo
       const end = rotateAbout(here, pivot, turn);
       return { pose: [end[0], end[1], wrap360(at[2] + turn)], path: arc(here, pivot, turn), known: true };
     }
+    case "move_arc":
+    case "ramsete":
+      return planOwn(at, step, track, drive);
     case "call":
       return fn?.hint ? hinted(at, fn.hint, fn, step) : { pose: at, path: [], known: false };
     case "invalid":
@@ -162,6 +186,40 @@ export function planStep(at: LemPose, step: RouteStepData, fn: RouteFunctionInfo
     default: // the pauses
       return { pose: at, path: [], known: true };
   }
+}
+
+/** The limits one of vexsim's own motions plans within: the `drive` model's (without it, what
+ * vexsim/motions.hpp takes for a limit left at 0), and the step's own, and its top speed. */
+export function limitsOf(step: RouteStepData, track: number, drive: RouteDriveInfo | null): { limits: Limits; speed: number } {
+  const own = (key: string) => (typeof step.options[key] === "number" && (step.options[key] as number) > 0 ? (step.options[key] as number) : null);
+  const limits: Limits = {
+    maxVelocity: drive?.max_velocity ?? 60,
+    maxAccel: own("max_accel") ?? drive?.max_accel ?? 120,
+    maxLateralAccel: drive?.max_lateral_accel ?? 20,
+    trackWidth: track,
+  };
+  return { limits, speed: own("max_velocity") ?? limits.maxVelocity };
+}
+
+/** One of vexsim's own motions from `at`, as it plans (src/trajectory.ts): the way it goes,
+ * and how fast, every 10 ms. */
+function planOwn(at: LemPose, step: RouteStepData, track: number, drive: RouteDriveInfo | null): Omit<Planned, "ran"> {
+  const { limits, speed } = limitsOf(step, track, drive);
+  const forwards = option(step, "forwards") !== false;
+  const heading = (90 - at[2]) * DEG; // radians counter-clockwise from +x
+  const end = step.options.end_heading;
+  const states =
+    step.kind === "move_arc"
+      ? planArc(at[0], at[1], heading, Math.abs(step.target[0]), -step.target[1] * DEG, forwards, speed, limits)
+      : planPath(at[0], at[1], heading, pointsOf(step), forwards, typeof end === "number" ? (90 - end) * DEG : null, speed, limits);
+  const last = states[states.length - 1];
+  return {
+    pose: [last.x, last.y, wrap360(90 - last.heading / DEG)],
+    path: states.map((s) => [s.x, s.y] as const),
+    speeds: states.map((s) => Math.abs(s.v)),
+    seconds: last.t,
+    known: true,
+  };
 }
 
 /** LemLib's moveToPose drives at a carrot point `lead` of the way back from the target along
@@ -230,7 +288,8 @@ export function stepValue(step: RouteStepData): StepValue {
   if (step.kind === "wait" || step.kind === "wait_until") return { [step.kind]: step.target[0] };
   if (!isMotion(step.kind)) return { wait: 0 };
   const info = MOTION_INFO[step.kind];
-  const value: Record<string, unknown> = { [step.kind]: info.target === "heading" ? step.target[0] : [...step.target] };
+  const target = info.target === "heading" ? step.target[0] : info.target === "path" ? pointsOf(step).map((p) => [...p]) : [...step.target];
+  const value: Record<string, unknown> = { [step.kind]: target };
   if (info.swing) value.locked_side = step.side ?? "left";
   value.timeout = step.timeout ?? 1000;
   for (const name of [...info.options, "async"]) if (name in step.options) value[name] = step.options[name];
@@ -238,8 +297,13 @@ export function stepValue(step: RouteStepData): StepValue {
 }
 
 /** A timeout that leaves a motion from `at` room to finish: longer the farther it goes and
- * the more it turns (milliseconds, in hundreds). */
-export function timeoutFor(step: RouteStepData, at: LemPose, track = 12): number {
+ * the more it turns, or for one of vexsim's own, half a second more than its plan takes
+ * (milliseconds, in hundreds). */
+export function timeoutFor(step: RouteStepData, at: LemPose, track = 12, drive: RouteDriveInfo | null = null): number {
+  if (isOwn(step.kind)) {
+    const seconds = planStep(at, step, undefined, track, drive).seconds ?? 0;
+    return Math.max(800, Math.ceil((seconds + 0.5) * 10) * 100);
+  }
   const end = planStep(at, step, undefined, track).pose;
   const distance = Math.hypot(end[0] - at[0], end[1] - at[1]);
   const turn = Math.abs(shortest(end[2] - at[2]));
@@ -248,15 +312,18 @@ export function timeoutFor(step: RouteStepData, at: LemPose, track = 12): number
 }
 
 /** A new step of `kind`, to add after `at` (where the robot is then): `target` if it's given,
- * else 24 inches ahead or a quarter turn on. A motion waits until it's done (LemLib's default
- * is to go on at once), so the route runs as it's drawn, one step after another. */
-export function newStep(kind: string, at: LemPose, fn?: RouteFunctionInfo, target?: number[]): RouteStepData {
+ * else 24 inches ahead or a quarter turn on (an arc of 18 inches, a path curving off to the
+ * right). A motion waits until it's done (LemLib's default is to go on at once), so the route
+ * runs as it's drawn, one step after another. Its timeout fits its plan (vexsim's own motions
+ * plan with the `drive` model's limits, `track` inches across). */
+export function newStep(kind: string, at: LemPose, fn?: RouteFunctionInfo, target?: number[], drive: RouteDriveInfo | null = null, track = 12): RouteStepData {
   const base: RouteStepData = { kind, target: [], timeout: null, side: null, options: {}, function: null, args: {}, label: kind };
   const [dx, dy] = ahead(at[2]);
+  const [rx, ry] = rightOf(at[2]);
   const round = (v: number) => Math.round(v * 10) / 10;
   const motion = (made: RouteStepData): RouteStepData => {
     const step = { ...made, target: target ?? made.target, options: { async: false } };
-    return { ...step, timeout: timeoutFor(step, at) };
+    return { ...step, timeout: isOwn(kind) ? timeoutFor(step, at, track, drive) : timeoutFor(step, at) };
   };
   switch (kind) {
     case "move_to_point":
@@ -268,6 +335,10 @@ export function newStep(kind: string, at: LemPose, fn?: RouteFunctionInfo, targe
     case "turn_to_heading":
     case "swing_to_heading":
       return motion({ ...base, target: [round(wrap360(at[2] + 90))], side: kind === "swing_to_heading" ? "left" : null });
+    case "move_arc":
+      return motion({ ...base, target: [18, 90] });
+    case "ramsete":
+      return motion({ ...base, target: [round(at[0] + dx * 24 + rx * 12), round(at[1] + dy * 24 + ry * 12), round(at[0] + dx * 48 + rx * 24), round(at[1] + dy * 48 + ry * 24)] });
     case "wait":
       return { ...base, target: [250] };
     case "wait_until":
@@ -297,6 +368,9 @@ export function describe(step: RouteStepData): string {
   if (opt.lead !== undefined) extras.push(`lead ${opt.lead}`);
   if (opt.horizontal_drift !== undefined) extras.push(`drift ${opt.horizontal_drift}`);
   if (opt.direction !== undefined && opt.direction !== "auto") extras.push(String(opt.direction));
+  if (opt.max_velocity !== undefined) extras.push(`max ${opt.max_velocity} in/s`);
+  if (opt.max_accel !== undefined) extras.push(`accel ${opt.max_accel} in/s²`);
+  if (opt.end_heading !== undefined) extras.push(`ends facing ${opt.end_heading}°`);
   if (isMotion(step.kind)) extras.push(opt.async === false ? "waits" : "async");
   const [a, b, c] = step.target;
   let head: string;
@@ -318,6 +392,14 @@ export function describe(step: RouteStepData): string {
       break;
     case "swing_to_point":
       head = `Swing to face (${n(a)}, ${n(b)}) on the ${step.side} side`;
+      break;
+    case "move_arc":
+      head = `Arc ${n(Math.abs(b))}° ${b < 0 ? "counter-clockwise" : "clockwise"}, radius ${n(a)} in`;
+      break;
+    case "ramsete":
+      head = `RAMSETE path through ${pointsOf(step)
+        .map(([x, y]) => `(${n(x)}, ${n(y)})`)
+        .join(", ")}`;
       break;
     case "wait":
       head = `Wait ${n(a)} ms`;
@@ -353,8 +435,9 @@ export function copiedSteps(): StepValue[] | null {
 
 // --- dragging on the field ----------------------------------------------------------------------
 
-/** What a drag on the field holds: the start (or its heading), a step's target, or its heading. */
-export type Grip = { kind: "start" } | { kind: "start-heading" } | { kind: "target"; index: number } | { kind: "heading"; index: number };
+/** What a drag on the field holds: the start (or its heading), a step's target, its heading,
+ * or one of a RAMSETE path's points. */
+export type Grip = { kind: "start" } | { kind: "start-heading" } | { kind: "target"; index: number } | { kind: "heading"; index: number } | { kind: "waypoint"; index: number; point: number };
 
 /** A drag's value: the start's pose, a target's x and y, or a heading. */
 export interface Dragged {
@@ -370,6 +453,7 @@ export function withDrag(route: RouteData, dragged: Dragged | null): RouteData {
   if (grip.kind === "start" || grip.kind === "start-heading") return { ...route, start: [a, b, c] };
   const steps = route.steps.map((step, i) => {
     if (i !== grip.index) return step;
+    if (grip.kind === "waypoint") return { ...step, target: step.target.map((v, k) => (k === 2 * grip.point ? a : k === 2 * grip.point + 1 ? b : v)) };
     if (grip.kind === "target") return { ...step, target: step.kind === "move_to_pose" ? [a, b, step.target[2]] : [a, b] };
     return { ...step, target: step.kind === "move_to_pose" ? [step.target[0], step.target[1], a] : [a] };
   });
@@ -382,6 +466,7 @@ export function dropEdit(route: RouteData, dragged: Dragged): { op: "set"; locat
   const { grip } = dragged;
   if (grip.kind === "start" || grip.kind === "start-heading") return { op: "set", location: "start", value: [...moved.start] };
   const step = moved.steps[grip.index];
+  if (grip.kind === "waypoint") return { op: "set", location: `steps[${grip.index}].ramsete[${grip.point}]`, value: [...pointsOf(step)[grip.point]] };
   const value = step.kind === "turn_to_heading" || step.kind === "swing_to_heading" ? step.target[0] : [...step.target];
   return { op: "set", location: `steps[${grip.index}].${step.kind}`, value };
 }

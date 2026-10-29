@@ -6,7 +6,7 @@ import { JobStatus, ProblemBox, ResultList } from "../components/JobPanel";
 import { LineChart } from "../components/LineChart";
 import { isActive, latest, useJob } from "../jobs";
 import { fixed } from "../pose";
-import type { CalibrationResult, FitParameter, ResultAbout, RoutinePlan, RunProblem, WorkspaceInfo } from "../protocol";
+import type { CalibrationResult, FitParameter, FittedDrive, ResultAbout, RoutinePlan, RunProblem, WorkspaceInfo } from "../protocol";
 import { when } from "../recording";
 
 /** `vexsim calibration-routine` and `vexsim calibrate`: put the routine in a PROS project
@@ -394,11 +394,45 @@ function CalibrationView(props: { result: CalibrationResult; onApply: (robot: st
           <span className="muted small">Opens the robot's config with them under overrides, to look over and save.</span>
         </div>
       )}
+      {result.drive && <DriveFit drive={result.drive} />}
       <div className="charts" data-testid="calibration-charts">
         {charts.map((c) => (
           <LineChart key={c.id} title={c.title} unit={c.unit} x={c.x} xUnit="s" series={c.series} digits={c.digits} sync="calibration" height={150} />
         ))}
       </div>
     </section>
+  );
+}
+
+/** The model of the drive fitted to the log, for vexsim's own motions (its arcs and RAMSETE
+ * paths, PLAN.md 13.4): the line a route's drive: section takes, to copy. */
+function DriveFit(props: { drive: FittedDrive }) {
+  const { drive } = props;
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(drive.section);
+      setCopied(true);
+    } catch {
+      setCopied(false); // (no clipboard here: the line can be selected and copied by hand)
+    }
+  };
+  return (
+    <div className="drive-fit" data-testid="drive-fit">
+      <h3>Drive model, for vexsim's arcs and RAMSETE paths</h3>
+      <p className="muted small">
+        Fitted to the log's driving ({drive.samples} samples, R² {fixed(drive.r2, 3)}): each side gets kS {drive.kS} V, kV {drive.kV} V per in/s of its speed and kA {drive.kA} V per in/s² of its acceleration
+        {drive.turned ? `, and kT ${drive.kT} V more on the outside of a turn` : " (the log doesn't turn the robot, so it says nothing of kT: vexsim's stays)"}; {drive.top_speed} in/s at 12 V. For a route to drive
+        the real robot with it, add this line to the route:
+      </p>
+      <div className="form-row">
+        <code className="snippet" data-testid="drive-section">
+          {drive.section}
+        </code>
+        <button type="button" className="small" onClick={copy} data-testid="copy-drive">
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
   );
 }

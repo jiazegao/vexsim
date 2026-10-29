@@ -3,7 +3,9 @@ routine in ``src/vexsim_autons.cpp``, a file vexsim writes whole, declared in
 ``include/custom/auton.hpp`` between two marker comments, so vexsim's routine list (12.1)
 and the team's own selector can call them. Each step is written as the route runner makes
 its call (bridge/runner.py), so the routine drives as the route did; exporting the same
-routes again changes nothing."""
+routes again changes nothing. A route with vexsim's own motions (arcs, RAMSETE paths) brings
+their library along (``LIBRARY``), the same files the simulation ran, unless the project has
+its own copies."""
 
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from pathlib import Path
 
 from vexsim.app.routes import (
     DIRECTIONS,
+    DRIVE,
     FOLDER,
     MOTIONS,
     OPTIONS,
@@ -32,6 +35,9 @@ GENERATED = "src/vexsim_autons.cpp"
 BEGIN = "// vexsim routes: begin"
 END = "// vexsim routes: end"
 INDENT = "    "
+OWN_MOTIONS = "motions"  # the vexsim::Motions a routine with vexsim's own motions makes
+# vexsim's motion library (bridge/cpp/motions), where an export puts it in the project
+LIBRARY = ("include/vexsim/motions.hpp", "include/vexsim/trajectory.hpp", "src/vexsim/motions.cpp")
 
 # Words a routine can't be named (C++'s keywords, and the names PROS gives its own functions)
 _RESERVED = set(
@@ -127,7 +133,7 @@ def plan_export(project: str | os.PathLike[str]) -> Export:
     header = project / AUTON_HEADER
     before = header.read_text(encoding="utf-8") if header.is_file() else None
     theirs = _names_taken(project, before)
-    exported: list[tuple[Routine, Route, object]] = []
+    exported: list[tuple[Routine, Route, object, object]] = []
     for path in files:
         rel = path.relative_to(project).as_posix()
         checked = load_route(path)
@@ -156,7 +162,7 @@ def plan_export(project: str | os.PathLike[str]) -> Export:
             continue
         routine = Routine(name, rel, checked.route.start)
         plan.routines.append(routine)
-        exported.append((routine, checked.route, checked.functions))
+        exported.append((routine, checked.route, checked.functions, checked.drive))
     if not exported:
         raise ExportError("no route can be exported: " + "; ".join(plan.left_out))
     source = project / GENERATED
@@ -168,6 +174,8 @@ def plan_export(project: str | os.PathLike[str]) -> Export:
         )
     )
     plan.files.append(FileChange(AUTON_HEADER, before, declarations(before, plan.routines)))
+    if any(route.own_motions for _, route, _, _ in exported):
+        _library(plan)
     if before is None:
         plan.notes.append(
             f"{AUTON_HEADER} is new: call the routines from autonomous() (or the team's "
@@ -193,13 +201,34 @@ def export(project: str | os.PathLike[str]) -> Export:
 # --- the generated file ---------------------------------------------------------------------------
 
 
+def _library(plan: Export) -> None:
+    """vexsim's motion library, copied into the project: a file it has already is left as it
+    is (and said so, when it differs from vexsim's)."""
+    from vexsim.bridge.build import CPP_DIR
+
+    for rel in LIBRARY:
+        where = "include" if rel.startswith("include/") else "src"
+        ours = (CPP_DIR / "motions" / where / rel.removeprefix(f"{where}/")).read_text("utf-8")
+        path = plan.project / rel
+        theirs = path.read_text(encoding="utf-8") if path.is_file() else None
+        if theirs is None or theirs == ours:
+            plan.files.append(FileChange(rel, theirs, ours))
+        else:
+            plan.notes.append(
+                f"{rel} isn't vexsim's: the export leaves it as it is, and the routines and the "
+                "simulation run it (to have vexsim's again, delete it and export again)"
+            )
+
+
 def generated_source(project: Path, exported: list, chassis) -> str:
     """``src/vexsim_autons.cpp``: each route as a routine, the headers its calls need."""
-    headers = list(dict.fromkeys(h for _, route, _ in exported for h in route.functions))
+    headers = list(dict.fromkeys(h for _, route, _, _ in exported for h in route.functions))
     if chassis.header:
         headers.append(chassis.file)
+    own = any(route.own_motions for _, route, _, _ in exported)
     includes = (["main.h"] if (project / "include" / "main.h").is_file() else []) + [
         "lemlib/api.hpp",
+        *(["vexsim/motions.hpp"] if own else []),
         *(_include(h) for h in headers),
         _include(AUTON_HEADER),
     ]
@@ -215,15 +244,27 @@ def generated_source(project: Path, exported: list, chassis) -> str:
         for space in reversed(scope):
             text = f"namespace {space} {{ {text} }}"
         lines.append(text)
-    for routine, route, functions in exported:
-        lines += ["", *routine_source(routine, route, functions, chassis.name)]
+    for routine, route, functions, drive in exported:
+        lines += ["", *routine_source(routine, route, functions, chassis.name, drive)]
     return "\n".join(lines) + "\n"
 
 
-def routine_source(routine: Routine, route: Route, functions, chassis: str) -> list[str]:
-    """One routine: the route's start as its setPose, then each step's call."""
+def routine_source(
+    routine: Routine, route: Route, functions, chassis: str, drive=None
+) -> list[str]:
+    """One routine: the route's start as its setPose, then each step's call. A route with
+    vexsim's own motions makes their ``vexsim::Motions`` first, with its ``drive`` model."""
     x, y, theta = (_number(v) for v in route.start)
-    body = [f"{chassis}.setPose({x}, {y}, {theta});"]
+    body = []
+    if route.own_motions:
+        model = ", ".join(
+            f".{field} = {_number(getattr(drive, key))}" for key, field in DRIVE.items()
+        )
+        body += [
+            "// vexsim's own motions, with the model of the drive the route was simulated with",
+            f"static vexsim::Motions {OWN_MOTIONS}({chassis}, {{{model}}});",
+        ]
+    body.append(f"{chassis}.setPose({x}, {y}, {theta});")
     body += [step_call(step, functions, chassis) for step in route.steps]
     return [
         f"// {route.name} ({routine.route})",
@@ -251,6 +292,8 @@ def step_call(step: Step, functions, chassis: str) -> str:
         return f"{step.function}({', '.join(args)});"
     motion = MOTIONS[step.kind]
     args = [_number(v) for v in step.target]
+    if step.kind == "ramsete":  # a std::vector<vexsim::Waypoint>
+        args = ["{" + ", ".join(f"{{{_number(x)}, {_number(y)}}}" for x, y in step.points) + "}"]
     if motion.swing:
         args.append(f"lemlib::DriveSide::{SIDES[step.side]}")
     args.append(str(step.timeout))
@@ -264,7 +307,7 @@ def step_call(step: Step, functions, chassis: str) -> str:
         args.append("{" + ", ".join(params) + "}")
     if not step.is_async:
         args.append("false")
-    return f"{chassis}.{motion.lemlib}({', '.join(args)});"
+    return f"{OWN_MOTIONS if motion.own else chassis}.{motion.lemlib}({', '.join(args)});"
 
 
 def _option(name: str, value: Value) -> str:

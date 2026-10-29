@@ -270,6 +270,20 @@ export interface RouteData {
   field: string | null;
   functions: string[];
   steps: RouteStepData[];
+  drive?: Record<string, number>;
+}
+
+/** The model of the drive a route's arcs and RAMSETE paths drive with, and the limits they're planned within (`vexsim.calibration.feedforward.DriveModel`): what the route's drive: section gives, and vexsim's for the rest, from its robot's config. */
+export interface RouteDriveInfo {
+  kS: number;
+  kV: number;
+  kA: number;
+  kT: number;
+  kP: number;
+  max_velocity: number;
+  max_accel: number;
+  max_lateral_accel: number;
+  top_speed: number;
 }
 
 /** A route's text, checked: its issues where they're written, and when it reads, the route, the functions its headers declare, its robot and field to draw, and where each step is written (`steps[3]`). */
@@ -281,6 +295,7 @@ export interface RouteCheck {
   headers: string[];
   preview: Preview | null;
   track: number | null;
+  drive?: RouteDriveInfo | null;
   places: Record<string, TextSpan>;
   project: string | null;
   robot_path: string | null;
@@ -1231,6 +1246,23 @@ export interface CalibrationPanel {
   series: PanelSeries[];
 }
 
+/** The model of the drive fitted to a robot's log (`vexsim.calibration.feedforward`): what a route's arcs and RAMSETE paths drive with on that robot, as its drive: section. */
+export interface FittedDrive {
+  kS: number;
+  kV: number;
+  kA: number;
+  kT: number;
+  kP: number;
+  max_velocity: number;
+  max_accel: number;
+  max_lateral_accel: number;
+  top_speed: number;
+  samples: number;
+  r2: number;
+  turned: boolean;
+  section: string;
+}
+
 /** A calibration's result (`GET /api/results/calibrations/{id}`). */
 export interface CalibrationResult {
   about: ResultAbout;
@@ -1245,6 +1277,7 @@ export interface CalibrationResult {
   replays: number;
   panels: CalibrationPanel[];
   files: string[];
+  drive?: FittedDrive | null;
 }
 
 /** Set `overrides` in a robot config's text (`POST /api/config/overrides`). */

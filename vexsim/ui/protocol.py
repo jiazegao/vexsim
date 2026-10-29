@@ -997,6 +997,25 @@ class CalibrationPanel(_Message):
     series: list[PanelSeries]
 
 
+class FittedDrive(_Message):
+    """The model of the drive fitted to a robot's log (``vexsim.calibration.feedforward``):
+    what a route's arcs and RAMSETE paths drive with on that robot, as its drive: section."""
+
+    kS: float  # V
+    kV: float  # V per in/s
+    kA: float  # V per in/s^2
+    kT: float  # V, against the scrub in a turn
+    kP: float  # V per in/s the wheels are behind
+    max_velocity: float  # in/s: the limits that follow
+    max_accel: float  # in/s^2
+    max_lateral_accel: float  # in/s^2
+    top_speed: float  # in/s
+    samples: int
+    r2: float
+    turned: bool  # whether the log turned the robot: kT is 0 if it didn't
+    section: str  # the route's drive: line
+
+
 class CalibrationResult(_Message):
     """A calibration's result (``GET /api/results/calibrations/{id}``)."""
 
@@ -1012,6 +1031,7 @@ class CalibrationResult(_Message):
     replays: int
     panels: list[CalibrationPanel]
     files: list[str]
+    drive: FittedDrive | None = None  # for vexsim's own motions, if it's a two-sided drive
 
 
 class RouteParamInfo(_Message):
@@ -1073,6 +1093,23 @@ class RouteData(_Message):
     field: str | None
     functions: list[str]
     steps: list[RouteStepData]
+    drive: dict[str, float] = {}  # its drive: section, as written
+
+
+class RouteDriveInfo(_Message):
+    """The model of the drive a route's arcs and RAMSETE paths drive with, and the limits
+    they're planned within (``vexsim.calibration.feedforward.DriveModel``): what the route's
+    drive: section gives, and vexsim's for the rest, from its robot's config."""
+
+    kS: float  # V
+    kV: float  # V per in/s
+    kA: float  # V per in/s^2
+    kT: float  # V, against the scrub in a turn
+    kP: float  # V per in/s the wheels are behind
+    max_velocity: float  # in/s
+    max_accel: float  # in/s^2
+    max_lateral_accel: float  # in/s^2
+    top_speed: float  # in/s, at 12 V
 
 
 class RouteCheck(_Message):
@@ -1087,6 +1124,7 @@ class RouteCheck(_Message):
     headers: list[str]  # the project's own headers, any of which `functions` can list
     preview: Preview | None
     track: float | None  # the drive's track width (in): a swing turns about one side
+    drive: RouteDriveInfo | None = None  # what its arcs and RAMSETE paths drive with (or would)
     places: dict[str, TextSpan]
     project: str | None  # workspace paths: its project, robot and field
     robot_path: str | None
@@ -1295,6 +1333,7 @@ MODELS: list[type[BaseModel]] = [
     NotRouteFunctionInfo,
     RouteStepData,
     RouteData,
+    RouteDriveInfo,
     RouteCheck,
     RouteFile,
     RouteCheckRequest,
@@ -1399,6 +1438,7 @@ MODELS: list[type[BaseModel]] = [
     RmsGroup,
     PanelSeries,
     CalibrationPanel,
+    FittedDrive,
     CalibrationResult,
     ConfigOverridesRequest,
     ConsoleMessage,

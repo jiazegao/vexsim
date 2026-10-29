@@ -20,6 +20,8 @@ export interface Palette {
   obstacle: string;
   piece: string;
   focus: string; // what's selected
+  speedSlow: string; // a planned trajectory, slow to fast (one hue)
+  speedFast: string;
   critical: string; // something with an error
   warning: string;
   hues: Record<DrawColor, string>; // what robot code draws in (vexsim::Color)
@@ -42,6 +44,8 @@ const TOKENS: Record<Exclude<keyof Palette, "hues">, string> = {
   obstacle: "--obstacle",
   piece: "--series-4",
   focus: "--focus",
+  speedSlow: "--speed-slow",
+  speedFast: "--speed-fast",
   critical: "--critical",
   warning: "--warning",
 };

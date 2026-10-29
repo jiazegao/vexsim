@@ -568,7 +568,8 @@ def program_factory(
         if prepared.route is not None:
             from vexsim.app.routes import runner_input
 
-            route = runner_input(prepared.route.route, prepared.route.functions)
+            checked = prepared.route
+            route = runner_input(checked.route, checked.functions, checked.drive)
 
         def make_cpp():
             return CppProgram(

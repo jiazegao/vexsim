@@ -20,10 +20,17 @@ steps:
   - {wait: 100}
 ```
 
-A step is a LemLib 0.5 motion (``MOTIONS``, with its timeout, ``OPTIONS`` and ``async``), a
+A step is a LemLib 0.5 motion (``MOTIONS``, with its timeout, ``OPTIONS`` and ``async``), one
+of vexsim's own (bridge/cpp/motions: ``move_arc`` and ``ramsete``, which drive with a model of
+the drive that the route's ``drive:`` section may give, else vexsim's for the robot), a
 pause (``wait`` ms, ``wait_until`` inches or degrees along the motion before it,
 ``wait_until_done``) or a ``call`` of one of the team's functions (bridge/functions.py),
 its arguments by parameter name.
+
+```yaml
+  - {move_arc: [18, 90], timeout: 1500}           # 90 degrees clockwise, on an 18 in radius
+  - {ramsete: [[24, 24], [48, 0]], timeout: 3000, end_heading: 90, max_velocity: 50}
+```
 
 ``read_route`` reads a route's data, each problem at its place (a dotted location, as
 configs have them: ``steps[2].timeout``); ``check_route`` checks it against its project,
@@ -55,9 +62,9 @@ Value = int | float | bool | str
 
 @dataclass(frozen=True)
 class Option:
-    lemlib: str  # the field of LemLib's params struct
-    kind: str  # "bool", "number", "speed" or "direction"
-    default: Value  # LemLib's
+    lemlib: str  # the field of LemLib's params struct (vexsim's, for its own motions)
+    kind: str  # "bool", "number", "speed", "direction", "positive" or "angle"
+    default: Value | None  # LemLib's; None: the drive model's, or the path's own
 
 
 # A motion's options, in the order LemLib's params structs declare them (an export writes
@@ -70,6 +77,11 @@ OPTIONS: dict[str, Option] = {
     "max_speed": Option("maxSpeed", "speed", 127),
     "min_speed": Option("minSpeed", "speed", 0),
     "early_exit": Option("earlyExitRange", "number", 0),
+    # vexsim's own motions': the speed (in/s) and acceleration (in/s^2) they plan within, and
+    # the heading a path ends at (degrees)
+    "max_velocity": Option("maxVelocity", "positive", None),
+    "max_accel": Option("maxAccel", "positive", None),
+    "end_heading": Option("endHeading", "angle", None),
 }
 DIRECTIONS = {"cw": "CW_CLOCKWISE", "ccw": "CCW_COUNTERCLOCKWISE", "auto": "AUTO"}
 SIDES = {"left": "LEFT", "right": "RIGHT"}
@@ -77,11 +89,12 @@ SIDES = {"left": "LEFT", "right": "RIGHT"}
 
 @dataclass(frozen=True)
 class Motion:
-    lemlib: str  # the Chassis method
-    target: tuple[str, ...]  # what the step's own key holds: x, y (and theta), or theta
+    lemlib: str  # the Chassis method (vexsim::Motions', for its own)
+    target: tuple[str, ...]  # what the step's own key holds: x, y (and theta), or theta...
     options: tuple[str, ...]
     swing: bool = False  # it takes a locked side
     whole_speeds: bool = False  # its params struct takes speeds as ints
+    own: bool = False  # one of vexsim's own (bridge/cpp/motions), not LemLib's
 
 
 _SPEEDS = ("max_speed", "min_speed", "early_exit")
@@ -100,12 +113,28 @@ MOTIONS: dict[str, Motion] = {
     "swing_to_point": Motion(
         "swingToPoint", ("x", "y"), ("forwards", "direction", *_SPEEDS), swing=True
     ),
+    # vexsim's own, on a speed profile: an arc of a radius (in) through an angle (degrees,
+    # clockwise positive), and RAMSETE along a smooth path through points ([[x, y], ...],
+    # kept as x1, y1, x2, y2...)
+    "move_arc": Motion(
+        "moveArc", ("radius", "degrees"), ("forwards", "max_velocity", "max_accel"), own=True
+    ),
+    "ramsete": Motion(
+        "ramsete", ("points",), ("forwards", "max_velocity", "max_accel", "end_heading"), own=True
+    ),
 }
 PAUSES = ("wait", "wait_until", "wait_until_done")
 INVALID = "invalid"  # a step that doesn't read (the editor's routes keep its place)
 _FUNCTION = re.compile(r"(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*")  # a function's name, with namespaces
 KINDS = (*MOTIONS, *PAUSES, "call")
-TOP_KEYS = ("version", "name", "robot", "field", "start", "functions", "steps")
+TOP_KEYS = ("version", "name", "robot", "field", "start", "functions", "drive", "steps")
+# A route's drive: section, the model of the drive vexsim's own motions drive with
+# (calibration/feedforward.py): its keys, and the fields of vexsim::Drive they set. One left
+# out is vexsim's, worked out from the robot's config.
+DRIVE: dict[str, str] = {
+    "kS": "kS", "kV": "kV", "kA": "kA", "kT": "kT", "kP": "kP", "max_velocity": "maxVelocity",
+    "max_accel": "maxAccel", "max_lateral_accel": "maxLateralAccel",
+}  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -132,6 +161,11 @@ class Step:
         """Whether a motion starts and goes on (LemLib's default); None for other steps."""
         return bool(self.option("async", True)) if self.kind in MOTIONS else None
 
+    @property
+    def points(self) -> list[tuple[float, float]]:
+        """A ramsete step's points, each (x, y)."""
+        return [(self.target[k], self.target[k + 1]) for k in range(0, len(self.target) - 1, 2)]
+
 
 @dataclass
 class Route:
@@ -142,6 +176,12 @@ class Route:
     functions: tuple[str, ...] = ()  # headers, relative to the project
     steps: list[Step] = dataclasses.field(default_factory=list)
     version: int = VERSION
+    drive: dict[str, float] = dataclasses.field(default_factory=dict)  # its drive: section
+
+    @property
+    def own_motions(self) -> bool:
+        """Whether a step is one of vexsim's own motions, which need a drive model."""
+        return any(step.motion is not None and step.motion.own for step in self.steps)
 
     def start_pose(self) -> tuple[float, float, float]:
         """The start as vexsim has poses: x, y (in) and heading (degrees, counter-clockwise
@@ -251,6 +291,7 @@ def read_route(
         reader.error("functions", "must be a list of headers, relative to the project")
     else:
         functions = [h.replace("\\", "/") for h in headers]
+    drive = _read_drive(reader, data.get("drive"))
     steps: list[Step] = []
     raw = data.get("steps", [])
     if raw is None:
@@ -271,9 +312,35 @@ def read_route(
         return None, reader.issues
     route = Route(
         name=name.strip(), start=start, robot=paths["robot"], field=paths["field"],
-        functions=tuple(functions), steps=steps, version=version,
+        functions=tuple(functions), steps=steps, version=version, drive=drive,
     )  # fmt: skip
     return route, reader.issues
+
+
+def _read_drive(reader: _Reader, value: Any) -> dict[str, float]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        reader.error(
+            "drive", "must map the drive model's numbers to their values: " + ", ".join(DRIVE)
+        )
+        return {}
+    drive = {}
+    for key, given in value.items():
+        place = f"drive.{key}"
+        if key not in DRIVE:
+            reader.error(place, _unknown(key, tuple(DRIVE)))
+            continue
+        read = reader.number(given, place)
+        if read is None:
+            continue
+        if key in ("kS", "kA", "kT") and read < 0:
+            reader.error(place, "must be 0 or more")
+        elif key not in ("kS", "kA", "kT") and read <= 0:
+            reader.error(place, "must be more than 0")
+        else:
+            drive[key] = read
+    return drive
 
 
 def _unknown(key: Any, known: tuple[str, ...]) -> str:
@@ -356,7 +423,15 @@ def _read_motion(reader: _Reader, item: Mapping, where: str, kind: str) -> Step 
     for key in item:
         if key not in allowed:
             reader.error(f"{where}.{key}", _unknown(key, allowed) + f" for {kind}")
-    if len(motion.target) == 1:
+    if kind == "move_arc":
+        target = reader.numbers(item[kind], at, 2, "[radius, degrees] (inches, degrees clockwise)")
+        if target is not None and target[0] <= 0:
+            reader.error(f"{at}[0]", "the radius must be more than 0 (inches)")
+        if target is not None and target[1] == 0:
+            reader.error(f"{at}[1]", "must turn some way: degrees, clockwise positive")
+    elif kind == "ramsete":
+        target = _points(reader, item[kind], at)
+    elif len(motion.target) == 1:
         value = reader.number(item[kind], at)
         target = None if value is None else (value,)
     else:
@@ -387,9 +462,13 @@ def _read_motion(reader: _Reader, item: Mapping, where: str, kind: str) -> Step 
             read = reader.word(value, place, DIRECTIONS)
         else:
             read = reader.number(value, place, whole=kind_of == "speed" and motion.whole_speeds)
-            if read is not None and read < 0:
+            if read is None or kind_of == "angle":
+                pass
+            elif kind_of == "positive" and read <= 0:
+                reader.error(place, "must be more than 0")
+            elif read < 0:
                 reader.error(place, "must be 0 or more")
-            elif read is not None and kind_of == "speed" and read > 127:
+            elif kind_of == "speed" and read > 127:
                 reader.error(place, "must be 127 or less (LemLib's full speed)")
         if read is not None:
             options.append((name, read))
@@ -399,6 +478,18 @@ def _read_motion(reader: _Reader, item: Mapping, where: str, kind: str) -> Step 
     if len(reader.issues) > before and any(i.severity == "error" for i in reader.issues[before:]):
         return None
     return Step(kind, target, int(timeout), side, tuple(options))
+
+
+def _points(reader: _Reader, value: Any, at: str) -> tuple[float, ...] | None:
+    """A path's points, [[x, y], ...], one after another: x1, y1, x2, y2..."""
+    if not isinstance(value, list) or not value:
+        reader.error(at, "must be the points it goes through: [[x, y], ...] (inches)")
+        return None
+    read = [
+        reader.numbers(point, f"{at}[{k}]", 2, "a point: [x, y] (inches)")
+        for k, point in enumerate(value)
+    ]
+    return None if any(p is None for p in read) else tuple(v for p in read for v in p)
 
 
 # --- checking it against its project, robot and field -----------------------------------------
@@ -412,6 +503,7 @@ class CheckedRoute:
     functions: Any = None  # bridge.functions.Functions, once the headers are read
     robot: Any = None  # RobotConfig
     field: Any = None  # FieldConfig, or None for the empty field
+    drive: Any = None  # the DriveModel its own motions drive with (``route_drive``), if any
 
     @property
     def errors(self) -> list[ConfigIssue]:
@@ -474,13 +566,16 @@ def check_route(route: Route, path: str | os.PathLike[str]) -> CheckedRoute:
             continue
         if step.kind == "call":
             _check_call(checked, step, where, error)
+        elif step.kind == "ramsete":
+            for k, point in enumerate(step.points):
+                _check_on_field(checked, point, f"{where}.ramsete[{k}]", warning)
         elif (
             step.motion is not None
             and len(step.target) == 3
             or step.motion
             and step.kind.endswith("point")
         ):
-            _check_on_field(checked, step, where, warning)
+            _check_on_field(checked, step.target[:2], f"{where}.{step.kind}", warning)
         if step.kind == "wait_until" and k and route.steps[k - 1].is_async is False:
             warning(
                 f"{where}.wait_until",
@@ -496,7 +591,45 @@ def check_route(route: Route, path: str | os.PathLike[str]) -> CheckedRoute:
                 else f"the robot starts on top of {where}; move its start"
             )
             warning("start", message)
+        _check_drive(checked, error)
     return checked
+
+
+def _check_drive(checked: CheckedRoute, error) -> None:
+    """vexsim's own motions drive a differential drive's two sides, with ``route_drive``."""
+    route = checked.route
+    own = [k for k, step in enumerate(route.steps) if step.motion and step.motion.own]
+    if not own:
+        return
+    kind = checked.robot.drivetrain.type
+    if kind not in ("differential", "hdrive"):
+        for k in own:
+            step = route.steps[k]
+            error(
+                f"steps[{k}].{step.kind}",
+                f"{step.kind} drives a differential drive's left and right sides, and this "
+                f"robot's drivetrain is {kind}",
+            )
+        return
+    checked.drive = route_drive(route, checked.robot)
+
+
+def route_drive(route: Route, robot) -> Any:
+    """The model of the drive ``route``'s own motions drive with (a ``DriveModel``): what its
+    drive: section gives, and for the rest vexsim's, from the robot's config
+    (calibration/feedforward.py)."""
+    from vexsim.calibration.feedforward import characterize, model
+
+    given = route.drive
+    constants = ("kS", "kV", "kA", "kT")
+    if all(k in given for k in constants):
+        found = model(robot, *(given[k] for k in constants))
+    else:
+        found = characterize(robot)
+        if any(k in given for k in constants):
+            found = model(robot, *(given.get(k, getattr(found, k)) for k in constants))
+    rest = ("kP", "max_velocity", "max_accel", "max_lateral_accel")
+    return dataclasses.replace(found, **{k: given[k] for k in rest if k in given})
 
 
 def _check_configs(checked: CheckedRoute, path: Path, error) -> None:
@@ -584,14 +717,14 @@ def _wrong_argument(param, value: Value, functions) -> str | None:
     return None
 
 
-def _check_on_field(checked: CheckedRoute, step: Step, where: str, warning) -> None:
+def _check_on_field(checked: CheckedRoute, point, where: str, warning) -> None:
     from vexsim.config.field import FieldConfig
 
     field_config = checked.field or FieldConfig()
     half_x, half_y = (v / 2 for v in field_config.size_in)
-    x, y = step.target[:2]
+    x, y = point
     if abs(x) > half_x or abs(y) > half_y:
-        warning(f"{where}.{step.kind}", f"({x:g}, {y:g}) is off the field")
+        warning(where, f"({x:g}, {y:g}) is off the field")
 
 
 # --- the text, as the browser's editor checks it ----------------------------------------------
@@ -676,12 +809,17 @@ def call_arguments(step: Step, functions) -> list[Value]:
     return values
 
 
-def runner_input(route: Route, functions) -> str:
+def runner_input(route: Route, functions, drive=None) -> str:
     """The route as vexsim's route runner reads it (bridge/runner.py): a line for its start,
-    then one for each step, numbered from 1."""
+    one for the ``drive`` model its own motions drive with (``route_drive``), then one for
+    each step, numbered from 1."""
     if any(step.kind == INVALID for step in route.steps):
         raise ValueError("a route with steps that don't read can't run")
     lines = [f"vexsim-route {VERSION}", "start " + " ".join(_text(v) for v in route.start)]
+    if route.own_motions:
+        if drive is None:
+            raise ValueError("a route's arcs and RAMSETE paths need the drive model to run")
+        lines.append("drive " + " ".join(_text(getattr(drive, k)) for k in DRIVE))
     for number, step in enumerate(route.steps, 1):
         words = [str(number), step.kind]
         if step.kind == "call":
@@ -722,8 +860,13 @@ def label(step: Step) -> str:
         return f"wait_until {_text(step.target[0])}"
     if step.kind == "wait_until_done":
         return "wait_until_done"
-    target = ", ".join(_text(v) for v in step.target)
-    words = [step.kind, f"({target})" if len(step.target) > 1 else target]
+    if step.kind == "move_arc":
+        words = [f"move_arc {_text(step.target[1])}°, radius {_text(step.target[0])} in"]
+    elif step.kind == "ramsete":
+        words = ["ramsete", " ".join(f"({_text(x)}, {_text(y)})" for x, y in step.points)]
+    else:
+        target = ", ".join(_text(v) for v in step.target)
+        words = [step.kind, f"({target})" if len(step.target) > 1 else target]
     if step.side:
         words.append(f"{step.side} side")
     words += [f"{name} {_text(value)}" for name, value in step.options if name != "async"]
@@ -939,7 +1082,17 @@ def mirror_changes(route: Route, functions, axis: str) -> tuple[list, list[str]]
     notes: list[str] = []
     for k, step in enumerate(route.steps):
         where = f"steps[{k}]"
-        if step.motion is not None:
+        if step.kind == "move_arc":  # the other way round
+            changes.append(
+                Change("set", f"{where}.move_arc", tidy([step.target[0], -step.target[1]]))
+            )
+        elif step.kind == "ramsete":
+            points = [tidy(point(x, y)) for x, y in step.points]
+            changes.append(Change("set", f"{where}.ramsete", points))
+            end = step.option("end_heading")
+            if end is not None:
+                changes.append(Change("set", f"{where}.end_heading", tidy([heading(end)])[0]))
+        elif step.motion is not None:
             target = step.target
             if len(target) == 1:
                 value = tidy([heading(target[0])])[0]

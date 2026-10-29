@@ -107,6 +107,7 @@ from vexsim.ui.protocol import (
     RouteCheck,
     RouteCheckRequest,
     RouteData,
+    RouteDriveInfo,
     RouteFile,
     RouteFunctionInfo,
     RouteInfo,
@@ -552,7 +553,7 @@ def _route_checked(ws: Workspace, file: Path, text: str) -> RouteCheck:
     if route is not None:
         data = RouteData(
             name=route.name, start=route.start, robot=route.robot, field=route.field,
-            functions=list(route.functions),
+            functions=list(route.functions), drive=route.drive,
             steps=[
                 RouteStepData(
                     kind=step.kind, target=list(step.target), timeout=step.timeout,
@@ -617,10 +618,18 @@ def _route_checked(ws: Workspace, file: Path, text: str) -> RouteCheck:
         else None
         for key in ("robot", "field")
     }
+    drive = None
+    model = checked.drive
+    robot = checked.robot
+    if model is None and route is not None and robot is not None:  # what an arc would drive with
+        if robot.drivetrain.type in ("differential", "hdrive"):
+            model = routes.route_drive(route, robot)
+    if model is not None:
+        drive = RouteDriveInfo(**{k: getattr(model, k) for k in RouteDriveInfo.model_fields})
     return RouteCheck(
         issues=issues, route=data, functions=functions, others=others,
         headers=routes.project_headers(project) if project is not None else [],
-        preview=preview, track=track, places=places, project=listed(project),
+        preview=preview, track=track, drive=drive, places=places, project=listed(project),
         robot_path=listed(named["robot"]), field_path=listed(named["field"]),
     )  # fmt: skip
 

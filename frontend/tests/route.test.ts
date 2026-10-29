@@ -1,6 +1,7 @@
 import { describe as group, expect, it } from "vitest";
 import type { RouteData, RouteFunctionInfo, RouteStepData } from "../src/protocol";
-import { bearing, describe, dropEdit, newRoutePath, newStep, numbersText, plan, relativePath, rotateAbout, routeFileName, stepValue, turnAmount, withDrag, wrap360 } from "../src/route";
+import type { RouteDriveInfo } from "../src/protocol";
+import { bearing, describe, dropEdit, newRoutePath, newStep, numbersText, plan, pointsOf, relativePath, rotateAbout, routeFileName, stepValue, timeoutFor, turnAmount, withDrag, wrap360 } from "../src/route";
 
 function step(kind: string, target: number[], extra: Partial<RouteStepData> = {}): RouteStepData {
   return { kind, target, timeout: 1000, side: null, options: {}, function: null, args: {}, label: kind, ...extra };
@@ -151,5 +152,67 @@ group("a route's files", () => {
     expect(routeFileName("!!!")).toBe("route.yaml");
     expect(newRoutePath("p", "Left", ["p/routes/left.yaml", "p/routes/left_2.yaml"])).toBe("p/routes/left_3.yaml");
     expect(newRoutePath(".", " ", [])).toBe("routes/new_route.yaml"); // a project at the workspace's root
+  });
+});
+
+const DRIVE: RouteDriveInfo = { kS: 0.8, kV: 0.14, kA: 0.017, kT: 1.1, kP: 0.56, max_velocity: 64, max_accel: 220, max_lateral_accel: 13, top_speed: 80 };
+
+group("vexsim's own motions", () => {
+  it("plans an arc and a RAMSETE path, with their speeds, from where the robot is", () => {
+    const planned = plan(
+      route([0, 0, 0], [
+        step("move_arc", [18, 90]), // facing +y: a quarter circle to the right
+        step("move_arc", [12, -90], { options: { forwards: false } }),
+        step("ramsete", [24, 30, 0, 48], { options: { end_heading: 270 } }),
+      ]),
+      [],
+      10,
+      [],
+      DRIVE,
+    );
+    close(planned[0].pose, [18, 18, 90]);
+    close(planned[1].pose, [6, 6, 0]); // backing away from +x, turning counter-clockwise: round to face +y
+    close(planned[2].pose, [0, 48, 270]);
+    for (const p of planned) {
+      expect(p.speeds!.length).toBe(p.path.length);
+      expect(p.seconds).toBeGreaterThan(0.5);
+      expect(Math.max(...p.speeds!)).toBeLessThanOrEqual(64);
+      expect(p.speeds![0]).toBe(0);
+      expect(p.speeds!.at(-1)).toBe(0);
+    }
+    expect(planned[0].seconds! - planned[0].path.length * 0.01).toBeLessThan(0.01); // a point every 10 ms
+    // on an 18 in arc, the drive's 13 in/s^2 sideways holds it to sqrt(13 * 18) in/s
+    expect(Math.max(...planned[0].speeds!)).toBeCloseTo(Math.sqrt(13 * 18), 6);
+    // a step's own limit, and without the drive model: what the motions take for 0
+    const slower = plan(route([0, 0, 0], [step("move_arc", [18, 90], { options: { max_velocity: 10 } })]), [], 10, [], DRIVE);
+    expect(Math.max(...slower[0].speeds!)).toBeCloseTo(10, 6);
+    expect(plan(route([0, 0, 0], [step("move_arc", [18, 90])]), [], 10)[0].pose[0]).toBeCloseTo(18, 6);
+  });
+
+  it("writes a path's points as a list of [x, y], and drags them one at a time", () => {
+    const path = step("ramsete", [24, 24, 48, 0], { timeout: 3000, options: { max_velocity: 40, async: false } });
+    expect(pointsOf(path)).toEqual([
+      [24, 24],
+      [48, 0],
+    ]);
+    expect(stepValue(path)).toEqual({ ramsete: [[24, 24], [48, 0]], timeout: 3000, max_velocity: 40, async: false });
+    expect(stepValue(step("move_arc", [18, -45], { timeout: 1500 }))).toEqual({ move_arc: [18, -45], timeout: 1500 });
+    const r = route([0, 0, 0], [path]);
+    const dragged = { grip: { kind: "waypoint" as const, index: 0, point: 1 }, value: [50, 6] };
+    expect(withDrag(r, dragged).steps[0].target).toEqual([24, 24, 50, 6]);
+    expect(dropEdit(r, dragged)).toEqual({ op: "set", location: "steps[0].ramsete[1]", value: [50, 6] });
+    expect(describe(path)).toBe("RAMSETE path through (24, 24), (48, 0) · max 40 in/s · waits");
+    expect(describe(step("move_arc", [18, -45]))).toBe("Arc 45° counter-clockwise, radius 18 in · async");
+  });
+
+  it("starts a new one off ahead of the robot, its timeout half a second more than its plan", () => {
+    const arc = newStep("move_arc", [0, 0, 90], undefined, undefined, DRIVE, 10);
+    expect([arc.target, arc.options]).toEqual([[18, 90], { async: false }]);
+    const seconds = plan(route([0, 0, 90], [arc]), [], 10, [], DRIVE)[0].seconds!;
+    expect(arc.timeout).toBe(Math.ceil((seconds + 0.5) * 10) * 100);
+    expect(timeoutFor(arc, [0, 0, 90], 10, DRIVE)).toBe(arc.timeout);
+    const path = newStep("ramsete", [0, 0, 90], undefined, undefined, DRIVE, 10); // facing +x: off to its right, -y
+    expect(path.target).toEqual([24, -12, 48, -24]);
+    expect(newStep("ramsete", [0, 0, 0], undefined, [12, 36], DRIVE, 10).target).toEqual([12, 36]); // a click on the field
   });
 });

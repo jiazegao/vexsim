@@ -30,6 +30,10 @@ from vexsim.bridge.routines import Routine
 CPP_DIR = Path(__file__).parent / "cpp"
 SHIM_INCLUDE = CPP_DIR / "include"
 RUNTIME_DIR = CPP_DIR / "runtime"
+# vexsim's own motions for a LemLib chassis (vexsim/motions.hpp): a LemLib project's code may
+# include them (an export of its routes copies them into it), and a route build runs them
+MOTIONS_INCLUDE = CPP_DIR / "motions" / "include"
+MOTIONS_SOURCE = CPP_DIR / "motions" / "src" / "vexsim" / "motions.cpp"
 
 SDK_INCLUDES = {"api.h", "pros", "liblvgl", "display"}  # replaced by the shim
 COMPETITION = ("initialize", "competition_initialize", "disabled", "autonomous", "opcontrol")
@@ -552,7 +556,7 @@ def build_project(
         lemlib_include, lemlib_lib = lemlib.build_library(
             tc, lemlib_version, workers=workers, log=log
         )
-        includes.append(lemlib_include)
+        includes += [lemlib_include, MOTIONS_INCLUDE]  # (a project's own copies come first)
         libraries.append(lemlib_lib)
     flags_key = _digest(tc.cxx, tc.version_text, *opt, *map(str, includes), *DEFINES)
 
@@ -563,6 +567,9 @@ def build_project(
     if lemlib_version:
         _write_if_changed(generated / "vexsim_lemlib_pose.cpp", LEMLIB_POSE_SOURCE)
         sources.append(generated / "vexsim_lemlib_pose.cpp")
+    if runner is not None and not (project / "src" / "vexsim" / "motions.cpp").is_file():
+        _write_if_changed(generated / "vexsim_motions.cpp", MOTIONS_SOURCE.read_text("utf-8"))
+        sources.append(generated / "vexsim_motions.cpp")  # (unless the project has its own)
 
     def rewrite(text: str) -> str:
         """Point compiler messages at the project's files, not the staged copies."""
