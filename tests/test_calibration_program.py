@@ -286,6 +286,30 @@ def test_the_device_check_catches_a_reversed_motor_and_swapped_sensors(plan, pro
     assert check.info["check_distance"] == "ports 1 and 8 are swapped"
 
 
+def test_the_device_check_shows_each_problem_whole(plan, program, tmp_path):
+    # three distance sensors' cables moved round in a ring: three problems too long for a
+    # line of the brain's screen, and more than its page holds
+    ring = {1: 8, 8: 2, 2: 1}
+    sensors = tuple(
+        s.model_copy(update={"port": ring[s.port]})
+        if s.type == "distance" and s.port in ring
+        else s
+        for s in CONFIG.sensors
+    )
+    real = CONFIG.model_copy(update={"sensors": sensors})
+    student, _ = run_session(plan, program, ["device_check"], tmp_path, real=real)
+    first = "the sensor at the front left, facing forward is on port 8, not 1"
+    assert student.problems == [
+        first,
+        "the sensor at the left, facing backward is on port 1, not 2",
+        "the sensor at the front right, facing forward is on port 2, not 8",
+    ]
+    (screen,) = [lines for _, ask, lines in student.screens if ask == "done failed"]
+    assert screen[2] == "Device check: 3 to fix"
+    assert screen[3:5] == ["the sensor at the front left, facing forward is", "on port 8, not 1"]
+    assert screen[5:7] == ["", "...and 2 more (see the log)"]
+
+
 def test_going_further_than_the_plan_stops_the_robot(plan, program, tmp_path):
     rolls = {"wheel.omni.rolling_resistance": 0.015, "motor.natural_free_rpm": 140.0}
     real = CONFIG.model_copy(update={"overrides": rolls})  # far past the plan's spread

@@ -185,6 +185,51 @@ void problem(const char* text) {
 	if (g_problem_count < 12) std::snprintf(g_problems[g_problem_count++], sizeof g_problems[0], "%s", text);
 }
 
+// Breaks text at spaces into lines of the brain's width: how many it took, or 0 (and
+// nothing written) if it needs more than `max`.
+int wrap(const char* text, char (*lines)[WIDTH + 1], int max) {
+	const char* starts[8];
+	int lengths[8];
+	int n = 0;
+	for (const char* p = text; *p && n < 8;) {
+		int cut = static_cast<int>(std::strlen(p));
+		if (cut > WIDTH) {
+			cut = WIDTH;
+			while (cut > 0 && p[cut] != ' ') cut--;
+			if (cut == 0) cut = WIDTH;  // one word longer than a line
+		}
+		starts[n] = p;
+		lengths[n++] = cut;
+		p += cut;
+		while (*p == ' ') p++;
+	}
+	if (n > max) return 0;
+	for (int i = 0; i < n; i++) std::snprintf(lines[i], WIDTH + 1, "%.*s", lengths[i], starts[i]);
+	return n;
+}
+
+// The device check's problems on a page's 4 lines, each whole: all of them if they fit (and
+// what to do, if there's room), else as many as fit in 3 lines and how many more there are.
+void problem_lines(char (*lines)[WIDTH + 1]) {
+	int shown = 0;
+	for (int room : {4, 3}) {
+		for (int i = 0; i < 4; i++) lines[i][0] = '\0';
+		int used = 0;
+		shown = 0;
+		while (shown < g_problem_count) {
+			int took = wrap(g_problems[shown], lines + used, room - used);
+			if (took == 0) break;
+			used += took;
+			shown++;
+		}
+		if (shown == g_problem_count) {
+			if (used < 4) std::snprintf(lines[3], WIDTH + 1, "%s", "Fix the config, then check again.");
+			return;
+		}
+	}
+	std::snprintf(lines[3], WIDTH + 1, "...and %d more (see the log)", g_problem_count - shown);
+}
+
 // ---- the controller ----------------------------------------------------------------------------
 
 // Any button held, or a stick past 20%.
@@ -790,10 +835,10 @@ void device_check(Item& item) {
 		page("Device check: passed", {"Every device answers, turns and counts", "the way the config says."}, "A: next",
 		     "Check: passed", "A:next");
 	} else {
-		page(f("Device check: %d to fix", count),
-		     {g_problems[0], count > 1 ? g_problems[1] : "", count > 2 ? g_problems[2] : "",
-		      count > 3 ? f("...and %d more (see the log)", count - 3) : "Fix the config, then check again."},
-		     "A: next", "Check: fix it", "A:next");
+		char lines[4][WIDTH + 1];
+		problem_lines(lines);
+		page(f("Device check: %d to fix", count), {lines[0], lines[1], lines[2], lines[3]}, "A: next",
+		     "Check: fix it", "A:next");
 	}
 	for (int k = 0; k < count; k++) say("problem %s", g_problems[k]);
 	say("ask done %s", count ? "failed" : "passed");

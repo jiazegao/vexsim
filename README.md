@@ -7,9 +7,9 @@ A VEX V5 robot simulator for testing localization and motion-control code before
 - **sensors**: motor encoders, IMU, rotation sensors (tracking wheels), distance sensors and the GPS, with realistic latency, noise and per-device errors;
 - **game elements**: fixed obstacles (some low enough to drive over) and pieces the robot pushes around.
 
-You can write robot programs in Python against a PROS 4-style API, or **run your PROS 4 C++ project, LemLib included, without changing it**. You can benchmark algorithms over hundreds of randomized trials, and calibrate the physics to your own robot from a log of a short drive.
+You can write robot programs in Python against a PROS 4-style API, or **run your PROS 4 C++ project, LemLib included, without changing it**. You can benchmark algorithms over hundreds of randomized trials, and calibrate the physics to your own robot with a session of tests on your field ([a step-by-step guide](docs/calibration_guide.md), for students).
 
-This README is the complete guide: how to use every feature, and what every module does. The [`docs/`](docs/) folder goes deeper on a few topics (where each physics parameter comes from, worked examples, a real team's port), and each section links to it.
+This README is the complete guide: how to use every feature, and what every module does. The [`docs/`](docs/) folder goes deeper on a few topics (where each physics parameter comes from, worked examples, a real team's port, the calibration guide), and each section links to it.
 
 ![The viewer after the example tour](docs/img/viewer_tour.png)
 
@@ -155,7 +155,7 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 | `examples/inputs/` | `strafe_square.csv`: scripted controller input |
 | `examples/pros_projects/` | `minimal_pros4` (its own tracking-wheel odometry, driving a square), `lemlib_template` (LemLib's own example program), `lemlib_bench` (LemLib motions as benchmark controllers), `calibration` (the calibration routine for `full_omni_6m`), `1239e_2026-27` (a real team's code, and a route, `routes/left_start.yaml`) |
 | `examples/scenarios/` | benchmark scenarios: `s_curve`, `pose_approach`, `lemlib_vs_python` |
-| `examples/scripts/` | `evaluate_1239e.py`: runs every 1239E routine and measures its localization |
+| `examples/scripts/` | `evaluate_1239e.py`: runs every 1239E routine and measures its localization; `calibration_guide_pictures.py`: makes [the calibration guide](docs/calibration_guide.md)'s pictures, from a whole session on a simulated 1239E |
 | `examples/logs/` | `full_omni_routine.csv`: the calibration routine as a robot logs it, recorded in the simulator by `full_omni_6m` with its wheels' friction and its battery changed, to fit the parameters back ([section 12](#12-calibrating-to-your-robot)); `left40_simulated.1239e`: an MCL log in 1239E's format, written by the simulated 1239E robot running Left 40, to play and replay ([section 7](#7-the-browser-app-vexsim-ui)) |
 | `.vexsim/` | for `vexsim ui` ([section 7](#7-the-browser-app-vexsim-ui)): `launch.yaml`, the saved runs (every example and 1239E routine, and two that replay MCL logs), and `sweeps.yaml`, the 1239E evaluation as sweeps |
 
@@ -1108,81 +1108,26 @@ The built-in Python controllers drive the `left` and `right` sides (differential
 ---
 
 ## 12. Calibrating to your robot
-Most physics parameters are estimates: how well your wheels grip your tiles, how freely the rollers turn, how much a coasting robot slows. Calibration measures them on your robot, with no extra equipment (the steps below are also the browser app's *Calibrate* page: [section 7](#7-the-browser-app-vexsim-ui)):
+Most physics parameters are estimates: how well your wheels grip your tiles, how freely the rollers turn, how far a coasting robot rolls, how far off your IMU reads, how your distance sensors see the walls. Calibration measures them on your robot and writes them into its config.
 
-1. **Generate** a drive routine for your robot and add it to your PROS project:
-   ```
-   vexsim calibration-routine ROBOT.yaml MY_PROS_PROJECT
-   ```
-   This writes `include/vexsim_calibration.hpp` and `src/vexsim_calibration.cpp`. They use only the PROS 4 C API, so they build with PROS and run unchanged in vexsim. Call the routine from `autonomous()`:
-   ```cpp
-   #include "vexsim_calibration.hpp"
-   void autonomous() { vexsim_calibration::run(); }
-   ```
-2. **Run it on the robot**, in the middle of a field, on the tiles you compete on, with a charged battery. It calibrates the IMU (keep the robot still), then drives for about 7 s (9 s for drivetrains that strafe) with fixed voltages and no feedback, staying within about 4 ft of the start:
-
-   | Step | Measures |
-   |---|---|
-   | launch from rest | traction limit and motor torque |
-   | coast | rolling resistance |
-   | reverse, then brake | back-EMF braking |
-   | strafe out and back (X-drive, mecanum, H-drive) | roller resistance |
-   | spin in place | roller friction and scrub |
-   | fast arc, then coast | sideways sliding (drift) |
-
-   It logs with [vexsim's logger](#vexsims-logger), which `calibration-routine` adds to the project too: to the SD card (`vexsim_0001_calibration.csv`, the next number each run), or without a card to the terminal, between `#vexsim-log begin` and `#vexsim-log end`; capture that with `pros terminal > run.txt` over USB. Either file works.
-3. **Fit:**
-   ```
-   vexsim calibrate ROBOT.yaml vexsim_0001_calibration.csv --out calibration
-   ```
-   ```
-   parameter                           before      after  uncertainty
-   wheel.omni.longitudinal_mu             0.9     0.7527  +/-0.066%
-   wheel.omni.lateral_mu                  0.2      0.278  +/-0.027%
-   wheel.omni.rolling_resistance          0.1     0.1397  +/-0.03%
-   battery.internal_resistance_ohm                  0.15  from battery voltage vs. current
-   RMS difference, simulated vs. logged (28 replays):
-     motor velocity (rpm): 40.9 -> 3.01
-     ...
-   ```
-   Paste the printed `overrides:` block into the robot YAML. `--out` also saves it as `overrides.yaml`, with the plot and the fitted replay. Options: `--fit` (a comma-separated list of any parameters; `none` only replays and compares), `--max-iterations`, `--workers`.
-
-   It also fits the **drive model** vexsim's own motions drive with (arcs and RAMSETE paths, [above](#autonomous-routes)) straight to the log: how each side of the real drive answers voltage. It prints the line a route's `drive:` section takes (`--out` saves it as `drive.yaml`, and the Calibrate page shows it, to copy), so those motions drive the real robot as its log says it drives:
-   ```
-   Drive model for vexsim's own motions (arcs, RAMSETE paths): kS 1.185 V, kV 0.1363 V per in/s, kA 0.0288 V per in/s^2, kT 1.231 V (fits 535 samples, R² 0.996); top speed 76.6 in/s
-   For the robot's routes, add to them:
-     drive: {kS: 1.185, kV: 0.1363, kA: 0.0288, kT: 1.231}
-   ```
-
-![A logged calibration run vs. the simulation, before and after the fit](docs/img/calibration.png)
-
-- **What it fits** by default: the parameters of each wheel type on the robot (omni: `longitudinal_mu`, `lateral_mu`, `rolling_resistance`; traction: `mu`, `rolling_resistance`; mecanum: `grip_mu`, `roller_mu`, `rolling_resistance`). The battery's internal resistance is read off the log, as the slope of its voltage against its current.
-- **How:** the log's motor commands are replayed in the simulator at the log's times, with ideal sensors, the logged battery voltage, and the readings' age found from the motor currents. Levenberg-Marquardt adjusts the parameters (in log space, so they stay positive) until the simulated motor velocities and currents, tracking-wheel speeds and heading rates match the log, each group weighted equally.
-- **Check it on another run:** `vexsim calibrate ROBOT.yaml another_run.csv --fit none`. Any program can log, with [vexsim's logger](#vexsims-logger). To compare a simulated run with a real one, record the simulated run with `vexsim run ... --headless --robot-log sim_run.csv`, or run the program with `--sd FOLDER` so its own logger writes the log there.
-- **Try it without a robot:** `examples/pros_projects/calibration` is the routine for `full_omni_6m`:
-  ```
-  vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/calibration --headless > run.txt
-  vexsim calibrate examples/robots/full_omni_6m.yaml run.txt
-  ```
-
-### A calibration session on a full field
-The routine above needs open floor. A *session* tests each part of the robot on its own, on a field with the season's elements in place, from a program of its own in a spare slot (phase 14):
+**[The calibration guide](docs/calibration_guide.md) takes you through it, step by step.** It's written for students working on their own: describing the robot, a session of tests on a full field, fitting the logs, and checking your real autonomous against the simulator, with every command written out for Windows and macOS, and the program's screens as they look. In short:
 ```
-vexsim calibration plan ROBOT.yaml FIELD.yaml --out plan              # where each test fits
-vexsim calibration program ROBOT.yaml FIELD.yaml vexsim_calibration   # after: pros c n vexsim_calibration
+vexsim calibration program ROBOT.yaml FIELD.yaml vexsim_calibration   # in a project made with pros c n; pros upload --slot 8
 vexsim calibration collect SESSION --from-card                       # after the session: its logs
-vexsim calibrate ROBOT.yaml SESSION --field FIELD.yaml                # fit them; --apply writes them
-vexsim calibration check-auton ROBOT.yaml LOG --program PROJECT --field FIELD.yaml --end "..."
+vexsim calibrate ROBOT.yaml SESSION --field FIELD.yaml                # fit them; --apply writes them into ROBOT.yaml
+vexsim calibration check-auton ROBOT.yaml LOG --program PROJECT --field FIELD.yaml --end "front-left: 23.5 from -x, 40 from +y; back-right: 35.25 from -x, 52 from +y"
 ```
-- **The plan** simulates each driving test (straight, spin, arc; strafe for drives that can) over a spread of what the uncalibrated robot might be (it may roll further, stop sooner, slide or grip more than its config says) and finds a spot on the field where the robot's shape, swept along every one of those paths, stays a margin (`--margin`, 6 in) clear of the walls and of every element, those it could drive over included. A test with no room is slowed down, and failing that, the plan names what's in the way. It also picks a lane to push the robot along by hand, and spots for the slow spin (tracking wheels) and the distance sweeps. Each spot is given as distances from two walls, and drawn on a map (`plan/map_6_straight.png`).
-- **The program** (`src/main.cpp` and a header for the robot, with vexsim's logger) shows the tests in order on the brain and the controller, each with what to do: a device check (every device answers; each side's wheels spin forward, the robot on its side; the IMU and tracking wheels count the right way; a hand over each distance sensor finds which is which), a free spin on its side, the IMU still and turned by hand, the push, the driving tests three times each, and the spins. A test that turns the wheels waits for the robot to be still and counts down from 3 with a rumble; any button stops every motor at once, and so does going further than the plan's simulations did. Each run is logged to the SD card.
+- **The plan and the program.** The tests run on a field with the season's elements in place, from a program of their own in a spare slot. `vexsim calibration program` plans where each test fits between the elements, as the uncalibrated robot might really drive (`vexsim calibration plan` alone draws the maps), and writes the program: the tests on a menu on the brain and the controller, each saying what to do, each logged to the SD card. They are a device check, a free spin on its side, the IMU still and turned by hand, a push along a taped lane, three driving tests three times each, and distance sweeps (and a slow spin, for tracking wheels). Any button stops the robot, and so does going further than the plan expected.
+- **The fit** goes test by test, each using what the ones before found: the motors, the IMU, the wheels' size, the drive's friction (with one run held out to check the result), the tracking wheels, the distance sensors. `SESSION/report/report.md` has each value before and after and how well the logs pin it down; `--apply` writes those they pin down into the robot's config, its comments kept, and the routes' `drive:` line is printed.
+- **The autonomous check** runs a routine from your competition code on the real robot, logged with [vexsim's logger](#vexsims-logger); you measure where it stopped with tape at two corners, and vexsim runs the same routine and compares, against your team's pass marks.
 
-- **Collecting** copies the logs off the card (`--from-card` finds it; `--from FOLDER`, or `--usb` around `pros terminal` without a card) into `SESSION/runs/`, checks each run and lists it in `SESSION/session.yaml`, where `use: false` leaves a run out.
-- **Fitting** goes test by test, each fit using what the ones before found: the motors from the free spin (and whether voltage commands are capped at rated speed), the IMU's scale error and noise, the wheels' diameters from the push, where the tracking wheels are from the slow spin, the drive's friction and rolling resistance from every driving run but one, held out to check the result, then the distance sensors' noise, range, misses at glancing angles and confidence from the sweeps. A failed device check stops it, saying what to fix. `SESSION/report/report.md` has each value before and after, how well the logs pin it down, and plots; `--apply` writes the values they pin down into the robot YAML, its comments kept, and the routes' `drive:` line is printed.
+[docs/calibration.md](docs/calibration.md) is the reference: how each test and fit works, the log format, and how well the fits recover robots made to a known answer.
 
-- **The autonomous check** runs the team's routine, from a real run's log (the competition program, with vexsim's logger), in vexsim from where its code set its pose, a few times, and compares where it ended (measured with tape at two corners of the robot, `--end "front-left: 23.5 from -x, 40 from +y; back-right: 35.25 from -x, 52 from +y"`) and the code's pose through the run with the simulated ones. It passes within the team's pass marks (2 in and 2 degrees, or theirs in `.vexsim/calibration.yaml`), and its report shows where the runs part.
-
-It runs unchanged in vexsim, where `vexsim/calibration/student.py` plays the student: it reads what the program asks, presses the buttons, lays the robot on its side, puts it on each spot, pushes and turns it by hand. [docs/calibration.md](docs/calibration.md#a-calibration-session-the-plan-and-the-program) has the details, and [the autonomous check](docs/calibration.md#the-autonomous-check) its own.
+**A quicker fit, from one run.** On open floor, one run of a short drive routine fits the wheels' friction and rolling resistance. `vexsim calibration-routine ROBOT.yaml MY_PROS_PROJECT` adds the routine to your project (call `vexsim_calibration::run()` from `autonomous()`); then `vexsim calibrate ROBOT.yaml vexsim_0001_calibration.csv` fits its log, prints the `overrides:` block to paste into the robot's config, and the routes' `drive:` line. It's also the app's *Calibrate* page ([section 7](#7-the-browser-app-vexsim-ui)), and [docs/calibration.md](docs/calibration.md#1-add-the-routine-to-a-pros-project) has the details. To try it without a robot, `examples/pros_projects/calibration` is the routine for `full_omni_6m`:
+```
+vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/calibration --headless > run.txt
+vexsim calibrate examples/robots/full_omni_6m.yaml run.txt
+```
 
 ### vexsim's logger
 `vexsim logger add MY_PROS_PROJECT` copies two files into a project, `include/vexsim_log.hpp` and `src/vexsim_log.cpp`. They're the same in every project, whatever the robot, and use only the PROS 4 C API, so they build with PROS and run unchanged in vexsim:
@@ -1519,7 +1464,7 @@ vexsim/
 | Folder | What it holds |
 |---|---|
 | `examples/` | robot and field configs, Python and C++ programs, inputs, scenarios, scripts ([the table above](#the-example-files)) |
-| `docs/` | deep dives: [models.md](docs/models.md) (every parameter's source, measurement experiments), [conventions.md](docs/conventions.md), [programming.md](docs/programming.md), [cpp.md](docs/cpp.md), [benchmarking.md](docs/benchmarking.md) (a worked 100-seed example), [calibration.md](docs/calibration.md), [porting_1239e.md](docs/porting_1239e.md), [1239e_real_vs_sim.md](docs/1239e_real_vs_sim.md); images and an example report |
+| `docs/` | deep dives: [models.md](docs/models.md) (every parameter's source, measurement experiments), [conventions.md](docs/conventions.md), [programming.md](docs/programming.md), [cpp.md](docs/cpp.md), [benchmarking.md](docs/benchmarking.md) (a worked 100-seed example), [calibration.md](docs/calibration.md), [calibration_guide.md](docs/calibration_guide.md) (calibrating, step by step, for students), [porting_1239e.md](docs/porting_1239e.md), [1239e_real_vs_sim.md](docs/1239e_real_vs_sim.md); images and an example report |
 | `frontend/` | the browser app's source (React and TypeScript, the field drawn on a canvas), its unit tests (`tests/`, Vitest) and its end-to-end tests (`e2e/`, Playwright) |
 | `tests/` | the test suite, including a C++ test project for the bridge (`tests/cpp/bridge_test`) |
 | `PLAN.md` | the design plan and the phase history |

@@ -1,5 +1,7 @@
 # Calibrating the simulator to your robot
 
+*To calibrate your robot step by step, start with [the calibration guide](calibration_guide.md), written for students. This page is the reference: the quick fit from one drive below, then a session's plan, program, fits and autonomous check, how each works, and the log format.*
+
 Most of the physics parameters are estimates: how well your wheels grip the tiles, how freely the omni rollers turn, how much rolling resistance slows a coasting robot. They differ from robot to robot and from field to field. Calibration measures them on your robot, with no extra equipment:
 
 1. **Generate** a short drive routine for your robot.
@@ -218,7 +220,7 @@ The brain's screen shows the robot, the battery, the hottest drive motor, whethe
 - On its side, each group's motors run forward at 3 V, as the config says. If they all turn together, the student says which way the wheels spun ("forward: the top of each wheel moves toward the robot's front", or the way that group's wheels roll); all backward means every motor in the group is reversed in the config. If they don't turn together (one fights the others), each motor runs alone, and a motor that turns the wheels backward is named, with its port as the config should have it ("motor 9 runs backward: make it -9").
 - Flat again: the IMU calibrates, then the robot is turned a quarter turn left by hand (an IMU that reads it backward, or not at all, is named); tracking wheels must count the way their `heading_deg` and `reversed` say when it's pushed forward and left.
 - Distance sensors: with nothing within a foot, each is covered by hand in turn, by where the config says it is ("the front left, facing forward"); whichever reads under 100 mm is the one at that spot. A sensor on the wrong port, or two swapped ("ports 1 and 8 are swapped"), is named.
-- The results are the log's `check` (passed or failed) and `check_<group>`, `check_imu`, `check_tracking` and `check_distance` lines, and the screen lists what to fix.
+- The results are the log's `check` (passed or failed) and `check_<group>`, `check_imu`, `check_tracking` and `check_distance` lines, and the screen lists what to fix: each problem whole, wrapped onto as many of the page's four lines as it takes ("the sensor at the front left, facing forward is on port 8, not 1" is 63 characters, a line 48), then what to do; problems that don't fit are counted ("...and 2 more (see the log)"), and the log has them all.
 
 **Safety:**
 - Before each test: every device in the config answers on its port as its type (`get_plugged_type`); the battery is at 80% or more (below, it asks first); no drive motor is over 45 °C.
