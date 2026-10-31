@@ -62,7 +62,8 @@ def test_every_picture_and_link_is_there(document):
 
 def test_every_picture_made_for_the_guide_is_in_it():
     shown = {(GUIDE.parent / t).resolve() for t in links(TEXT)}
-    shown |= {(PICTURES / t).resolve() for t in links((PICTURES / "report_example.md").read_text())}
+    report = (PICTURES / "report_example.md").read_text(encoding="utf-8")
+    shown |= {(PICTURES / t).resolve() for t in links(report)}
     unused = [p.name for p in sorted(PICTURES.glob("*.png")) if p.resolve() not in shown]
     assert unused == []
 

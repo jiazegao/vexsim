@@ -441,7 +441,7 @@ vexsim_0018_sweep_2.csv: sweep_2, run 1: good
   ```bash
   vexsim calibration collect calibration/2026-11-07 --from "/Volumes/NO NAME"
   ```
-- **No card?** The logs can come over the USB cable instead, as the program sends them: plug the brain into the laptop, run this before the first test, and press Ctrl+C when the session is done. It runs `pros terminal` and saves each log as it arrives. The cable has to stay in the brain all session, wherever the robot drives (the controller's wireless link is too slow for logs), so a card is much easier.
+- **No card?** The logs can come over the USB cable instead, as the program sends them: plug the brain into the laptop, run this before the first test, and press Ctrl+C when the session is done. It runs `pros terminal` (so run it in the PROS terminal, [section 2](#pros)) and saves each log as it arrives. The cable has to stay in the brain all session, wherever the robot drives (the controller's wireless link is too slow for logs), so a card is much easier.
   ```
   vexsim calibration collect calibration/2026-11-07 --usb
   ```
