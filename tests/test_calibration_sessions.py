@@ -1,4 +1,5 @@
-"""Phase 14.4: whole calibration sessions of simulated "real" robots, fitted.
+"""Phases 14.4 and 14.5: whole calibration sessions of simulated "real" robots, fitted, and
+the team's autonomous checked against the calibrated simulator.
 
 Each "real" robot is a robot config with changes the fit isn't told about (PLAN.md section
 16): wheels 3.20 in, an IMU 0.25% further off than its config says, omni friction 0.75,
@@ -10,6 +11,11 @@ must come back within its tolerance, the held-out run must match within the sens
 noise, and ``--apply`` must write the robot config with its comments kept. The same for
 ``full_omni_6m`` with its two tracking wheels. A robot wired other than its config says
 stops at the device check.
+
+Then the autonomous check (14.5): the real 1239E runs Left 40 twice, from 1239E's own code
+with its logger and a card, its end measured with tape as a team would; ``vexsim
+calibration check-auton`` passes the calibrated config and fails the default one, at the
+marks the team sets in its .vexsim/calibration.yaml.
 
 These take minutes (each session is about 5 minutes of the robot's time, then the fit):
 they're marked ``session``, which pytest leaves out unless asked (pytest -m session); CI
@@ -340,3 +346,88 @@ def test_a_miswired_robot_stops_at_the_device_check(build, tmp_path):
 def test_tolerances_are_finite_for_every_value(fit_1239e):
     for v in fit_1239e.values():
         assert math.isfinite(v.tolerance), v.key
+
+
+# --- 14.5: the autonomous check ----------------------------------------------------------------
+
+PROJECT_1239E = ROOT / "examples" / "pros_projects" / "1239e_2026-27"
+FIELD_1239E = FIELDS / "1239e_2026-27.yaml"  # pieces and all: the autonomous moves them
+
+
+def run_left40(real, seed: int, card: Path, in_cache) -> tuple[float, float, float]:
+    """1239E's Left 40 on the real robot, logging to ``card``: where it came to rest."""
+    from vexsim.app.runspec import (
+        RunSpec,
+        build,
+        check,
+        program_factory,
+        routine_start,
+        simulation_factory,
+    )
+    from vexsim.calibration.auton import _pose, settle
+
+    spec = RunSpec(
+        robot=str(ROBOTS / "1239e_2026-27.yaml"),
+        program=str(PROJECT_1239E),
+        routine="left40",
+        field=str(FIELD_1239E),
+        mode="autonomous",
+        start=routine_start(str(PROJECT_1239E), "left40"),
+        seed=seed,
+        sd=str(card),
+    )
+    prepared = check(spec)
+    prepared.config = real  # the robot as it is, not as its config says
+    with in_cache():
+        executable = build(prepared, log=None)
+    make, mode = program_factory(prepared, executable)
+    sim = simulation_factory(prepared, make, mode, echo=None)()
+    try:
+        assert sim.run_until_finished(60.0)
+        settle(sim)  # a person measures it once it has stopped
+        return _pose(sim)
+    finally:
+        sim.close()
+
+
+def test_1239e_left40_passes_with_the_calibrated_config_and_fails_with_the_default(
+    fit_1239e, robot_1239e, in_cache, tmp_path, monkeypatch, capsys
+):
+    from vexsim.calibration.auton import tape_marks
+    from vexsim.calibration.report import apply_changes, changes
+
+    team = tmp_path / "team"  # the team's workspace, with its pass marks
+    (team / ".vexsim").mkdir(parents=True)
+    (team / ".vexsim" / "calibration.yaml").write_text(
+        "# Left 40 ends within a few degrees, run to run: our heading mark is 4\n"
+        "max_distance_in: 2\nmax_heading_deg: 4\n"
+    )
+    monkeypatch.chdir(team)
+    default = ROBOTS / "1239e_2026-27.yaml"
+    calibrated = team / "1239e_calibrated.yaml"
+    writes = changes(robot_1239e.config, fit_1239e)
+    text = apply_changes(default.read_text(encoding="utf-8"), writes, "session", "2026-11-01")
+    calibrated.write_text(text, encoding="utf-8")
+    field = load_field(FIELD_1239E)
+    logs, ends = [], []
+    for seed in (1, 3):  # two runs of the real robot
+        card = team / f"card_{seed}"
+        end = run_left40(robot_1239e.real, seed, card, in_cache)
+        (log,) = card.glob("vexsim_*_left_40.csv")
+        logs.append(str(log))
+        ends += ["--end", tape_marks(robot_1239e.config, field, end)]  # to the quarter inch
+    args = [*logs, "--program", str(PROJECT_1239E), "--field", str(FIELD_1239E), *ends]
+    capsys.readouterr()
+    with in_cache():
+        assert main(["calibration", "check-auton", str(calibrated), *args, "--out", "ok"]) == 0
+        passed = capsys.readouterr().out
+        assert main(["calibration", "check-auton", str(default), *args, "--out", "not"]) != 0
+        failed = capsys.readouterr().out
+    assert "Pass marks: 2 in, 4 degrees" in passed and "PASSED" in passed
+    # uncalibrated, Left 40 ends where the real one did (its motions and localization see to
+    # that), but it gets there differently: the run is what fails
+    assert "FAILED" in failed and "through the run" in failed
+    assert "ends " not in failed.split("FAILED")[1]
+    report = (team / "ok" / "report.md").read_text(encoding="utf-8")
+    assert "**passes**" in report and "card_1/vexsim_0001_left_40.csv" in report
+    assert {"paths.png", "apart.png", "readings.png"} <= {p.name for p in (team / "ok").iterdir()}

@@ -92,6 +92,25 @@ struct Locked {
 	Locked& operator=(const Locked&) = delete;
 };
 
+// A motor's position in degrees, whatever encoder units the code set (degrees, rotations or
+// counts: 1800, 900 or 300 a turn for the red, green and blue cartridges).
+double degrees(std::int8_t port) {
+	double position = pros::c::motor_get_position(port);
+	switch (pros::c::motor_get_encoder_units(port)) {
+		case pros::E_MOTOR_ENCODER_ROTATIONS:
+			return position * 360.0;
+		case pros::E_MOTOR_ENCODER_COUNTS: {
+			pros::motor_gearset_e_t gearing = pros::c::motor_get_gearing(port);
+			double per_turn = gearing == pros::E_MOTOR_GEAR_RED     ? 1800.0
+			                  : gearing == pros::E_MOTOR_GEAR_GREEN ? 900.0
+			                                                        : 300.0;
+			return position * 360.0 / per_turn;
+		}
+		default:
+			return position;
+	}
+}
+
 // "Left 40" -> "left_40": lower case letters and digits, words joined by underscores.
 std::string slug(const char* text, std::size_t most = 32) {
 	std::string out;
@@ -250,7 +269,7 @@ void take_row(const std::shared_ptr<Log>& log) {
 				put(cmd_rpm[p]);
 				auto brake = static_cast<std::int32_t>(pros::c::motor_get_brake_mode(port));
 				put(brake, brake >= 0 && brake <= 2);
-				put(pros::c::motor_get_position(port));
+				put(degrees(port));
 				put(pros::c::motor_get_actual_velocity(port));
 				std::int32_t ma = pros::c::motor_get_current_draw(port);
 				put(ma, ma != PROS_ERR);

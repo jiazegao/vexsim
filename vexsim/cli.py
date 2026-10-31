@@ -927,6 +927,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="what prints the brain's terminal, for --usb (default: pros terminal)",
     )
     collect.set_defaults(func=cmd_calibration_collect)
+    auton = actions.add_parser(
+        "check-auton",
+        help="check the team's real autonomous against the simulated one",
+        description=(
+            "Run the routine a real robot's log is of (its competition program, with "
+            "vexsim's logger) in vexsim, from where the log's code set its pose, with a few "
+            "seeds, each until the robot is still after the period; and compare: where it "
+            "ended (measured with tape at two corners, --end) against where the simulated runs "
+            "did, and the code's pose through the run against theirs. It passes when the end "
+            "is within the pass marks (2 in and 2 degrees, or the team's in "
+            ".vexsim/calibration.yaml: max_distance_in, max_heading_deg) and the run is "
+            "within the distance mark (RMS). The report and its plots go in --out."
+        ),
+    )
+    auton.add_argument("robot", help="robot YAML file (as calibrated)")
+    auton.add_argument("logs", nargs="+", metavar="LOG", help="the real run's log (one or more)")
+    auton.add_argument("--program", required=True, help="the PROS project the robot ran")
+    auton.add_argument("--field", required=True, help="field YAML file, as the field was")
+    auton.add_argument(
+        "--end",
+        action="append",
+        required=True,
+        metavar="MEASUREMENTS",
+        help='where each run ended, two corners from two walls each: "front-left: 23.5 from '
+        '-x, 40 from +y; back-right: 35.25 from -x, 52 from +y" (one --end per log, in order)',
+    )
+    auton.add_argument("--routine", help="the routine's function (default: as the log names it)")
+    auton.add_argument(
+        "--seeds", type=int, default=3, help="simulated runs to compare with (default 3)"
+    )
+    auton.add_argument("--max-distance", type=float, help="the distance mark (in)")
+    auton.add_argument("--max-heading", type=float, help="the heading mark (degrees)")
+    auton.add_argument(
+        "--env", action="append", metavar="KEY=VALUE", help="environment for the program"
+    )
+    auton.add_argument("--out", help="folder for the report (default: beside the first log)")
+    auton.add_argument(
+        "--workers", type=int, default=0, help="parallel simulations (default: CPUs, up to 8)"
+    )
+    auton.set_defaults(func=cmd_calibration_check_auton)
 
     p = sub.add_parser(
         "logger",
@@ -1211,6 +1251,81 @@ def cmd_calibration_collect(args: argparse.Namespace) -> int:
         print(f"  {test}: {used} used" + (f", {len(out)} " + "; ".join(out) if out else ""))
     print(f"\nThen: vexsim calibrate ROBOT.yaml {args.session}")
     return EXIT_OK
+
+
+def cmd_calibration_check_auton(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from vexsim.app.runspec import RunError, parse_env
+    from vexsim.calibration.auton import AutonError, check_auton, load_marks, write_report
+    from vexsim.calibration.fit import worker_count
+    from vexsim.config import load_field
+
+    config = _load_config(args.robot)
+    if config is None:
+        return EXIT_INVALID
+    report = validate_field(args.field)
+    if not report.ok or report.config is None:
+        _print_issues(report.issues)
+        return EXIT_INVALID
+    if args.seeds < 1:
+        print("error: --seeds needs 1 or more")
+        return EXIT_INVALID
+    try:
+        marks = load_marks(max_distance_in=args.max_distance, max_heading_deg=args.max_heading)
+        env = parse_env(args.env or ())
+        print(
+            f"Pass marks: {marks.max_distance_in:g} in, {marks.max_heading_deg:g} degrees "
+            f"({marks.source})"
+        )
+        result = check_auton(
+            args.robot,
+            args.field,
+            args.program,
+            args.logs,
+            args.end,
+            marks=marks,
+            routine=args.routine,
+            seeds=args.seeds,
+            env=env,
+            workers=min(worker_count(args.workers), args.seeds),
+            say=lambda text: print(f"  {text}"),
+        )
+    except (AutonError, RunError) as exc:
+        print(f"error: {exc}")
+        return EXIT_INVALID
+    print()
+    for run in result.runs:
+        if run.end is not None:
+            x, y, h = run.end.pose
+            print(f"{run.file}: ended at {x:.2f}, {y:.2f}, {h:.1f} deg (measured)", end="")
+            off = run.end_off
+            print(f"; {off[0]:.2f} in and {off[1]:+.1f} deg from the simulated end" if off else "")
+        if run.run_rms_in is not None:
+            parted = (
+                "" if run.parted_s is None else f"; first over the mark at {run.parted_s:.1f} s"
+            )
+            print(
+                f"  through the run: {run.run_rms_in:.2f} in from the simulated runs (RMS){parted}"
+            )
+    x, y, h = result.sim_end
+    print(f"simulated: ended at {x:.2f}, {y:.2f}, {h:.1f} deg (the seeds' mean)")
+    for warning in result.warnings:
+        print(f"warning: {warning}")
+    folder = (
+        Path(args.out)
+        if args.out
+        else Path(args.logs[0]).with_suffix("").parent / (Path(args.logs[0]).stem + "_check")
+    )
+    written = write_report(result, config, load_field(args.field), folder)
+    print(f"\nwrote {written} (with its plots)")
+    if result.passed:
+        print(f"PASSED: the simulated {result.routine} matches the real one, within the marks.")
+        return EXIT_OK
+    print(f"FAILED: the simulated {result.routine} doesn't match the real one:")
+    for failure in result.failures:
+        print(f"  - {failure}")
+    return EXIT_INVALID
 
 
 def _session_field(session, robot_path: str, given: str | None):

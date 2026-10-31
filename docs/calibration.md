@@ -141,7 +141,7 @@ Motors come first, every one of them (the drive's and the mechanisms'), then the
 | `m<p>_cmd_mv` | the voltage command the code gave, raw direction; 0 = stopped with the brake mode; empty if unknown |
 | `m<p>_cmd_rpm` | velocity command (`move_velocity`); empty if unknown |
 | `m<p>_brake` | brake mode: 0 coast, 1 brake, 2 hold |
-| `m<p>_deg`, `m<p>_rpm`, `m<p>_ma`, `m<p>_mv`, `m<p>_temp` | position, actual velocity, current, voltage, temperature |
+| `m<p>_deg`, `m<p>_rpm`, `m<p>_ma`, `m<p>_mv`, `m<p>_temp` | position (degrees, whatever encoder units the code set), actual velocity, current, voltage, temperature |
 | `r<p>_cdeg` | rotation sensor position (centidegrees) |
 | `imu<p>_deg` | IMU rotation (degrees, clockwise) |
 | `d<p>_mm`, `d<p>_conf`, `d<p>_size` | distance sensor (empty when nothing is in range), its confidence (0 to 63) and the object's size (0 to 400) |
@@ -347,3 +347,44 @@ The tests (`tests/test_calibration_sessions.py`, `pytest -m session`; CI runs th
 | held-out run (motor speed; IMU rate) | 2.97 rpm (noise 2.85); 0.45 deg/s (0.50) | 3.00 rpm (3.05); 0.52 deg/s (0.46) | |
 
 The motors (121 rpm, 0.15 A, 0.3, kp 2) and the battery (0.1 Ω) come back as vexsim's own, as they should, so `--apply` leaves them. Each fit takes under 3 minutes on 4 CPUs. A robot whose motor 9 runs backward and whose distance sensors on ports 1 and 8 are swapped stops at the device check, the error naming both.
+
+## The autonomous check
+The last test of a session is the team's own autonomous: does the calibrated simulator drive it as the real robot does? The competition program, with vexsim's logger in it (`vexsim logger add`, and `vexsim_log::start` in `autonomous()`; 1239E's code does this already), runs a routine on the real robot with a card in. Then:
+
+1. **Before touching the robot**, put tape on the floor at two of its corners: front-left and back-right (the two furthest apart). Measure each mark from two walls: from the wall across the field's x (the `-x` or `+x` wall, as the plan's maps name them) and from one across its y.
+2. **Check it** against the simulator:
+```
+vexsim calibration check-auton ROBOT.yaml vexsim_0007_left_40.csv --program MY_PROJECT --field FIELD.yaml --end "front-left: 23.5 from -x, 40 from +y; back-right: 35.25 from -x, 52 from +y"
+```
+The measurements read however they're written: `FL -x 23.5 +y 40, BR -x 35.25 +y 52` works too, and fractions (`23 1/2`). Several runs of one routine: give each log, and an `--end` for each, in order.
+
+`vexsim/calibration/auton.py` works out where the robot ended from the two marks and the robot's shape (the corners are its outline's furthest front-left, front-right, back-left and back-right; marks further apart, or nearer, than those corners are by more than an inch get a warning). It finds the routine the log is of (the log's name without spaces and case: `Left 40` is `left40()`; or `--routine`), and runs it in vexsim from the routine's `setPose` (the log's first pose, as `--follow` takes it), with `--seeds` seeds (3), in parallel. The game pieces stay on the field (the routine moves them). Each simulated run goes on after the period ends until the robot is still, as the real one was when it was measured: on 1239E's Left 40 the robot still moves 8 in after the buzzer.
+
+It **passes** when:
+- the real end is within the pass marks of where the simulated runs ended (their mean), as a distance and as a heading; and
+- through the run, the code's own pose (its first logged pose, LemLib's on 1239E), real against simulated, is on average (RMS, time from the routine's `setPose`, the mean over the seeds) within the distance mark.
+
+The run is in the verdict because the end alone can't tell a calibrated simulator from an uncalibrated one on a routine whose motions and localization correct the robot's errors by its end. That was true of 1239E's Left 40 (below). With several real runs, their ends' mean and their RMS's mean are what's judged; each run is in the report, with the spread of the real ends against the simulated ones'.
+
+**The pass marks** are 2 in and 2 degrees, unless the team sets its own in `.vexsim/calibration.yaml` (in the folder vexsim runs in, or the nearest one above it that has one):
+```yaml
+max_distance_in: 2
+max_heading_deg: 4
+```
+or with `--max-distance` and `--max-heading`. Marks finer than a tape measure tells (0.5 in, 1 degree) get a warning. So do marks tighter than the simulated runs' own spread: a run vexsim can't tell from its own could fail them.
+
+**The report** (`--out`, or `LOG_check/` beside the first log) has `report.md`: the verdict, each run's measured end and each seed's, how far apart they are, the run's RMS, when the code's poses first came more than the mark apart (and stayed apart for half a second: a turn a few milliseconds early is apart for a moment only), where they were furthest, how much of the run was over the mark. And with matplotlib:
+- `paths.png`: the field, the real code's path and the simulated ones', and each end's outline;
+- `apart.png`: how far apart they are over time, against the mark;
+- `readings.png`: the IMU's turn, each drive side's wheel travel and each distance sensor's readings over time, real against simulated, to show where they part.
+
+The command exits 0 when the check passes, 1 when it fails.
+
+**How well it works.** 1239E's Left 40, on the simulated "real" robot of [How well it works](#how-well-it-works) (wheels 3.20 in, its IMU further off, omni friction 0.75, voltage capped, the real distance sensors), run twice, its ends measured to the quarter inch, against 3 seeds (`tests/test_calibration_sessions.py`):
+
+| | the end, from the simulated | through the run (RMS) | at 2 in and 4 degrees |
+|---|---|---|---|
+| calibrated (the session's `--apply`) | 0.66 in, -0.8 degrees; 0.80 in, +1.6 degrees | 1.08 in; 1.45 in | passes |
+| vexsim's default config | 1.27 in, 0.0 degrees; 0.84 in, +2.4 degrees | 2.23 in; 2.49 in | fails |
+
+Either way Left 40 ends where the real one did: LemLib's motions, the code's MCL and the stop at the buzzer correct a robot that's slower and turns differently. The uncalibrated simulation gets there at other times, though, up to 5 in from the real one mid-routine. Left 40's end heading varies by 3 to 4 degrees run to run, real or simulated, so the team's heading mark is 4.

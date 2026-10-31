@@ -90,13 +90,33 @@ def robot_log_path(log, name: str | None = None) -> tuple[list[float], list[tupl
     robot went: a pose the code logged (``vexsim_log::pose``, as LemLib has them; the first
     it logged, unless ``name`` says which), as ``LoggedPath`` takes them. Raises ValueError
     if it has no such pose, or fewer than two."""
-    import numpy as np
-
     names = log.poses()
     if not names or (name is not None and name not in names):
         wanted = f"no pose named {name}" if name else "no pose"
         raise ValueError(f"the robot log has {wanted} to follow (vexsim_log::pose logs one)")
-    x, y, theta = log.pose(name or names[0])
+    times, x, y, heading = _from_set_pose(log, name or names[0])
+    if len(times) < 2:
+        raise ValueError("the robot log's pose has fewer than two readings to follow")
+    poses = [(float(a), float(b), float(c)) for a, b, c in zip(x, y, heading, strict=True)]
+    return [float(t - times[0]) for t in times], poses
+
+
+def set_pose_time(log, name: str | None = None) -> float | None:
+    """When (s, by the log's clock) the code first set its pose: where ``robot_log_path``
+    starts; None if the log has no pose."""
+    names = log.poses()
+    if not names or (name is not None and name not in names):
+        return None
+    times, *_ = _from_set_pose(log, name or names[0])
+    return float(times[0]) if len(times) else None
+
+
+def _from_set_pose(log, name: str):
+    """A logged pose's rows from the code's first setPose: times (s), x, y (in) and heading
+    (radians counter-clockwise from +x, unwrapped)."""
+    import numpy as np
+
+    x, y, theta = log.pose(name)
     known = np.isfinite(x) & np.isfinite(y) & np.isfinite(theta)
     times, x, y = log.time_s[known], x[known], y[known]
     heading = np.unwrap(np.radians(90.0 - theta[known]))  # counter-clockwise from +x
@@ -108,10 +128,7 @@ def robot_log_path(log, name: str | None = None) -> tuple[list[float], list[tupl
     if jumps.size and np.ptp(x[: jumps[0] + 1]) == np.ptp(y[: jumps[0] + 1]) == 0:
         first = jumps[0] + 1
         times, x, y, heading = times[first:], x[first:], y[first:], heading[first:]
-    if len(times) < 2:
-        raise ValueError("the robot log's pose has fewer than two readings to follow")
-    poses = [(float(a), float(b), float(c)) for a, b, c in zip(x, y, heading, strict=True)]
-    return [float(t - times[0]) for t in times], poses
+    return times, x, y, heading
 
 
 def drive_geometry(config) -> tuple[float, float]:

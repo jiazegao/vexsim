@@ -955,7 +955,7 @@ def draw_map(plan: Plan, test: TestPlan, path: str | Path, *, number: int | None
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Circle, Polygon, Rectangle
+    from matplotlib.patches import Polygon
 
     fmap, config = plan.fmap, plan.config
     hx, hy = fmap.half
@@ -965,18 +965,7 @@ def draw_map(plan: Plan, test: TestPlan, path: str | Path, *, number: int | None
     fig = plt.figure(figsize=(7.2, height), dpi=110)
     ax = fig.add_axes((0.02, text_in / height, 0.96, (height - text_in - 0.4) / height))
     ax.set_axis_off()
-    ax.add_patch(Rectangle((-hx, -hy), 2 * hx, 2 * hy, fill=False, lw=2, ec="#333333"))
-    for obstacle in fmap.field.obstacles:
-        style = {"fc": obstacle.color or "#8a8a8a", "ec": "#333333", "lw": 0.8, "zorder": 2}
-        if obstacle.shape == "circle":
-            patch = Circle(obstacle.pos_in, obstacle.diameter_in / 2, **style)
-        else:
-            length, width = obstacle.size_in
-            corner = (obstacle.pos_in[0] - length / 2, obstacle.pos_in[1] - width / 2)
-            patch = Rectangle(
-                corner, length, width, angle=obstacle.heading_deg, rotation_point="center", **style
-            )
-        ax.add_patch(patch)
+    draw_field(ax, fmap.field)
     if test.spot is not None:
         pose = test.spot.pose
         margin = PUSH_MARGIN_IN if test.key == "push" else plan.margin_in
@@ -1008,6 +997,31 @@ def draw_map(plan: Plan, test: TestPlan, path: str | Path, *, number: int | None
                 bbox={"fc": "white", "ec": "none", "pad": 0.5},
                 zorder=7,
             )
+    ax.set_title(f"{number}. {test.title}" if number else test.title, fontsize=11)
+    fig.text(0.04, 0.15 / height, "\n".join(lines), fontsize=8, va="bottom", linespacing=1.4)
+    fig.savefig(path)
+    plt.close(fig)
+    return Path(path)
+
+
+def draw_field(ax, field: FieldConfig) -> None:
+    """The field on a matplotlib axis: its walls (named), and its elements in their colors;
+    the axis fits it, inches from the center, square."""
+    from matplotlib.patches import Circle, Rectangle
+
+    hx, hy = field.size_in[0] / 2, field.size_in[1] / 2
+    ax.add_patch(Rectangle((-hx, -hy), 2 * hx, 2 * hy, fill=False, lw=2, ec="#333333"))
+    for obstacle in field.obstacles:
+        style = {"fc": obstacle.color or "#8a8a8a", "ec": "#333333", "lw": 0.8, "zorder": 2}
+        if obstacle.shape == "circle":
+            patch = Circle(obstacle.pos_in, obstacle.diameter_in / 2, **style)
+        else:
+            length, width = obstacle.size_in
+            corner = (obstacle.pos_in[0] - length / 2, obstacle.pos_in[1] - width / 2)
+            patch = Rectangle(
+                corner, length, width, angle=obstacle.heading_deg, rotation_point="center", **style
+            )
+        ax.add_patch(patch)
     for wall, (tx, ty, rotation) in {
         "+x": (hx + 3, 0, 270),
         "-x": (-hx - 3, 0, 90),
@@ -1015,14 +1029,9 @@ def draw_map(plan: Plan, test: TestPlan, path: str | Path, *, number: int | None
         "-y": (0, -hy - 3, 0),
     }.items():
         ax.text(tx, ty, f"{wall} wall", ha="center", va="center", rotation=rotation, fontsize=8)
-    ax.set_title(f"{number}. {test.title}" if number else test.title, fontsize=11)
     ax.set_xlim(-hx - 6, hx + 6)
     ax.set_ylim(-hy - 6, hy + 6)
     ax.set_aspect("equal")
-    fig.text(0.04, 0.15 / height, "\n".join(lines), fontsize=8, va="bottom", linespacing=1.4)
-    fig.savefig(path)
-    plt.close(fig)
-    return Path(path)
 
 
 def _shade(ax, covered: np.ndarray, margin: float, cell: float) -> None:

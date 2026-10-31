@@ -47,6 +47,9 @@ void initialize() {
 }
 
 void autonomous() {
+	// logged in degrees all the same, whatever units the code reads them in
+	pros::c::motor_set_encoder_units(1, pros::E_MOTOR_ENCODER_ROTATIONS);
+	pros::c::motor_set_encoder_units(4, pros::E_MOTOR_ENCODER_COUNTS);
 	vexsim_log::info("robot", "test bot");
 	vexsim_log::start("Left 40");
 	pros::c::motor_move_voltage(1, 6000);
