@@ -385,7 +385,7 @@ def check_folder(project: str | Path, *, force: bool = False) -> None:
     ours = {"main.cpp", "vexsim_log.cpp"}
     src = project / "src"
     others = sorted(
-        str(p.relative_to(project))
+        p.relative_to(project).as_posix()
         for p in (src.rglob("*") if src.is_dir() else [])
         if p.suffix in (".c", ".cc", ".cpp") and p.name not in ours
     )
