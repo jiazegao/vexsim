@@ -262,8 +262,11 @@ class DistanceDevice(Device):
         self.heading = math.radians(cfg.heading_deg)
         self.height = None if cfg.height_in is None else in_to_m(cfg.height_in)
         self.half_size = (in_to_m(field.size_in[0]) / 2, in_to_m(field.size_in[1]) / 2)
+        self.blocked_mm: float | None = None  # something held in front of it (a hand): this far
 
     def true_distance_mm(self) -> float | None:
+        if self.blocked_mm is not None:
+            return self.blocked_mm
         x, y, heading = self.robot.pose
         c, s = math.cos(heading), math.sin(heading)
         ox = x + c * self.mount[0] - s * self.mount[1]

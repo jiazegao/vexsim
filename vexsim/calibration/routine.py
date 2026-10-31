@@ -83,6 +83,53 @@ def standard_routine(config: RobotConfig) -> list[Step]:
     return steps
 
 
+DRIVE_TESTS = {"straight": "Straight", "strafe": "Strafe", "spin": "Spin", "arc": "Arc"}
+
+
+def drive_tests(config: RobotConfig, scale: float = 1.0) -> dict[str, list[Step]]:
+    """The calibration session's driving tests (calibration/plan.py), by name, in its order:
+    the standard routine's maneuvers, each from rest on a spot of its own and ending
+    stopped. ``scale`` slows and shortens them where a field has less room: it multiplies
+    the speeds and how long each moving step drives."""
+    forward, sideways, _ = DriveKinematics.from_config(config).top_speeds()
+    f = float(scale * min(1.0, REFERENCE_SPEED_M_S / forward))
+
+    def drive(seconds: float) -> float:
+        return round(seconds * scale, 2)
+
+    tests = {
+        "straight": [
+            Step("settle", 0.5),
+            Step("launch", drive(0.5), forward=f),
+            Step("coast", 0.8),
+            Step("reverse", drive(1.0), forward=-0.8 * f),
+            Step("brake", 0.5, brake="brake"),
+        ]
+    }
+    if sideways:
+        s = float(scale * min(1.0, REFERENCE_SPEED_M_S / sideways))
+        tests["strafe"] = [
+            Step("settle", 0.5),
+            Step("strafe", drive(0.6), left=s),
+            Step("coast", 0.4),
+            Step("strafe back", drive(0.6), left=-s),
+            Step("brake", 0.5, brake="brake"),
+        ]
+    tests["spin"] = [
+        Step("settle", 0.5),
+        Step("spin", drive(1.0), turn=0.6 * scale),
+        Step("coast", 0.8),
+        Step("brake", 0.4, brake="brake"),
+    ]
+    tests["arc"] = [
+        Step("settle", 0.5),
+        Step("arc", drive(0.9), forward=0.9 * f, turn=-0.3 * scale),
+        Step("coast", 0.6),
+        Step("brake", 0.4, brake="brake"),
+    ]
+    return tests
+
+
 def motor_millivolts(config: RobotConfig, step: Step) -> dict[int, int]:
     """Raw (positive-port) voltage command per motor for a step: 0 means stop."""
     fractions = DriveKinematics.from_config(config).fractions(step.forward, step.left, step.turn)

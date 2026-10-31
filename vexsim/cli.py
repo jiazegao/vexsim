@@ -846,6 +846,62 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_calibration_routine)
 
     p = sub.add_parser(
+        "calibration",
+        help="calibrate vexsim with a physical robot: plan the tests, write the program",
+        description=(
+            "A calibration session runs a program on the real robot that tests its drive, "
+            "motors and sensors and logs each test. 'plan' finds where on the field each test "
+            "fits between the elements; 'program' writes the program into a PROS project."
+        ),
+    )
+    actions = p.add_subparsers(dest="action", required=True)
+    plan = actions.add_parser(
+        "plan",
+        help="find where each test fits on the field; write the maps",
+        description=(
+            "Simulate each driving test over a spread of the parameters it measures and find "
+            "where on the field all of those paths fit, a margin clear of the walls and every "
+            "element; likewise the push lane and the spots for the slow spin and the distance "
+            "sweeps. Prints where to put the robot for each, from two walls."
+        ),
+    )
+    plan.add_argument("robot", help="robot YAML file")
+    plan.add_argument("field", help="field YAML file, with the elements as they'll be")
+    plan.add_argument(
+        "--margin", type=float, default=6.0, help="room to keep around each test (in, default 6)"
+    )
+    plan.add_argument("--out", help="folder for plan.txt, plan.yaml and the maps")
+    plan.add_argument(
+        "--workers", type=int, default=0, help="parallel simulations (default: CPUs, up to 8)"
+    )
+    plan.set_defaults(func=cmd_calibration_plan)
+    program = actions.add_parser(
+        "program",
+        help="write the calibration program into a PROS project, for a spare slot",
+        description=(
+            "Plan the tests (as 'plan' does), then write the calibration program into a PROS "
+            "project made for it (pros c n FOLDER): a menu of the session's tests on the "
+            "brain and the controller, each logged with vexsim's logger. It builds with PROS "
+            "for the robot (pros upload --slot 8) and runs unchanged in vexsim "
+            "(vexsim run ROBOT.yaml --program FOLDER --mode driver --sd SD_FOLDER). The plan "
+            "and its maps go in FOLDER/plan/."
+        ),
+    )
+    program.add_argument("robot", help="robot YAML file")
+    program.add_argument("field", help="field YAML file, with the elements as they'll be")
+    program.add_argument("folder", help="PROS project folder for the program (pros c n FOLDER)")
+    program.add_argument(
+        "--margin", type=float, default=6.0, help="room to keep around each test (in, default 6)"
+    )
+    program.add_argument(
+        "--workers", type=int, default=0, help="parallel simulations (default: CPUs, up to 8)"
+    )
+    program.add_argument(
+        "--force", action="store_true", help="write over a src/main.cpp that isn't the program's"
+    )
+    program.set_defaults(func=cmd_calibration_program)
+
+    p = sub.add_parser(
         "logger",
         help="vexsim's logger for PROS projects: what the robot's devices read, for vexsim",
         description=(
@@ -959,6 +1015,75 @@ def cmd_calibration_routine(args: argparse.Namespace) -> int:
         "calibration, and needs about 3 x 3 m of open floor), then copy its log from the SD "
         "card (vexsim_0001_calibration.csv, numbered up from there), or save the terminal "
         "output, and run: vexsim calibrate ROBOT.yaml LOG"
+    )
+    return EXIT_OK
+
+
+def _load_robot_and_field(args: argparse.Namespace):
+    config = _load_config(args.robot)
+    if config is None:
+        return None
+    report = validate_field(args.field)
+    if not report.ok or report.config is None:
+        _print_issues(report.issues)
+        return None
+    return config, report.config
+
+
+def cmd_calibration_plan(args: argparse.Namespace) -> int:
+    from vexsim.calibration.plan import make_plan, write_plan
+
+    loaded = _load_robot_and_field(args)
+    if loaded is None:
+        return EXIT_INVALID
+    config, field = loaded
+    plan = make_plan(config, field, margin=args.margin, workers=args.workers, progress=print)
+    print()
+    print(plan.text(), end="")
+    if args.out:
+        print()
+        for path in write_plan(plan, args.out):
+            print(f"wrote {path}")
+    return EXIT_INVALID if plan.missing else EXIT_OK
+
+
+def cmd_calibration_program(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from vexsim.calibration.plan import make_plan, write_plan
+    from vexsim.calibration.program import ProgramError, check_folder, write_program
+
+    loaded = _load_robot_and_field(args)
+    if loaded is None:
+        return EXIT_INVALID
+    config, field = loaded
+    folder = Path(args.folder)
+    try:
+        check_folder(folder, force=args.force)
+    except ProgramError as exc:
+        print(f"error: {exc}")
+        return EXIT_INVALID
+    plan = make_plan(config, field, margin=args.margin, workers=args.workers, progress=print)
+    print()
+    for path, state in write_program(config, plan, folder, force=args.force):
+        print(f"{path}: {state}")
+    for path in write_plan(plan, folder / "plan"):
+        print(f"wrote {path}")
+    print()
+    print(plan.text(), end="")
+    if plan.missing:
+        names = ", ".join(t.title for t in plan.missing)
+        print(f"\nLeft out, with no room on this field: {names}.")
+    if not (folder / "project.pros").is_file():
+        print(
+            f"\n{folder} isn't a PROS project yet: it runs in vexsim, but to put it on the "
+            f"robot, make one first (pros c n {folder}) and run this again."
+        )
+    print(
+        f"\nOn the robot: pros upload --slot 8 (in {folder}), then run it from the brain's "
+        "screen: its menu lists the tests in order.\n"
+        f"In vexsim: vexsim run {args.robot} --program {folder} --mode driver --field "
+        f"{args.field} --sd sd"
     )
     return EXIT_OK
 

@@ -1165,6 +1165,17 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
   vexsim calibrate examples/robots/full_omni_6m.yaml run.txt
   ```
 
+### A calibration session on a full field
+The routine above needs open floor. A *session* tests each part of the robot on its own, on a field with the season's elements in place, from a program of its own in a spare slot (phase 14; the fits that read its logs come in 14.4):
+```
+vexsim calibration plan ROBOT.yaml FIELD.yaml --out plan              # where each test fits
+vexsim calibration program ROBOT.yaml FIELD.yaml vexsim_calibration   # after: pros c n vexsim_calibration
+```
+- **The plan** simulates each driving test (straight, spin, arc; strafe for drives that can) over a spread of what the uncalibrated robot might be (it may roll further, stop sooner, slide or grip more than its config says) and finds a spot on the field where the robot's shape, swept along every one of those paths, stays a margin (`--margin`, 6 in) clear of the walls and of every element, those it could drive over included. A test with no room is slowed down, and failing that, the plan names what's in the way. It also picks a lane to push the robot along by hand, and spots for the slow spin (tracking wheels) and the distance sweeps. Each spot is given as distances from two walls, and drawn on a map (`plan/map_6_straight.png`).
+- **The program** (`src/main.cpp` and a header for the robot, with vexsim's logger) shows the tests in order on the brain and the controller, each with what to do: a device check (every device answers; each side's wheels spin forward, the robot on its side; the IMU and tracking wheels count the right way; a hand over each distance sensor finds which is which), a free spin on its side, the IMU still and turned by hand, the push, the driving tests three times each, and the spins. A test that turns the wheels waits for the robot to be still and counts down from 3 with a rumble; any button stops every motor at once, and so does going further than the plan's simulations did. Each run is logged to the SD card.
+
+It runs unchanged in vexsim, where `vexsim/calibration/student.py` plays the student: it reads what the program asks, presses the buttons, lays the robot on its side, puts it on each spot, pushes and turns it by hand. [docs/calibration.md](docs/calibration.md#a-calibration-session-the-plan-and-the-program) has the details.
+
 ### vexsim's logger
 `vexsim logger add MY_PROS_PROJECT` copies two files into a project, `include/vexsim_log.hpp` and `src/vexsim_log.cpp`. They're the same in every project, whatever the robot, and use only the PROS 4 C API, so they build with PROS and run unchanged in vexsim:
 ```cpp
@@ -1324,7 +1335,7 @@ vexsim/
   runtime/              simulations, competition phases, programs, telemetry
   bridge/               PROS 4 C++ code in the loop: build, host process, shim
   bench/                Monte-Carlo benchmarks and reports
-  calibration/          robot logs, the calibration routine, replays, fitting
+  calibration/          robot logs, the calibration routine and session, replays, fitting
   viz/                  the live viewer and every plot
   app/                  the services behind the browser app: run specs, the workspace, jobs, live runs
   ui/                   the browser app: its server, its messages, and the built page
@@ -1446,8 +1457,11 @@ vexsim/
 ### `calibration/`: fitting the model to a robot
 | Module | What it does |
 |---|---|
-| `routine.py` | The calibration maneuvers (launch, coast, reverse, strafe, spin, arc) as fixed-voltage steps, scaled to the robot. |
+| `routine.py` | The calibration maneuvers (launch, coast, reverse, strafe, spin, arc) as fixed-voltage steps, scaled to the robot; `drive_tests`: the same maneuvers as a session's driving tests, each from rest, slowed where a field has less room. |
 | `cpp.py` | Generates the routine as PROS 4 C++ for one robot config; it logs with vexsim's logger (`bridge/logger.py`). |
+| `plan.py` | A session's field plan (`vexsim calibration plan`): each driving test simulated over a spread of the robot's parameters, and a spot found where all those paths stay a margin clear of the walls and elements (an FFT search over positions and headings); the push lane and the spins' spots; where to put the robot, from two walls; the maps. |
+| `program.py` | Writes the calibration program into a PROS project (`vexsim calibration program`): the fixed `bridge/cpp/calibration/main.cpp`, and a header with the robot's devices and the plan's tests. |
+| `student.py` | `Student`: a simulated student who runs the program in vexsim by what it prints: presses buttons, lays the robot on its side, puts it on its spots, pushes and turns it by hand, covers its distance sensors. |
 | `log.py` | `RobotLog`: the robot-log CSV format (2: with a log's `# key: value` lines, marks, and the code's own poses and numbers; 1 reads too), read from a file or cut out of terminal output (`parse_all`: every log in it). |
 | `record.py` | `RobotLogger`: writes the same log from a simulation (`--robot-log`). |
 | `replay.py` | Replays a log's commands in the simulator, with ideal sensors and the logged battery voltage, at the log's reading age. |

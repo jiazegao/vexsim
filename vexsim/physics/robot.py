@@ -191,6 +191,7 @@ class Robot:
         self.time = 0.0
         self.external_force = np.zeros(2)  # field frame, N, applied at the CG
         self.external_torque = 0.0
+        self.lifted = False  # held off the floor (on its side, on a stand): its wheels spin free
         self.contacts = ContactState()
         self._ground_force = (0.0, 0.0)
         self.contacts.normal = self.normal_loads()
@@ -255,6 +256,15 @@ class Robot:
         center = self.cg_position - self._rotate(self.cg_offset, self.heading)
         return float(center[0]), float(center[1]), float(self.heading)
 
+    def place(self, pose: tuple[float, float, float]) -> None:
+        """Put the robot down still at pose (x m, y m, heading rad), as a hand carries it: the
+        heading the short way round from where it was, as the IMU sees the carrying."""
+        x, y, heading = pose
+        heading = self.heading + math.remainder(heading - self.heading, 2 * math.pi)
+        self.heading = heading
+        self.cg_position = np.array([x, y]) + self._rotate(self.cg_offset, heading)
+        self.qdot[:3] = 0.0
+
     @property
     def body_velocity(self) -> tuple[float, float, float]:
         """(forward m/s, left m/s, yaw rad/s) of the footprint center, in the body frame."""
@@ -286,6 +296,8 @@ class Robot:
     def advance(self, dt: float) -> None:
         qdot = self.qdot
         normal = self.normal_loads(*self._ground_force)
+        if self.lifted:
+            normal = np.zeros_like(normal)  # nothing presses the wheels on the floor
 
         forces = np.zeros_like(qdot)
         for group in self.groups:
