@@ -18,7 +18,7 @@ All nine routines run to the end. With RCL and MCL, LemLib's pose ends within 1.
 | **MCL** (particle filter) | `MclTracking.hpp/.cpp` | 2048 particles every 30 ms. Motion from the drive motors and the IMU heading; weights from the five distance sensors against a map of walls, match loaders and bases. High sensors (9.12 in) see over the low bases, low ones (4.19 in) don't. Each update pulls LemLib's x and y 5% of the way to the estimate. Per routine, "masks" (lines) disable sensors whose beam would cross into the other half of the field. |
 | Mechanisms | `lift_control.cpp` | A two-motor lift (120 motor degrees per inch) and an end effector (a 4:1 wrist and an intake), each with a PID task. `hardResetEffector()` homes the wrist against its stop. |
 | Routines | `src/auton.cpp`, `auton_selector.cpp` | Nine routines, picked on an LVGL brain-screen selector: LemLib motions plus lift and effector macros. |
-| Screen, logging | `util_funcs.cpp`, `FB_Logo.c` | Controller and brain displays, a logo image, MCL logs to the SD card. |
+| Screen, logging | `util_funcs.cpp`, `FB_Logo.c`, `main.cpp` | Controller and brain displays, a logo image. Each autonomous routine is logged to the SD card with vexsim's logger ([step 11](#11-compare-with-the-real-robot)); until phase 14.2 the code logged MCL there instead. |
 
 ## 1. Take stock of what the code needs
 List every device, library and system call, and check each against [what vexsim simulates](cpp.md#whats-simulated):
@@ -36,7 +36,7 @@ List every device, library and system call, and check each against [what vexsim 
 | `std::chrono` timers (`Timer`) | Wall-clock time, not simulated time | Edit the code (step 3) |
 | Auton choice on the brain screen | Nobody can tap it | Edit the code (step 3) |
 | `std::random_device` in MCL | Different every run | Edit the code (step 3) |
-| SD card logs | No card: files don't open | None: `initLog()` turns logging off when it can't open its file |
+| SD card logs | No card unless `--sd FOLDER` names a folder to stand in for one | None: without a card the routine isn't logged |
 | Optical sensor (port 3) | Not simulated | None: only a debug display reads it. Note that the right distance sensor is also on port 3 in the code; one of them is on the wrong port. |
 
 ## 2. Copy the code and build it
@@ -73,7 +73,7 @@ float elapsedMs() const { return (pros::micros() - startTime) * 0.001f; };
 ```
 `vexsim run --env "VEXSIM_AUTON=Right 40"` sets it. A name that doesn't match prints `VEXSIM_AUTON: no routine named "..."`.
 
-vexsim can now pick routines without this edit: `vexsim run --routine right40`, or the **Routine** list in `vexsim ui`, runs `right40()` inside the team's own `autonomous()`, in place of the routine its selector picks ([README, section 9](../README.md#picking-an-autonomous-routine)), with the same result to the last digit. This repository's saved runs pick their routines that way; the edit stays for the evaluation script and for `startMcl`, which replays real logs.
+vexsim can now pick routines without this edit: `vexsim run --routine right40`, or the **Routine** list in `vexsim ui`, runs `right40()` inside the team's own `autonomous()`, in place of the routine its selector picks ([README, section 9](../README.md#picking-an-autonomous-routine)), with the same result to the last digit. This repository's saved runs pick their routines that way; the edit stays for the evaluation script and for `startMcl`, which follows a real robot's logged path. (A routine's log is named for the routine the selector picked, so name it this way, not with `--routine`, when the log's name matters.)
 
 **Repeatable randomness.** MCL seeded its particles from `std::random_device`, so no two runs matched. Under `#ifdef VEXSIM` it seeds from `VEXSIM_SEED`, which vexsim always sets to the simulation's `--seed`.
 
@@ -224,10 +224,31 @@ The port keeps the team's masks, since this is their call. The fix is worth tryi
 Ideas to try, in the simulator first: skip MCL updates (or LemLib syncing) while turning fast; inject a few random particles, or call `uniform_reset()`, when every particle's weight collapses. Also, nothing in RCL or MCL corrects the heading (`THETA_SYNC_PROP` and `IMU_VARIANCE` are 0), so a robot placed 1° off stays 1° off all routine; the front pair, both facing the wall at the start, could measure it.
 
 ## 10. Keep the port up to date
-The port is a copy of commit `fb5a42a`. To bring in newer code, copy the team's `src/` and `include/custom/` again, then reapply the `// vexsim:` edits (the four above, the three for replays in [step 11](#11-compare-with-the-real-robot), and the comment above `moveForward` in `util_funcs.hpp` that tells the autonomous maker how it moves the robot, [README, section 9](../README.md#autonomous-routes)). Or apply them in the team's own repository: each is inert on the robot (`#ifdef VEXSIM`, or `pros::micros()`), so the team's code would then run in vexsim unchanged.
+The port is a copy of commit `fb5a42a`. To bring in newer code, copy the team's `src/` and `include/custom/` again, then reapply the `// vexsim:` edits (the four above, the three in [step 11](#11-compare-with-the-real-robot), and the comment above `moveForward` in `util_funcs.hpp` that tells the autonomous maker how it moves the robot, [README, section 9](../README.md#autonomous-routes)), and the switch to vexsim's logger ([step 11](#switching-the-teams-code-to-vexsims-logger)). Or apply them in the team's own repository: each `// vexsim:` edit is inert on the robot (`#ifdef VEXSIM`, or `pros::micros()`), and the logger is for the robot, so the team's code would then run in vexsim unchanged.
 
 ## 11. Compare with the real robot
-The team's code logs MCL to the SD card, and the simulated robot can do the same: `--env VEXSIM_SD_DIR=folder` stands in for the card. [1239e_real_vs_sim.md](1239e_real_vs_sim.md) replays five of the real robot's logs in the simulator and compares the two, with `examples/scripts/replay_1239e_mcl_log.py`. Three more `#ifdef VEXSIM` hooks make that possible, and a fourth draws MCL's rays, particles and spread on the field in the browser app (the port's [README](../examples/pros_projects/1239e_2026-27/README.md)). `vexsim ui` plays a real log beside the simulated robot replaying it ([README, section 7](../README.md#7-the-browser-app-vexsim-ui)).
+Each autonomous routine logs itself to the robot's SD card with vexsim's logger ([README](../README.md#vexsims-logger)): every device, LemLib's pose, MCL's and MCL's spread, in `vexsim_0001_left_40.csv` and so on. The simulated robot writes the same log with `--sd FOLDER`, which stands in for the card:
+```
+vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 \
+    --field examples/fields/1239e_2026-27.yaml --env "VEXSIM_AUTON=Left 40" --start=60,0,0 \
+    --headless --sd card
+```
+`vexsim run --follow card/vexsim_0001_left_40.csv` drives the simulated robot along the path a log's code believed it took (its first pose, LemLib's here), from where its routine's `setPose` put it; `vexsim ui` follows MCL logs the same way, beside the robot replaying them ([README, section 7](../README.md#7-the-browser-app-vexsim-ui)). Two `#ifdef VEXSIM` hooks make following possible (`VEXSIM_AUTON=startMcl` starts MCL alone, and `VEXSIM_BRAKE` sets driver control's brake mode), and a third draws MCL's rays, particles and spread on the field (the port's [README](../examples/pros_projects/1239e_2026-27/README.md)).
+
+[1239e_real_vs_sim.md](1239e_real_vs_sim.md) compared five of the real robot's MCL logs with the simulated robot driving the same paths. That needed the code's own MCL log, which phase 14.2 removed with the script that did it; the page stays as the record of what it found, and the script is in the history (`examples/scripts/replay_1239e_mcl_log.py`, last in commit `f8225cb`).
+
+### Switching the team's code to vexsim's logger
+The team's own repository is newer than this port's copy, so here are the changes by what they do, to make there as they were made here:
+1. **Copy in the logger:** `vexsim logger add PATH/TO/THE/PROJECT` adds `include/vexsim_log.hpp` and `src/vexsim_log.cpp`.
+2. **Take out the MCL log**, everything that only served it:
+   - `util_funcs.cpp` and `.hpp`: `initLog()`; and its call in `main.cpp`'s `initialize()`.
+   - `configs.hpp`: `MCL_Log_Format` and `mclLogType`, `mclLog` and `mclLogTimer`.
+   - `MclTracking.cpp`: `LogType`, `LogData`, `log_queue`, `log_mutex` and `asyncLogTask`; the `SENSOR` record in `update_weights()` and the `PARTICLE` one in `get_estimate()`; `startAsyncLogger()` and `stopAsyncLogger()` (and its call in the destructor); the `SCREEN` print in `startTracking()`'s task; `#include <queue>`.
+   - `MclTracking.hpp`: `LOG_AMOUNT`, `LOG_RATIO`, `logMcl()` and the two logger functions.
+3. **Keep MCL's spread**, for the log: `logMcl()` becomes `updateSpread(Pose around)`, which stores the particles' standard deviation in a new member, `Coord spread`, with `Coord getSpread()` to read it; `updateMcl()` calls `updateSpread(estimate.first)` where it called `logMcl()`.
+4. **Log each routine:** in `main.cpp`, an `initRoutineLog()` called from `initialize()` adds the poses and the spread to every log (`vexsim_log::pose("lemlib", ...)` from `chassis.getPose()`; `vexsim_log::pose("mcl", ...)` from `MclMain.getRawMcl()`, its theta through `stdToVex`; `vexsim_log::value("mcl_spread_x", ...)` and `"mcl_spread_y"`) and rumbles the controller without a card, as `initLog()` did; `autonomous()` ends with `vexsim_log::stop();`. In `auton_selector.cpp`, `runAuton()` starts the log, named for the routine, just before running it, when a card is in: `if (pros::c::usd_is_installed()) vexsim_log::start(name);`.
+
+The port's `main.cpp`, `auton_selector.cpp` and `MclTracking.cpp` show each change in place.
 
 ## Porting your own team's code
 The same steps apply:

@@ -105,6 +105,18 @@ def test_drive_geometry_comes_from_the_robot():
     assert top_speed == pytest.approx(450 / 60 * math.pi * 3.25)
 
 
+def robot_log_text(poses, *, before: int = 3) -> str:
+    """A robot log (vexsim's logger) whose code logged ``poses`` (x, y, theta in radians
+    counter-clockwise from +x) 10 ms apart, as LemLib has them, after ``before`` rows at
+    (0, 0, 0): its pose before the routine's setPose."""
+    rows = ["# vexsim-log: 2", "# name: Test", "time_ms,battery_mv,pose_lemlib_x_in,"
+            "pose_lemlib_y_in,pose_lemlib_theta_deg,val_spread"]  # fmt: skip
+    rows += [f"{10 * k},12800,0,0,0,1" for k in range(before)]
+    for k, (x, y, theta) in enumerate(poses, start=before):
+        rows.append(f"{10 * k},12800,{x},{y},{90 - math.degrees(theta)},1")
+    return "\n".join(rows) + "\n"
+
+
 def follow_workspace(folder: Path, poses) -> Path:
     shutil.copy(ROBOT, folder / "robot.yaml")
     shutil.copy(TANK, folder / "tank.py")
@@ -137,6 +149,33 @@ def test_a_run_follows_a_logs_path(tmp_path):
     assert x == pytest.approx(40, abs=2) and y == pytest.approx(10, abs=1)
     assert max(follower.following) < 3
     assert factory().input_source is not follower  # a restart follows it afresh
+
+
+def test_a_run_follows_a_robot_logs_pose(tmp_path):
+    """A robot log from vexsim's logger: the path is the first pose the code logged, from its
+    first setPose on (the rows before, at (0, 0, 0), aren't where the robot was)."""
+    folder = follow_workspace(tmp_path, straight())
+    log = folder / "logs" / "vexsim_0001_test.csv"
+    log.write_text(robot_log_text(straight(n=303, dt=0.01)))
+    args = build_parser().parse_args(
+        ["run", "robot.yaml", "--program", "tank.py", "--mode", "driver", "--follow", str(log)]
+    )
+    spec = RunSpec.from_args(args)
+    assert spec.start == (-20, 10, 0)  # where it was after the jump, facing +x
+    prepared = check(spec, folder)
+    make, mode = program_factory(prepared)
+    sim = simulation_factory(prepared, make, mode, echo=None)()
+    assert sim.run_until_finished(30)
+    follower = sim.input_source
+    assert follower.done and follower.path.end == pytest.approx(3.32)
+    x, y = (v / 0.0254 for v in sim.robot.pose[:2])
+    assert x == pytest.approx(40.6, abs=2) and y == pytest.approx(10, abs=1)
+    assert max(follower.following) < 3
+
+    nameless = folder / "logs" / "vexsim_0002_none.csv"
+    nameless.write_text("# vexsim-log: 2\ntime_ms,battery_mv\n0,12800\n10,12800\n")
+    with pytest.raises(RunError, match="has no pose to follow"):
+        check(spec.model_copy(update={"follow": Follow(log=str(nameless))}), folder)
 
 
 def test_following_is_part_of_a_run_spec(tmp_path):

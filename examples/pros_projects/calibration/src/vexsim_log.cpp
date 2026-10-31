@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <memory>
 #include <string>
 #include <utility>
@@ -78,7 +79,11 @@ std::vector<std::pair<std::string, std::string>> g_info;  // for the next log
 double g_cmd_mv[PORTS + 1];
 double g_cmd_rpm[PORTS + 1];
 int g_limit_s = 180;
-pros::task_t g_task = nullptr;
+pros::task_t g_task = nullptr;   // samples every 10 ms, above the code's own tasks
+pros::task_t g_saver = nullptr;  // saves finished logs, below them
+std::deque<std::shared_ptr<Log>> g_unsaved;  // finished logs, oldest first
+std::uint32_t g_finished = 0;                // logs finished so far
+std::uint32_t g_saved = 0;                   // and saved
 
 struct Locked {
 	Locked() { pros::c::mutex_take(g_lock, TIMEOUT_MAX); }
@@ -387,16 +392,44 @@ int save(const Log& log) {
 	return rows;
 }
 
-// Stops the log (``only``: if it's that one) and saves it.
-int finish(const std::shared_ptr<Log>& only = nullptr) {
-	std::shared_ptr<Log> done;
+struct Finished {
+	std::uint32_t ticket;  // the saver says it saved this one when g_saved reaches it; 0: none
+	int rows;
+};
+
+// Stops the log (``only``: if it's that one) and hands it to the saver.
+Finished finish(const std::shared_ptr<Log>& only = nullptr) {
+	Finished done{0, 0};
 	{
 		Locked lock;
-		if (!g_log || (only && g_log != only)) return 0;
-		done = std::move(g_log);
+		if (!g_log || (only && g_log != only)) return done;
+		done = {++g_finished, static_cast<int>(g_log->times.size())};
+		g_unsaved.push_back(std::move(g_log));
 		g_log = nullptr;
 	}
-	return save(*done);
+	pros::c::task_notify(g_saver);
+	return done;
+}
+
+// Saves finished logs, one after another, in a task of its own: the field ends the
+// autonomous task when autonomous ends, which would cut a save in it short, and this one
+// runs below the code's own tasks, so a long save doesn't hold up driver control.
+void save_loop(void*) {
+	while (true) {
+		pros::c::task_notify_take(true, TIMEOUT_MAX);
+		while (true) {
+			std::shared_ptr<Log> log;
+			{
+				Locked lock;
+				if (g_unsaved.empty()) break;
+				log = g_unsaved.front();
+			}
+			save(*log);
+			Locked lock;
+			g_unsaved.pop_front();
+			g_saved++;
+		}
+	}
 }
 
 // Every 10 ms of a log: a row (unless the code samples), a mark when the competition mode
@@ -480,6 +513,8 @@ bool start(const char* name, Sampling sampling) {
 	if (g_task == nullptr) {
 		g_task = pros::c::task_create(loop, nullptr, TASK_PRIORITY_DEFAULT + 1, TASK_STACK_DEPTH_DEFAULT,
 		                              "vexsim_log");
+		g_saver = pros::c::task_create(save_loop, nullptr, TASK_PRIORITY_DEFAULT - 1, TASK_STACK_DEPTH_DEFAULT,
+		                               "vexsim_log save");
 	}
 	pros::c::task_notify(g_task);
 	return true;
@@ -525,7 +560,18 @@ void command_velocity(int port, double rpm) {
 	g_cmd_mv[port] = NAN;
 }
 
-int stop() { return finish(); }
+int stop() {
+	Finished done = finish();
+	if (done.ticket == 0) return 0;
+	while (true) {  // until the saver has saved it (if this task is ended meanwhile, it still does)
+		{
+			Locked lock;
+			if (g_saved >= done.ticket) break;
+		}
+		pros::c::delay(1);
+	}
+	return done.rows;
+}
 
 void set_limit_s(int seconds) {
 	Locked lock;

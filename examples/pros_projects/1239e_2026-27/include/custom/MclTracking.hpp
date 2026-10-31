@@ -25,8 +25,6 @@ private:
     static constexpr int RESAMPLE_THRESHOLD = PARTICLE_COUNT / 2;
     static constexpr float MIN_DIST_FROM_RESAMPLE = 5.0f;
     static constexpr float MAX_VELO_RESAMPLE = 100.0f;
-    static constexpr int LOG_AMOUNT = 1;
-    static constexpr int LOG_RATIO = PARTICLE_COUNT / LOG_AMOUNT;
     static constexpr float ODOM_MULTIPLIER = 0.25f;
     static constexpr float RPM_MULTIPLIER = 0.0016666666667f;
 
@@ -173,6 +171,7 @@ private:
     Timer t = Timer(MSPT);
     int minPause = MINPAUSE;
     Pose rawMcl = {0, 0, 0};
+    Coord spread = {0, 0};  // the particles' standard deviation in x and y (updateSpread)
 
     // Sensor data access
     std::array<bool, SENSOR_COUNT> valid_sensors;
@@ -232,7 +231,7 @@ public:
 
     void stopTracking();
 
-    void logMcl();
+    void updateSpread(Pose around);
 
     void uniform_reset();
 
@@ -242,10 +241,6 @@ public:
 
     void disableSensFor(int sens, float ms);
 
-    void startAsyncLogger();
-
-    void stopAsyncLogger();
-
     void setObstacles(std::vector<Line_>* newLineObstaclesPtr = nullptr, std::vector<Circle>* newCirleObstaclesPtr = nullptr);
 
     void setDrift(float verticalDrift, float horizontalDrift);
@@ -253,6 +248,8 @@ public:
     float getDTWheelDegrees();
 
     Pose getRawMcl();
+
+    Coord getSpread();
 
     ~MclTracking();
 };

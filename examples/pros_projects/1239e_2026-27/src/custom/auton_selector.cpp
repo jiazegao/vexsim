@@ -5,6 +5,7 @@
 #include <string>  // vexsim
 #include "liblvgl/widgets/image/lv_image.h"
 #include "custom/auton.hpp"
+#include "vexsim_log.hpp"
 
 // Button event callback functions
 void toggle_color(lv_event_t* e) {
@@ -67,22 +68,21 @@ void init_auton_selector() {
     lv_obj_set_style_bg_color(btn_skills, (runningSkills == true) ? lv_color_hex(0x00FF00) : lv_color_hex(0xFF0000), LV_PART_MAIN);
 }
 
+// vexsim's logger (vexsim_log.hpp): the routine's log, by its name, to the SD card (without
+// a card nothing is logged, and initialize() rumbles the controller to say so).
+static void startRoutineLog(std::string_view name) {
+    if (pros::c::usd_is_installed()) vexsim_log::start(std::string(name).c_str());
+}
+
 // Call the according autonomous
 void runAuton() {
 #ifdef VEXSIM
     // vexsim: nobody taps the simulated brain screen, so the routine comes from the
     // VEXSIM_AUTON environment variable (vexsim run --env VEXSIM_AUTON="Left 40").
     if (const char* name = std::getenv("VEXSIM_AUTON")) {
-        // "startMcl x,y,theta,front,left,back,right" only starts MCL, as a routine would,
-        // for replaying a real MCL log (examples/scripts/replay_1239e_mcl_log.py). Plain
-        // "startMcl" starts it, with no resets, where the run put the robot (VEXSIM_START),
-        // for following a log (vexsim run --follow).
+        // "startMcl" only starts MCL, with no resets, where the run put the robot
+        // (VEXSIM_START), for following a log (vexsim run --follow).
         float x, y, theta;
-        int f, l, b, r;
-        if (std::sscanf(name, "startMcl %f,%f,%f,%d,%d,%d,%d", &x, &y, &theta, &f, &l, &b, &r) == 7) {
-            startMcl(x, y, theta, f, l, b, r);
-            return;
-        }
         const char* start = std::getenv("VEXSIM_START");
         if (std::string(name) == "startMcl" && start && std::sscanf(start, "%f,%f,%f", &x, &y, &theta) == 3) {
             startMcl(x, y, theta, false, false, false, false);
@@ -97,10 +97,12 @@ void runAuton() {
 #endif
     // Auton Selection
 	if (runningSkills) {
+		startRoutineLog("Skills");
 		skills();
 		return;
 	}
     if (autonCount >= 0 && autonCount < (int)AutonCollection.size()) {
+        startRoutineLog(AutonCollection[autonCount].Name);
         AutonCollection[autonCount].AutonFunc();
     }
 }

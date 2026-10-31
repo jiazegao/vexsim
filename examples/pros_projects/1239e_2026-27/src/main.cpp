@@ -13,8 +13,28 @@
 #include "pros/motors.h"
 
 #include "custom/lift_control.hpp"
+#include "vexsim_log.hpp"
 #include <cstdlib>  // vexsim
 #include <string>  // vexsim
+
+// vexsim's logger (vexsim_log.hpp) logs each autonomous routine to the SD card, with every
+// device on the robot (runAuton() starts it): here, what only the code knows besides, as
+// LemLib has poses (degrees clockwise from +y).
+void initRoutineLog() {
+	vexsim_log::pose("lemlib", [] {
+		lemlib::Pose p = chassis.getPose();
+		return vexsim_log::Pose{p.x, p.y, p.theta};
+	});
+	vexsim_log::pose("mcl", [] {
+		Pose p = MclMain.getRawMcl();
+		return vexsim_log::Pose{p.x, p.y, stdToVex(p.theta)};
+	});
+	vexsim_log::value("mcl_spread_x", [] { return MclMain.getSpread().x; });
+	vexsim_log::value("mcl_spread_y", [] { return MclMain.getSpread().y; });
+
+	// If SD card is absent, rumble controller: nothing will be logged
+	if (!pros::c::usd_is_installed()) controller.rumble("-.-.");
+}
 
 void initialize() {
 	// pros::lcd::initialize();
@@ -23,7 +43,7 @@ void initialize() {
 
 	init_auton_selector();
 	initControllerDisplay();
-	initLog();	// Critical; DO NOT REMOVE
+	initRoutineLog();
 	initEffectorPID();
 	initLiftPID();
 	//initBrainDisplay();
@@ -45,7 +65,7 @@ void autonomous() {
 	hardResetEffector();
 	// left30();
 	runAuton();
-	
+	vexsim_log::stop();  // saves the routine's log; it saves itself if autonomous ends first
 }
 
 void opcontrol() {

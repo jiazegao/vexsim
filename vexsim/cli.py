@@ -677,8 +677,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--follow",
         metavar="LOG",
-        help="drive along a real robot's path, from its MCL log: a virtual driver holds the "
-        "sticks of the program's driver control (opcontrol) and the run ends with the log",
+        help="drive along a real robot's path, from its robot log (the first pose its code "
+        "logged with vexsim_log::pose) or its MCL log: a virtual driver holds the sticks of the "
+        "program's driver control (opcontrol) and the run ends with the log",
     )
     p.add_argument(
         "--sticks",

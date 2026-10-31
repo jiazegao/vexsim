@@ -2,8 +2,9 @@
 
 ``PathFollower`` is a simulation's input source. Once the program's driver control
 (opcontrol) starts, it holds the controller's sticks as a driver would, steering the
-simulated robot along a path in time: where a real robot went, by its own estimate
-(``vexsim.mcllog.MclLog.path``). It sees where the simulated robot really is. That
+simulated robot along a path in time: where a real robot went, by its own estimate (a pose
+its code logged with vexsim's logger, ``robot_log_path``, or an MCL log's,
+``vexsim.mcllog.MclLog.path``). It sees where the simulated robot really is. That
 estimate is the only record of where the real robot went, so where the real robot's
 localization was wrong, the simulated robot drives the wrong path.
 
@@ -29,6 +30,7 @@ Sticks = Literal["tank", "arcade"]
 GAINS = (4.0, 0.03, 10.0, 0.1)  # kx, ky, ktheta, lead (s): tuned on 1239E's tank drive
 SMOOTH = 5  # updates in the path's moving average
 END_S = 0.3  # the run goes on this long after the path ends
+JUMP_IN, JUMP_RAD = 2.0, math.radians(20)  # further than a robot goes between two log rows
 
 
 class ExpoCurve:
@@ -81,6 +83,35 @@ class LoggedPath:
             (self.y[j1] - self.y[j0]) / dt,
             (self.theta[j1] - self.theta[j0]) / dt,
         )
+
+
+def robot_log_path(log, name: str | None = None) -> tuple[list[float], list[tuple[float, ...]]]:
+    """Where a robot log (``vexsim.calibration.log.RobotLog``) says its code believed the
+    robot went: a pose the code logged (``vexsim_log::pose``, as LemLib has them; the first
+    it logged, unless ``name`` says which), as ``LoggedPath`` takes them. Raises ValueError
+    if it has no such pose, or fewer than two."""
+    import numpy as np
+
+    names = log.poses()
+    if not names or (name is not None and name not in names):
+        wanted = f"no pose named {name}" if name else "no pose"
+        raise ValueError(f"the robot log has {wanted} to follow (vexsim_log::pose logs one)")
+    x, y, theta = log.pose(name or names[0])
+    known = np.isfinite(x) & np.isfinite(y) & np.isfinite(theta)
+    times, x, y = log.time_s[known], x[known], y[known]
+    heading = np.unwrap(np.radians(90.0 - theta[known]))  # counter-clockwise from +x
+    # Before the code first sets its pose (a routine's setPose), the pose stands still, then
+    # jumps further than a robot moves between two rows: where it was before isn't a place.
+    jumps = np.flatnonzero(
+        (np.hypot(np.diff(x), np.diff(y)) > JUMP_IN) | (np.abs(np.diff(heading)) > JUMP_RAD)
+    )
+    if jumps.size and np.ptp(x[: jumps[0] + 1]) == np.ptp(y[: jumps[0] + 1]) == 0:
+        first = jumps[0] + 1
+        times, x, y, heading = times[first:], x[first:], y[first:], heading[first:]
+    if len(times) < 2:
+        raise ValueError("the robot log's pose has fewer than two readings to follow")
+    poses = [(float(a), float(b), float(c)) for a, b, c in zip(x, y, heading, strict=True)]
+    return [float(t - times[0]) for t in times], poses
 
 
 def drive_geometry(config) -> tuple[float, float]:

@@ -266,6 +266,12 @@ def test_the_logger_is_added_to_a_project(tmp_path, capsys):
     assert main(["logger", "add", str(tmp_path / "nowhere")]) == 1
 
 
+def test_the_example_projects_have_vexsims_logger_as_it_is():
+    for project in ("calibration", "1239e_2026-27"):
+        for path, text in logger_files(ROOT / "examples" / "pros_projects" / project):
+            assert path.read_text() == text, f"{path} differs: vexsim logger add updates it"
+
+
 def test_a_run_takes_a_folder_for_the_sd_card(tmp_path):
     args = build_parser().parse_args(["run", "robot.yaml", "--program", "p", "--sd", "card"])
     spec = RunSpec.from_args(args)

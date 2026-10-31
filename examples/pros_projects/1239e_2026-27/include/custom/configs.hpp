@@ -168,11 +168,6 @@ inline RclSensor right_rcl(&right_dist, 5.857102, -2.999773, 90.0, 15.0);
 inline RclTracking RclMain(&chassis, 1, false, 0.5, 4.0, 200.0, 6.0, 50);
 inline MclTracking MclMain(&chassis, &drivetrain, DISTANCE_COLLECTION, {nullptr, 0.0, 0.0}, {nullptr, 0.0, 0.0}, 0, 0, 0, true);
 
-enum MCL_Log_Format {DISABLED, SDCARD, SCREEN};
-inline MCL_Log_Format mclLogType = SDCARD;
-inline std::ofstream* mclLog = nullptr;
-inline Timer mclLogTimer(100000000.0f);
-
 // RCL obstacles
 inline Circle_Obstacle neutral_base1(0.0, 0.0, 4.0);
 inline Circle_Obstacle neutral_base2(-47.0, 23.5, 4.0);

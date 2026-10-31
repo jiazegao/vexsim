@@ -11,7 +11,6 @@
 #include <cmath>
 #include <numbers>
 #include <random>
-#include <queue>
 
 #include "pros/rtos.h"
 #include "custom/fast_trig.hpp"
@@ -30,18 +29,6 @@ void drawRay(float mm, float x, float y, float angle) {
 }
 }  // namespace
 #endif
-
-// --- Async Logging Variables ---
-enum class LogType { PARTICLE, POSE, SENSOR };
-
-struct LogData {
-    LogType type;
-    float v1, v2, v3, v4, v5, v6; // Generic payload to hold either pose or particle data
-};
-
-std::queue<LogData> log_queue;
-pros::Mutex log_mutex;
-pros::Task* asyncLogTask = nullptr;
 
 float MclTracking::intersect_line(Coord ray, Line_ wall, float max_range, float rayCos, float raySin) {
 
@@ -298,20 +285,6 @@ void MclTracking::update_weights() {
         drawRay(sensor_readings_mm[i], sx, sy, ray_ang);
 #endif
 
-        if (mclLogType == SDCARD) {
-            // Log
-            LogData pLog;
-            pLog.type = LogType::SENSOR;
-            pLog.v1 = sensor_readings_mm[i];
-            pLog.v2 = sx;
-            pLog.v3 = sy;
-            pLog.v4 = ray_ang;
-
-            log_mutex.take();
-            log_queue.push(pLog);
-            log_mutex.give();
-        }
-
         // Validify sensors
 
         // Case #1: Sensor disabled
@@ -547,18 +520,6 @@ std::pair<Pose, float> MclTracking::get_estimate() {
 
         total_weight += p.weight;
         weight_sqr_sum += p.weight * p.weight;
-
-        // Log - Log Particle Positions
-        if (mclLogType == SDCARD && count % LOG_RATIO == 0) {
-            LogData pLog;
-            pLog.type = LogType::PARTICLE;
-            pLog.v1 = p.pose.x;
-            pLog.v2 = p.pose.y;
-
-            log_mutex.take();
-            log_queue.push(pLog);
-            log_mutex.give();
-        }
     }
 
     // Handle the case where all weights are zero (safety)
@@ -584,13 +545,10 @@ Pose MclTracking::updateMcl() {
     }
 
     predict();  // Update position
-    update_weights(); // Log sensor
+    update_weights();
 
-    auto estimate = get_estimate(); // Log particles
-    // Log general position
-    if (mclLogType == SDCARD) {
-        logMcl();
-    }
+    auto estimate = get_estimate();
+    updateSpread(estimate.first);  // for vexsim's logger (main.cpp)
 
 #ifdef VEXSIM
     {
@@ -704,11 +662,6 @@ void MclTracking::startTracking() {
 
                 this->updateMcl();
 
-                // Log on brain
-                if (mclLogType == SCREEN) {
-                    pros::lcd::print(5, "MCL Calculation Time: %f", t.elapsed());
-                }
-            
                 if (t.timeLeft() < minPause) pros::delay(minPause);
                 else pros::delay(round(t.timeLeft()));
             }
@@ -724,8 +677,8 @@ void MclTracking::setDistSyncProp(float newDistSyncProp) {
     DIST_SYNC_PROP = newDistSyncProp;
 }
 
-void MclTracking::logMcl() {
-    // Inside step()
+// The particles' spread around an estimate: their standard deviation in x and y (in).
+void MclTracking::updateSpread(Pose around) {
     float sum_sq_diff_x = 0, sum_sq_diff_y = 0;
 
     auto& particles = *particles_ptr;
@@ -733,28 +686,15 @@ void MclTracking::logMcl() {
     for (int i = 0; i < PARTICLE_COUNT; i++) {
         const auto& p = particles[i];
 
-        sum_sq_diff_x += (p.pose.x - rawMcl.x)*(p.pose.x - rawMcl.x);
-        sum_sq_diff_y += (p.pose.y - rawMcl.y)*(p.pose.y - rawMcl.y);
-        
+        sum_sq_diff_x += (p.pose.x - around.x)*(p.pose.x - around.x);
+        sum_sq_diff_y += (p.pose.y - around.y)*(p.pose.y - around.y);
     }
 
-    // Calculate standard deviation
-    float std_dev_x = std::sqrtf(sum_sq_diff_x * INV_PARTICLE_COUNT);
-    float std_dev_y = std::sqrtf(sum_sq_diff_y * INV_PARTICLE_COUNT);
+    spread = {std::sqrtf(sum_sq_diff_x * INV_PARTICLE_COUNT), std::sqrtf(sum_sq_diff_y * INV_PARTICLE_COUNT)};
+}
 
-    // Log to Queue (Zero Blocking)
-    LogData pLog;
-    pLog.type = LogType::POSE;
-    pLog.v1 = mclLogTimer.elapsed(TimeUnit::SECOND);
-    pLog.v2 = rawMcl.x;
-    pLog.v3 = rawMcl.y;
-    pLog.v4 = rawMcl.theta;
-    pLog.v5 = std_dev_x;
-    pLog.v6 = std_dev_y;
-
-    log_mutex.take();
-    log_queue.push(pLog);
-    log_mutex.give();
+Coord MclTracking::getSpread() {
+    return spread;
 }
 
 void MclTracking::setDrift(float verticalDriftPerSec, float horizontalDriftPerSec) {
@@ -780,52 +720,6 @@ void MclTracking::disableSensFor(int sens, float ms) {
 void MclTracking::setObstacles(std::vector<Line_>* newLineObstaclesPtr, std::vector<Circle>* newCirleObstaclesPtr) {
     disabling_line_obstacles = newLineObstaclesPtr;
     disabling_circle_obstacles = newCirleObstaclesPtr;
-}
-
-void MclTracking::startAsyncLogger() {
-    if (asyncLogTask == nullptr) {
-        asyncLogTask = new pros::Task([this]() {
-            while (true) {
-                std::queue<LogData> local_queue;
-
-                // Lock once, swap the contents, and unlock immediately
-                log_mutex.take();
-                if (!log_queue.empty()) {
-                    std::swap(log_queue, local_queue);
-                }
-                log_mutex.give();
-
-                if (!local_queue.empty()) {
-                    // Process the entire batch completely outside the lock
-                    while (!local_queue.empty()) {
-                        LogData data = local_queue.front();
-                        local_queue.pop();
-                        
-                        if (data.type == LogType::PARTICLE) {
-                            *mclLog << data.v1 << "," << data.v2 << "\n";
-                        } else if (data.type == LogType::POSE) {
-                            *mclLog << data.v1 << "\n"; 
-                            *mclLog << data.v2 << "," << data.v3 << "," << data.v4 << "\n"; 
-                            *mclLog << data.v5 << "," << data.v6 << "," << "\n"; 
-                        } else if (data.type == LogType::SENSOR ) {
-                            *mclLog << data.v1 << "," << data.v2 << "," << data.v3 << "," << data.v4 << "\n"; 
-                        }
-                    }
-                } else {
-                    // Sleep to prevent CPU hogging when queue is empty
-                    pros::delay(MSPT); 
-                }
-            }
-        });
-    }
-}
-
-void MclTracking::stopAsyncLogger() {
-    if (asyncLogTask != nullptr) {
-        asyncLogTask->remove(); 
-        delete asyncLogTask; 
-        asyncLogTask = nullptr; 
-    }
 }
 
 float MclTracking::getDTWheelDegrees() {
@@ -861,5 +755,4 @@ Pose MclTracking::getRawMcl() {
 
 MclTracking::~MclTracking() {
     stopTracking();
-    stopAsyncLogger();
 }

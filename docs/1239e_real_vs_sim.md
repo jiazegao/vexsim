@@ -1,5 +1,7 @@
 # Real robot vs. vexsim: 1239E's MCL logs
 
+> **A record.** This comparison used the MCL log the team's code wrote to the SD card, and `examples/scripts/replay_1239e_mcl_log.py`, which made the simulated robot write the same log. In phase 14.2 the team's code moved to vexsim's logger, which logs each routine with every device and the code's own poses ([porting_1239e.md, step 11](porting_1239e.md#11-compare-with-the-real-robot)), and the script went with the old log: it's in the history, last in commit `f8225cb`. What's below is as it was found.
+
 Team 1239E's robot logs every MCL update to its SD card. This compares five of those logs with the simulated robot driving the same paths, running the same code ([porting_1239e.md](porting_1239e.md)), and logging the same way. In short:
 
 - **Where they agree:** the start reset, and readings of walls up to 2 m away. The real readings fit MCL's map to within about 20 mm, so the map and the sensor mounts are right.

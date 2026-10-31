@@ -58,7 +58,9 @@ void command_velocity(int port, double rpm);
 
 // Saves the log to the next numbered file on the SD card (/usd/vexsim_0001_<name>.csv) or,
 // without a card, prints it to the terminal between "#vexsim-log begin" and
-// "#vexsim-log end" lines. The number of rows it saved (0 if no log was running).
+// "#vexsim-log end" lines, and waits until it's saved. The save runs in the logger's own task,
+// so if autonomous ends meanwhile, ending the task that waits, the log is still saved
+// whole. The number of rows (0 if no log was running).
 int stop();
 void set_limit_s(int seconds);  // how long a log runs before it saves itself (180)
 

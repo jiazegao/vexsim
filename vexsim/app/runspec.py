@@ -15,6 +15,7 @@ spreads over its server, a build job and a worker process:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import re
 from collections.abc import Callable
@@ -56,7 +57,8 @@ class Follow(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    log: str | None = None  # an MCL log; a saved run leaves it out, for any log to follow
+    # a robot log (vexsim's logger) or an MCL log; a saved run leaves it out, for any log
+    log: str | None = None
     sticks: Sticks = "tank"  # tank: both sticks' y; arcade: left y forward, right x turning
     # the program's LemLib ExpoDriveCurve(deadband, min output, curve), if it has one
     curve: tuple[float, float, float] | None = None
@@ -254,15 +256,47 @@ def parse_curve(text: str) -> tuple[float, float, float]:
     return values  # type: ignore[return-value]
 
 
+def logged_path(
+    path: str | os.PathLike[str], shown: str | os.PathLike[str] | None = None
+) -> tuple[list[float], list[tuple[float, ...]]]:
+    """Where a log says the robot went, for a run to follow (``LoggedPath``): a robot log's
+    first pose (vexsim's logger, ``vexsim_log::pose``), or an MCL log's estimates. Raises
+    RunError, naming the log as ``shown``, if it's neither or has no path."""
+    from vexsim.calibration.log import RobotLog
+    from vexsim.mcllog import MclLog, MclLogError
+    from vexsim.runtime.follow import robot_log_path
+
+    shown = path if shown is None else shown
+    try:
+        log = RobotLog.read(path)
+    except ValueError:
+        try:
+            return MclLog.read(path).path()
+        except MclLogError as exc:
+            raise RunError(f"{shown}: {exc}") from None
+    try:
+        return robot_log_path(log)
+    except ValueError as exc:
+        raise RunError(f"{shown}: {exc}") from None
+
+
 def log_start(path: str | os.PathLike[str]) -> tuple[float, float, float]:
     """Where a log to follow starts: x, y (in) and heading (degrees counter-clockwise
     from +x), rounded as a start pose is typed. Raises RunError if it doesn't read."""
+    from vexsim.calibration.log import RobotLog
     from vexsim.mcllog import MclLog, MclLogError
 
     try:
-        x, y, heading = MclLog.read(path).start
-    except MclLogError as exc:
-        raise RunError(f"{path}: {exc}") from None
+        RobotLog.read(path)
+    except (OSError, ValueError):
+        try:
+            x, y, heading = MclLog.read(path).start
+        except MclLogError as exc:
+            raise RunError(f"{path}: {exc}") from None
+    else:
+        _, poses = logged_path(path)
+        x, y, theta = poses[0]
+        heading = math.degrees(theta)
     return (round(x, 2), round(y, 2), round(heading % 360, 2))
 
 
@@ -417,7 +451,6 @@ def _check_route(prepared: Prepared, named: RunSpec, text: str | None = None) ->
 
 
 def _path_to_follow(spec: RunSpec, named: RunSpec):
-    from vexsim.mcllog import MclLog, MclLogError
     from vexsim.runtime.follow import LoggedPath
 
     if spec.input:
@@ -427,10 +460,7 @@ def _path_to_follow(spec: RunSpec, named: RunSpec):
     shown = named.follow.log
     if not Path(spec.follow.log).is_file():
         raise RunError(f"log not found: {shown}")
-    try:
-        return LoggedPath(*MclLog.read(spec.follow.log).path())
-    except MclLogError as exc:
-        raise RunError(f"{shown}: {exc}") from None
+    return LoggedPath(*logged_path(spec.follow.log, shown))
 
 
 WALLS = "the walls"
