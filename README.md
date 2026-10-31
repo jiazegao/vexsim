@@ -1166,13 +1166,18 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
   ```
 
 ### A calibration session on a full field
-The routine above needs open floor. A *session* tests each part of the robot on its own, on a field with the season's elements in place, from a program of its own in a spare slot (phase 14; the fits that read its logs come in 14.4):
+The routine above needs open floor. A *session* tests each part of the robot on its own, on a field with the season's elements in place, from a program of its own in a spare slot (phase 14):
 ```
 vexsim calibration plan ROBOT.yaml FIELD.yaml --out plan              # where each test fits
 vexsim calibration program ROBOT.yaml FIELD.yaml vexsim_calibration   # after: pros c n vexsim_calibration
+vexsim calibration collect SESSION --from-card                       # after the session: its logs
+vexsim calibrate ROBOT.yaml SESSION --field FIELD.yaml                # fit them; --apply writes them
 ```
 - **The plan** simulates each driving test (straight, spin, arc; strafe for drives that can) over a spread of what the uncalibrated robot might be (it may roll further, stop sooner, slide or grip more than its config says) and finds a spot on the field where the robot's shape, swept along every one of those paths, stays a margin (`--margin`, 6 in) clear of the walls and of every element, those it could drive over included. A test with no room is slowed down, and failing that, the plan names what's in the way. It also picks a lane to push the robot along by hand, and spots for the slow spin (tracking wheels) and the distance sweeps. Each spot is given as distances from two walls, and drawn on a map (`plan/map_6_straight.png`).
 - **The program** (`src/main.cpp` and a header for the robot, with vexsim's logger) shows the tests in order on the brain and the controller, each with what to do: a device check (every device answers; each side's wheels spin forward, the robot on its side; the IMU and tracking wheels count the right way; a hand over each distance sensor finds which is which), a free spin on its side, the IMU still and turned by hand, the push, the driving tests three times each, and the spins. A test that turns the wheels waits for the robot to be still and counts down from 3 with a rumble; any button stops every motor at once, and so does going further than the plan's simulations did. Each run is logged to the SD card.
+
+- **Collecting** copies the logs off the card (`--from-card` finds it; `--from FOLDER`, or `--usb` around `pros terminal` without a card) into `SESSION/runs/`, checks each run and lists it in `SESSION/session.yaml`, where `use: false` leaves a run out.
+- **Fitting** goes test by test, each fit using what the ones before found: the motors from the free spin (and whether voltage commands are capped at rated speed), the IMU's scale error and noise, the wheels' diameters from the push, where the tracking wheels are from the slow spin, the drive's friction and rolling resistance from every driving run but one, held out to check the result, then the distance sensors' noise, range, misses at glancing angles and confidence from the sweeps. A failed device check stops it, saying what to fix. `SESSION/report/report.md` has each value before and after, how well the logs pin it down, and plots; `--apply` writes the values they pin down into the robot YAML, its comments kept, and the routes' `drive:` line is printed.
 
 It runs unchanged in vexsim, where `vexsim/calibration/student.py` plays the student: it reads what the program asks, presses the buttons, lays the robot on its side, puts it on each spot, pushes and turns it by hand. [docs/calibration.md](docs/calibration.md#a-calibration-session-the-plan-and-the-program) has the details.
 
@@ -1317,7 +1322,7 @@ from vexsim.bench.runner import run_bench
 result = run_bench("examples/scenarios/pose_approach.yaml", seeds=[0, 1, 2], workers=1)
 print(result.combos(), result.rows[0]["final_error_in"])
 ```
-`vexsim.calibration.log.RobotLog.read(path)`, `vexsim.calibration.fit.fit(config, log, parameters)` and `compare(config, log, overrides)` do what `vexsim calibrate` does.
+`vexsim.calibration.log.RobotLog.read(path)`, `vexsim.calibration.fit.fit(config, log, parameters)` and `compare(config, log, overrides)` do what `vexsim calibrate` does with a log; for a session, `vexsim.calibration.session_fit.calibrate(config, Session.open(folder), field, workers=4)` (`Session` from `vexsim.calibration.session`) returns each step's values, the calibrated config and the held-out run, and `vexsim.calibration.report.write_report` and `apply_changes` write the report and the robot YAML. Call them under `if __name__ == "__main__":`, as with any code that runs worker processes.
 
 ---
 

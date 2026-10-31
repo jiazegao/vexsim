@@ -115,6 +115,35 @@ jobs:
             bench/
             bench_lemlib/
 
+  # Whole calibration sessions of simulated "real" robots, recorded and fitted (PLAN.md 14.4):
+  # minutes each, so in a job of their own, beside the others; plain pytest leaves them out.
+  sessions:
+    name: Calibration sessions
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -e ".[dev,viz]"
+
+      - name: Record and fit the sessions
+        shell: bash
+        timeout-minutes: 40
+        run: pytest -m session --junitxml=pytest.xml -o faulthandler_timeout=900 2>&1 | tee pytest.log
+        env:
+          VEXSIM_REQUIRE_CXX: "1"
+          PYTHONUNBUFFERED: "1"
+
+      - name: Report test failures as annotations
+        if: failure()
+        run: python .github/scripts/pytest_annotations.py pytest.xml pytest.log
+
   frontend:
     name: Browser app
     runs-on: ubuntu-latest

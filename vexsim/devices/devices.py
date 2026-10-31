@@ -263,27 +263,83 @@ class DistanceDevice(Device):
         self.height = None if cfg.height_in is None else in_to_m(cfg.height_in)
         self.half_size = (in_to_m(field.size_in[0]) / 2, in_to_m(field.size_in[1]) / 2)
         self.blocked_mm: float | None = None  # something held in front of it (a hand): this far
+        self.confidence = 0  # the published reading's (0 to 63; 0 with none)
+        self._confidences: deque[int] = deque()  # each pending reading's
 
-    def true_distance_mm(self) -> float | None:
-        if self.blocked_mm is not None:
-            return self.blocked_mm
+    def _beam(self) -> tuple[float, float, float]:
+        """Where the sensor is (m, field frame) and which way it points (rad)."""
         x, y, heading = self.robot.pose
         c, s = math.cos(heading), math.sin(heading)
         ox = x + c * self.mount[0] - s * self.mount[1]
         oy = y + s * self.mount[0] + c * self.mount[1]
+        return ox, oy, heading + self.heading
+
+    def true_distance_mm(self) -> float | None:
+        if self.blocked_mm is not None:
+            return self.blocked_mm
+        ox, oy, angle = self._beam()
         if self.arena is not None:
-            meters = self.arena.ray((ox, oy), heading + self.heading, height=self.height)
+            meters = self.arena.ray((ox, oy), angle, height=self.height)
             return None if meters is None else meters * 1000.0
-        return ray_to_walls(ox, oy, heading + self.heading, *self.half_size)
+        return ray_to_walls(ox, oy, angle, *self.half_size)
+
+    def incidence_deg(self, mm: float) -> float:
+        """How far off square the beam meets what it hits ``mm`` away: the angle between the
+        beam and the surface's normal, by the wall, element or piece nearest the hit."""
+        if self.blocked_mm is not None:
+            return 0.0
+        ox, oy, angle = self._beam()
+        beam = np.array([math.cos(angle), math.sin(angle)])
+        hit = np.array([ox, oy]) + beam * (mm / 1000.0)
+        hx, hy = self.half_size
+        if hx - abs(hit[0]) < hy - abs(hit[1]):
+            nearest, normal = hx - abs(hit[0]), np.array([1.0, 0.0])
+        else:
+            nearest, normal = hy - abs(hit[1]), np.array([0.0, 1.0])
+        if self.arena is not None:
+            for shape in self.arena.obstacles:
+                if (
+                    self.height is not None
+                    and shape.height is not None
+                    and shape.height <= self.height
+                ):
+                    continue  # the beam passes over it
+                gap, out, _ = shape.signed_distance(hit)
+                if abs(gap) < abs(nearest):
+                    nearest, normal = gap, out
+            for center, radius in zip(
+                self.arena.pieces.position, self.arena.pieces.radius, strict=True
+            ):
+                offset = hit - center
+                gap = math.hypot(*offset) - radius
+                if abs(gap) < abs(nearest) and gap > -radius:
+                    nearest, normal = gap, offset / max(math.hypot(*offset), 1e-12)
+        return math.degrees(math.acos(min(1.0, abs(float(beam @ normal)))))
 
     def measure(self, now_us: int) -> int | None:
         spec = self.spec
         true = self.true_distance_mm()
         if true is None or not spec.min_range_mm <= true <= spec.max_range_mm:
+            self._confidences.append(0)
+            return None
+        shaped = spec.glancing_miss or spec.confidence_per_m or spec.confidence_per_deg
+        angle = self.incidence_deg(true) if shaped else 0.0
+        glancing = angle > spec.glancing_deg and true > spec.glancing_mm
+        if spec.glancing_miss and glancing and self.rng.random() < spec.glancing_miss:
+            self._confidences.append(0)
             return None
         sigma = spec.short_noise_mm if true < 200.0 else spec.long_noise_fraction * true
         reading = true + (self.rng.normal(0.0, sigma) if sigma else 0.0)
+        lost = (
+            spec.confidence_per_m * max(true / 1000.0 - 0.2, 0.0) + spec.confidence_per_deg * angle
+        )
+        self._confidences.append(int(min(max(round(63 - lost), 0), 63)))
         return max(round(reading), 0)
+
+    def publish(self, now_us: int) -> None:
+        while self._pending and self._pending[0][0] <= now_us:
+            self.published_at_us, self.value = self._pending.popleft()
+            self.confidence = self._confidences.popleft()
 
 
 class GpsDevice(Device):

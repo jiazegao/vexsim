@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from vexsim.config.field import FieldConfig
 from vexsim.core.rng import RngStreams
@@ -19,6 +20,11 @@ from vexsim.devices.specs import sensor_spec
 from vexsim.physics.robot import Robot
 from vexsim.physics.world import PRIORITY_SENSOR, World
 
+STATIC = {  # each device's own errors, drawn once: not noise
+    "rotation": {"diameter_error": 0.0, "offset_error_in": 0.0},
+    "imu": {"scale_error": 0.0, "raw_bias_deg_s": 0.0},
+}
+
 
 class SensorSuite:
     """Builds one device per port from the robot config and samples them.
@@ -28,7 +34,8 @@ class SensorSuite:
 
     ``noise`` overrides every sensor's configured preset (``ideal``, ``default``
     or ``harsh``). Robot-config overrides like ``sensor.imu.scale_error`` apply
-    on top of the preset.
+    on top of the preset. ``noise_only`` reads every sensor every millisecond with no
+    latency, as a replay does, and without per-device errors: only its noise.
     """
 
     def __init__(
@@ -39,6 +46,7 @@ class SensorSuite:
         field: FieldConfig | None = None,
         noise: str | None = None,
         arena=None,
+        noise_only: bool = False,
     ):
         self.robot = robot
         field = field or FieldConfig()
@@ -46,7 +54,10 @@ class SensorSuite:
         self.devices: dict[int, Device] = {}
 
         def spec(kind: str, preset: str):
-            return sensor_spec(kind, noise or preset, overrides.get(kind))
+            found = sensor_spec(kind, noise or preset, overrides.get(kind))
+            if noise_only:  # a replay's timing and no per-device errors: the noise alone
+                found = replace(found, period_ms=1.0, latency_ms=0.0, **STATIC.get(kind, {}))
+            return found
 
         def streams(kind: str, port: int):
             return rng.stream(f"sensor.{kind}.{port}"), rng.stream(f"sensor.{kind}.{port}.static")

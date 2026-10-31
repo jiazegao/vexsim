@@ -102,7 +102,8 @@ def side_samples(config: RobotConfig, log: RobotLog) -> list[tuple[np.ndarray, .
             continue
         v = np.nanmean(speed, axis=0)
         smooth = np.convolve(np.nan_to_num(v), np.ones(5) / 5, mode="same")  # readings jitter
-        a = np.gradient(smooth, t) if len(t) > 2 else np.zeros_like(v)
+        with np.errstate(divide="ignore", invalid="ignore"):  # rows logged at the same time
+            a = np.gradient(smooth, t) if len(t) > 2 else np.zeros_like(v)
         out.append((t, np.nanmean(volts, axis=0), v, a, np.all(driven, axis=0)))
     return out
 
@@ -111,6 +112,23 @@ def fit(config: RobotConfig, log: RobotLog) -> DriveModel | None:
     """kS, kV, kA and kT fitted to ``log`` (both sides together), and the limits that follow;
     None if the log has too little driving in it to tell. (A log without turns says nothing
     of kT: it's 0.)"""
+    return fit_logs(config, [log])
+
+
+def fit_logs(config: RobotConfig, logs: list[RobotLog]) -> DriveModel | None:
+    """``fit`` over several logs together (a calibration session's driving runs)."""
+    parts = [part for log in logs if (part := _rows(config, log)) is not None]
+    if not parts:
+        return None
+    rows = [r for part in parts for r in part[0]]
+    targets = [t for part in parts for t in part[1]]
+    turns = [t for part in parts for t in part[2]]
+    return _solve(config, rows, targets, turns)
+
+
+def _rows(config: RobotConfig, log: RobotLog):
+    """One log's least-squares rows (sign, speed, acceleration, turning), each side's
+    voltages, and which rows turned the robot; None without both sides."""
     samples = side_samples(config, log)
     if len(samples) != 2:
         return None
@@ -124,10 +142,15 @@ def fit(config: RobotConfig, log: RobotLog) -> DriveModel | None:
         edge = np.zeros(len(v), dtype=bool)
         edge[2:-2] = True  # the smoothing's ends
         use = driven & edge & np.isfinite(volts) & np.isfinite(v) & (np.abs(v) >= MIN_SPEED)
+        use &= np.isfinite(a)
         use &= np.isfinite(w) & ~sliding
         rows.append(np.column_stack([np.sign(v[use]), v[use], a[use], side * turning(w[use])]))
         targets.append(volts[use])
         turns.append(np.abs(w[use]) > TURNED)
+    return rows, targets, turns
+
+
+def _solve(config: RobotConfig, rows, targets, turns) -> DriveModel | None:
     if sum(len(r) for r in rows) < 20:
         return None
     x, y = np.vstack(rows), np.concatenate(targets)

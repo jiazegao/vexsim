@@ -64,8 +64,9 @@ torque_out  = G * torque_core,   w_core = G * w_out,   G = 36 / 18 / 6 (red / gr
   - Result: overshoot ≤ 1.5% and settling in 0.05–0.5 s for drivetrain-like loads (4–40× rotor inertia).
   - A load step of 30% of stall torque recovers fully in about 0.4 s.
   - Gains are an **estimate**; VEX does not publish the internal controller.
-- **Voltage mode (`move_voltage`).** Applies the commanded voltage, ±12 V, limited by the battery. It is **not speed-capped**, so 12 V spins about 13% past rated speed (113 rpm on the red cartridge).
+- **Voltage mode (`move_voltage`).** Applies the commanded voltage, ±12 V, limited by the battery. By default it is **not speed-capped**, so 12 V spins about 13% past rated speed (113 rpm on the red cartridge).
   - **Unverified**, and the first thing to measure on a real robot (see below).
+  - `motor.voltage_cap` holds voltage commands to that fraction of rated speed, as a firmware that caps them would (1.0: rated speed; 0, the default: no cap). The command still sets the voltage, but no more than the velocity loop would apply to hold the cap. A calibration session's free spin tells which a robot does ([calibration.md](calibration.md#collecting-and-fitting-a-session)).
 - **Position mode and hold.** A position P loop (15 /s) produces a velocity target, which feeds the velocity loop above. `HOLD` captures the position at the moment the motor stops, holds it within 1° under half of stall torque, and springs back after overshooting.
 - **Zero commands.** `move_voltage(0)` and `move_velocity(0)` stop the motor using its brake mode.
   - The PROS docs state this for `brake()` and velocity 0. For voltage 0 it's an **assumption**, to be verified in Phase 7.
@@ -314,7 +315,7 @@ Pieces don't spin. Robots can't drive over or pick them up: intakes and scoring 
 | Motor encoder | 10 ms; 50 counts per motor-core rev (1800/900/300 per output rev); velocity noise 0.5% of rated | counts: PROS; rest estimates |
 | Rotation sensor | 10 ms; 0.088° resolution; 0.02° noise; per-wheel diameter error 0.5% and mounting error 0.05 in; scrub 1% of sideways travel | 10 ms: [PROS][rot]; 0.088°: retailer spec sheet ([RS][rot-rs]); rest estimates |
 | IMU | 10 ms; 2 s calibration; gyro bias 0.3°/s, removed by calibration; 0.05°/s rate noise; per-device scale error 0.5%, **not** removed by calibration | calibration and scale behavior: [VEX API][imu]; drift level: [VEX Forum][imu-drift]; rest estimates |
-| Distance | ~30 Hz; 20–2000 mm; σ 7.5 mm below 200 mm, 2.5% above; sees walls, obstacles and pieces | range and accuracy (±15 mm / ±5%, taken as ~2σ): [VEX][dist]; rate: VEX Forum |
+| Distance | ~30 Hz; 20–2000 mm; σ 7.5 mm below 200 mm, 2.5% above; sees walls, obstacles and pieces; by default never misses and reports confidence 63 | range and accuracy (±15 mm / ±5%, taken as ~2σ): [VEX][dist]; rate: VEX Forum |
 | GPS | 20 ms, 20 ms latency; fix while its camera sees the code strip 0.3–4 m away; position σ 5 mm + 4 mm per meter to the strip; heading σ 0.3° | update rate "at worst 20 Hz": VEX Forum; rest estimates |
 
 **Rotation sensor (tracking wheel).** The wheel's rotation is integrated every physics step from the true contact velocity at its *true* mounting point with its *true* diameter. The localizer only knows the configured geometry, so per-device errors show up as odometry error, as on a real robot. The harsh preset adds random lift-off moments, when the wheel stops counting.
@@ -367,12 +368,14 @@ X-drive, mecanum and H-drive robots slide sideways on purpose, so drive encoders
 
 **GPS correction** (`GpsCorrected`) is a complementary filter: every fresh GPS fix pulls the odometry position a fraction `dt / 0.5 s` of the way toward the GPS. Position errors then decay over about half a second while GPS noise averages out; heading stays with the IMU. A fix shows where the robot was 30 ms earlier, so it is compared with the odometry from then. Fixes with a reported error above 5 cm are ignored. On the aggressive drive it cuts the tracking-wheel baseline's final error by about half (`tests/test_gps.py`), and on long runs it keeps odometry drift from growing.
 
+**Distance sensors that miss.** Real distance sensors lose a surface the beam meets at a glancing angle far away, and report less confidence with distance and angle ([1239e_real_vs_sim.md](1239e_real_vs_sim.md)). `sensor.distance.glancing_miss` is how often a beam more than `glancing_deg` off square, meeting something more than `glancing_mm` away, reads nothing; the confidence (0 to 63) is 63, less `confidence_per_m` per meter past 0.2 m and `confidence_per_deg` per degree off square. The angle is the beam's against the surface it hits: the wall, element or piece nearest the hit. With the defaults (no misses, no loss of confidence) nothing changes; a calibration session's distance sweeps measure them.
+
 ## Calibrating against a real robot
-`vexsim calibrate` fits the wheel parameters (and the battery's resistance) to a log of your robot driving a short routine; [calibration.md](calibration.md) walks through it. The quick experiments below measure other estimates directly.
+A calibration session ([calibration.md](calibration.md#a-calibration-session-the-plan-and-the-program)) measures most of these on your robot: the motors (with whether voltage mode is capped), the IMU's scale error and noise, the wheels' diameters, the drive's friction and rolling resistance, the tracking wheels' positions and the distance sensors. `vexsim calibrate` also fits the wheel parameters (and the battery's resistance) to a log of a short routine. The quick experiments below measure other estimates directly.
 
 1. **Voltage-mode free speed.** Run `move_voltage(12000)` on a motor with nothing attached and log `get_actual_velocity()` for 3 s.
    - About 113% of rated speed confirms the model.
-   - About 100% means voltage mode is also capped, so set the cap in the model.
+   - About 100% means voltage mode is also capped, so set the cap in the model (`motor.voltage_cap: 1.0`).
 2. **Thermal timing.** Stall a motor against a hard stop with `move_velocity(max)` and log `get_temperature()` and `is_over_temp()` every second until it derates. Fit the thermal capacities and the derating onset.
 3. **Battery sag.** Log `pros::battery::get_voltage()` and `get_current()` while all drive motors push against a wall. Fit the internal resistance.
 4. **Velocity loop.** Step `move_velocity` from 0 to max on the robot's drivetrain and log the velocity. Fit `velocity_kp` and `velocity_ki`.

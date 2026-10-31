@@ -79,6 +79,7 @@ struct RotationPort {
 
 struct DistancePort {
 	std::int32_t mm = -1;
+	std::int32_t confidence = 63;
 };
 
 struct GpsPort {
@@ -370,8 +371,11 @@ bool devices_reading(const char* line) {
 			return true;
 		}
 		case 'd': {
-			int mm;
-			if (std::sscanf(line + 1, "%d %d", &port, &mm) == 2 && port >= 1 && port <= 21) D().distance[port].mm = mm;
+			int mm, confidence = 63;
+			if (std::sscanf(line + 1, "%d %d %d", &port, &mm, &confidence) >= 2 && port >= 1 && port <= 21) {
+				D().distance[port].mm = mm;
+				D().distance[port].confidence = confidence;
+			}
 			return true;
 		}
 		case 'g': {
@@ -964,7 +968,7 @@ int32_t distance_get(uint8_t port) {
 
 int32_t distance_get_confidence(uint8_t port) {
 	if (!check_port(port, Kind::distance)) return PROS_ERR;
-	return D().distance[port].mm < 0 ? 0 : 63;
+	return D().distance[port].mm < 0 ? 0 : D().distance[port].confidence;
 }
 
 int32_t distance_get_object_size(uint8_t port) {

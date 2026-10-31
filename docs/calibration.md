@@ -154,9 +154,11 @@ Motors come first, every one of them (the drive's and the mechanisms'), then the
 - **No sensor errors.** Sensors read without noise or per-device errors, which the model can't know for your particular robot.
 - **Reading age.** A reading is a few ms old by the time robot code sees it: the sensor's latency, plus however long ago its last 10 ms update was. That depends on the phase between the logger's loop and the sensor, and it stays the same through a run. The replay finds it from the motor currents, which jump the moment a command changes, and compares each row with the state that long before.
 - **Battery.** The motors see the battery voltage the log recorded, so battery modeling errors stay out of the fit.
-- **Motors without logged commands** are driven with their logged voltage. That voltage is itself a reading, so it is applied a little early; the replay tries leads from 0 to 25 ms and keeps the one that fits.
+- **Motors without logged commands** are driven with their logged voltage. That voltage is itself a reading, so it is applied a little early; the replay tries leads from 0 to 25 ms and keeps the one that fits. (A motor that was never driven, such as a mechanism the calibration program leaves alone, needs no commands.)
+- **Measured device errors.** An IMU with a `scale_error` in the robot config reads with it, as the real one does; other sensors read as if ideal.
+- **Lifted.** A free spin is replayed with the robot on its side (`lifted`): no ground force, so the wheels spin free and only the motors and gears load them.
 
-The robot starts at rest on an endless floor, so start every log with the robot at rest and away from walls.
+The robot starts at rest on an endless floor, its IMU calibrated, so start every log with the robot at rest and away from walls. The fit's replays leave the distance sensors out (it doesn't compare them), which makes them faster.
 
 The fit itself (`vexsim/calibration/fit.py`) is Levenberg-Marquardt over the logarithms of the parameters, so values stay positive and steps are relative. Each step costs one replay per parameter, for a finite-difference Jacobian.
 
@@ -172,7 +174,7 @@ The routine above needs open floor and fits everything from one run. A session (
 vexsim calibration plan ROBOT.yaml FIELD.yaml --out plan
 vexsim calibration program ROBOT.yaml FIELD.yaml vexsim_calibration   # in a project made with pros c n
 ```
-`program` plans too (into `vexsim_calibration/plan/`), then writes the program. Put it on the robot with `pros upload --slot 8` and run it from the brain's screen; no competition switch is needed. The fits that read a session's logs are phase 14.4's.
+`program` plans too (into `vexsim_calibration/plan/`), then writes the program. Put it on the robot with `pros upload --slot 8` and run it from the brain's screen; no competition switch is needed. Then collect its logs and fit them ([Collecting and fitting a session](#collecting-and-fitting-a-session)).
 
 ### The plan
 `vexsim/calibration/plan.py` finds where each test that moves the robot fits:
@@ -241,15 +243,107 @@ from vexsim.calibration.student import Student
 from vexsim.config import load_field, load_robot
 from vexsim.runtime.simulation import Simulation
 
-config, field = load_robot("robot.yaml"), load_field("field.yaml")
-plan = make_plan(config, field)
-write_program(config, plan, "calibration_program")
-built = build_project("calibration_program")
-student = Student(plan, config, ["device_check", "free_spin", "straight"])
-sim = Simulation(config, program=CppProgram(built.executable, env={"VEXSIM_SD_DIR": "/abs/sd"}),
-                 field=field, input_source=student, start=student.start)
-student.attach(sim)
-sim.start("driver")
-sim.run_until_finished(900)  # the logs are in /abs/sd; student.runs has each run's true path
+
+def main():
+    config, field = load_robot("robot.yaml"), load_field("field.yaml")
+    plan = make_plan(config, field)  # in worker processes: hence main(), below
+    write_program(config, plan, "calibration_program")
+    built = build_project("calibration_program")
+    student = Student(plan, config, ["device_check", "free_spin", "straight"])
+    sim = Simulation(config, program=CppProgram(built.executable, env={"VEXSIM_SD_DIR": "/abs/sd"}),
+                     field=field, input_source=student, start=student.start)
+    student.attach(sim)
+    sim.start("driver")
+    sim.run_until_finished(900)  # the logs are in /abs/sd; student.runs has each run's true path
+
+
+if __name__ == "__main__":  # worker processes import this file: only the first runs main()
+    main()
 ```
-On 1239E's robot and field, the whole session (every test, 18 logs) takes 4.6 minutes of simulated time, about a minute to run.
+The student holds the robot firmly at the end of each move, as a person lines it up on the tape (otherwise friction would leave it a couple of degrees short of 10 turns).
+On 1239E's robot and field, the whole session (every test, 18 logs) takes 4.6 minutes of simulated time, about a minute and a half to run.
+
+## Collecting and fitting a session
+After the session, the logs come off the card and into a session folder, and vexsim fits them, test by test:
+```
+vexsim calibration collect SESSION --from-card
+vexsim calibrate ROBOT.yaml SESSION --field FIELD.yaml
+vexsim calibrate ROBOT.yaml SESSION --field FIELD.yaml --apply
+```
+
+### Collecting
+`collect` copies the program's logs that the session doesn't have yet into `SESSION/runs/` (the same log twice is copied once; two different logs with one name are both kept, the second as `vexsim_0007_spin.2.csv`), and lists each run in `SESSION/session.yaml`: its file, test, run, when it started, how it ended, its quality, whether the fit uses it (`use`), and its warnings. Where the logs come from:
+- `--from-card` finds the brain's card in this computer: the drive (`D:` to `Z:`) on Windows, under `/Volumes` on macOS, `/media` or `/run/media` on Linux, with `vexsim_NNNN_*.csv` logs at its root; with several, the one written last.
+- `--from FOLDER` takes them from a folder (a copy of the card).
+- `--usb` runs `pros terminal` (`--command` for another) and saves each log the program prints with no card in the brain, between `#vexsim-log begin` and `#vexsim-log end`, as it arrives, until Ctrl+C.
+
+Each run is checked: it must be the calibration program's (`program: vexsim calibration`) and the session's robot's (the first log names it). A run that was stopped or didn't finish, a device check that failed, IMU turns more than 5% from 10 turns, and a run that "slowed suddenly" (did it hit something?) get `use: false`, their quality saying why. `use: false` is the students' to set too, to leave a run out.
+
+### Fitting
+`vexsim calibrate ROBOT.yaml SESSION` fits each test into what it measures, in an order where each fit uses the values the ones before found (`vexsim/calibration/session_fit.py`). `--workers` sets how many replays run at once (the CPUs, up to 8); a session takes under 3 minutes on 4.
+
+| Step | From | Sets |
+|---|---|---|
+| Device check | the last device check | nothing: if it failed, the fit stops and lists what to fix |
+| Free spin | the free spin, replayed with the robot lifted | `motor.voltage_cap` (whether voltage commands are held to rated speed), `motor.natural_free_rpm`, `free_current_a`, `coulomb_fraction`, `velocity_kp`; `sensor.motor.velocity_noise` |
+| IMU | the 10 turns each way; the still log | the IMU's `scale_error`; `sensor.imu.heading_noise_deg`, `rate_noise_deg_s`, `bias_walk_deg_s` |
+| Push | the push each way, replayed | each drive group's wheels' `diameter_in`; a tracking wheel's that rolls along |
+| Slow spin | the slow spin, against its replay | each tracking wheel's `pos_in`, across its wheel |
+| Drive | every driving run but the last, at once | the wheels' friction and rolling resistance (`wheel.omni.longitudinal_mu`, `lateral_mu`, `rolling_resistance`, or the traction or mecanum ones); `battery.internal_resistance_ohm` |
+| Again | | the push, the slow spin and the drive, with the friction found |
+| Distance sweeps | the sweeps, against what each sensor should have read | `sensor.distance.long_noise_fraction` (and `short_noise_mm`, with readings under 200 mm), `max_range_mm`, `glancing_miss`, `glancing_deg`, `glancing_mm`, `confidence_per_m`, `confidence_per_deg` |
+| Drive model | the driving runs, as logged | kS, kV, kA, kT for the robot's routes (the printed `drive:` line) |
+
+How each works:
+- **Free spin.** Whether voltage mode is capped comes first, from the steady speeds: a free V5 motor runs about 34% faster at 12 V than at 9 V, past its rated speed; a capped one stops at rated speed (under 1.25 times its 9 V speed). Then the four motor values are fitted to the log, replayed with the robot on its side (`lifted`: nothing but the motors and gears load them). `velocity_ki` isn't: a free spin can't tell it. The speed readings' spread while each voltage holds is their noise.
+- **IMU.** The scale error is the turns' reading over 3600 degrees, less 1, averaged over both ways. The noise comes from the still log's Allan variance: a reading's own noise falls as 1/τ², the rate's white noise as 1/τ, a wandering bias grows as τ; 60 s pins down the first, hardly the others (the report says so, and `--apply` leaves them).
+- **Push.** The push is replayed: the simulated robot, motors coasting, pushed along the lane by a hand as fast at each moment as the log's wheels say the real one went, until its wheels turn as far as the real ones did. A plain ratio of the lane's length to the wheels' travel would be off by how much coasting wheels creep (about 2% on 1239E), which depends on the friction: hence the second round, with the friction the drive found.
+- **Slow spin.** A tracking wheel rolls, per radian the robot turns, as far as it is from the center of the turn, across its wheel; the IMU says how far the robot turned (its scale error taken out). The replayed spin, with the wheel where the config says, rolls the same way about wherever the robot really turns about: the difference moves the wheel. A sideways wheel's diameter can't be measured by the push, so its position takes the config's diameter.
+- **Drive.** All the driving runs but the last are fitted at once (`fit.fit_logs`: each run its own replay and timing, each weighing the same). The last run, which the fit never saw, is replayed with what it found: it **matches** if each group of readings is within 1.5 times the sensors' noise (motor speed: their noise, 0.5% of rated; IMU rate: its readings' noise over 30 ms; tracking wheels the same; motor current: 0.1 A).
+- **Distance sweeps.** For each reading, what the sensor should have read: a ray from where the config puts it, the robot on the sweep's spot (its `spot` line) turned as the IMU says, to the walls and elements (as the sensor's height sees them; game pieces are left out, as the students cleared them). How much older the readings are than the IMU's is found too, as the age that fits best. Then:
+  - *noise*: from each new reading against its neighbours (the second difference, which a slowly turning beam hardly curves), over beams within 40 degrees of square;
+  - *range*: beams within 30 degrees of square come back out to here, and no further;
+  - *misses*: the angle and distance past which beams miss, by likelihood over a grid, and how often, from the beams well inside that (where a small error in the robot's pose can't move a beam across the edge);
+  - *confidence*: least squares of 63 less it, on how far past 0.2 m and how far off square.
+  A sensor that reads more than 8% off what it should, near square, is named: its `pos_in` or `heading_deg` is likely wrong.
+
+### Pinned down, and what --apply writes
+Every value has an uncertainty (one standard deviation: from the fit's Jacobian, the runs' spread, or how many readings told) and a tolerance; the logs **pin it down** when the uncertainty is within the tolerance:
+
+| Value | Tolerance |
+|---|---|
+| wheel diameters (drive and tracking) | 0.5% |
+| IMU `scale_error` | 0.0005 (1.8 degrees in 10 turns) |
+| tracking wheel `pos_in` | 0.1 in |
+| `motor.natural_free_rpm` | 1% |
+| `motor.free_current_a`, `coulomb_fraction`, `velocity_kp`, `battery.internal_resistance_ohm` | 10% |
+| wheel friction and rolling resistance | 5% |
+| `motor.voltage_cap` | 0.02 |
+| IMU noise: heading, rate, bias walk | 20%, 25%, 50% |
+| distance: `long_noise_fraction`, `short_noise_mm`; `confidence_per_m`, `confidence_per_deg` | 20%, 25%; 15% |
+| distance: `max_range_mm`, `glancing_miss`, `glancing_deg`, `glancing_mm` | 100 mm, 0.1, 5 degrees, 250 mm |
+
+`--apply` writes what the logs pin down and differs from the config's by more than half its tolerance, into the robot YAML in place (`vexsim/app/yamledit.py`): wheel diameters into each wheel, the IMU's scale error and the tracking wheels' fields into their sensors, the rest under `overrides` (a new `overrides:` section at the end if there's none). Every comment stays, and a comment at the top names the session (`# Calibrated from session SESSION on DATE`, replacing an earlier one). If the result isn't a valid config, the file is left as it was.
+
+### The report
+`SESSION/report/`:
+- `report.md`: whether the held-out run matches, the warnings, what `--apply` writes, the drive model's `drive:` line, then each step: its runs, a table of each value (before, after, how well it's known, pinned or not, and why one isn't written), the RMS difference of simulated against logged before and after, its notes and warnings.
+- `changes.yaml`: what `--apply` writes, by where it goes (`overrides["motor.voltage_cap"]`, `drivetrain.wheels[0].diameter_in`, `sensors[6].scale_error`), and the drive line.
+- with matplotlib: `free_spin.png` (the free spin against its replay, before and after), `held_out.png` (the held-out run against its replay) and `distance.png` (each sensor's readings against what it should have read, the misses marked).
+
+### How well it works
+The tests (`tests/test_calibration_sessions.py`, `pytest -m session`; CI runs them in a job of their own) run the program in vexsim on "real" robots that differ from their configs in ways the fit isn't told: wheels 3.20 in (the config says 3.25), an IMU further off than the config says, omni friction 0.75 (vexsim's default is 0.9), roller friction 0.25, rolling resistance 0.13, voltage commands held to rated speed, and the real distance sensors (0.3% noise, 2300 mm range, 90% of beams lost past 45 degrees and 1500 mm, confidence falling 8 per meter and 0.25 per degree). The student runs the whole session, `collect` takes the card, `calibrate` fits it:
+
+| | 1239E (no tracking wheels, 5 distance sensors) | `full_omni_6m` (two tracking wheels) | truth |
+|---|---|---|---|
+| wheel diameter | 3.2001 in | 3.2082 in | 3.20, 3.21 in |
+| IMU scale error | 0.00502 | 0.00398 | 0.0050, 0.0040 |
+| voltage cap | 1 | 1 | 1 |
+| longitudinal, lateral, rolling | 0.746, 0.250, 0.130 | 0.750, 0.250, 0.130 | 0.75, 0.25, 0.13 |
+| tracking wheels | | 2.0444 in; y −1.759 in; x −3.322 in | as built: 2.0444; −1.759; −3.321 |
+| distance noise, range | 0.32%, 2290 mm | 0.32%, 2290 mm | 0.3%, 2300 mm |
+| glancing misses | 85% past 45° and 1500 mm | 88% past 45° and 1500 mm | 90%, 45°, 1500 mm |
+| confidence per m, per degree | 8.01, 0.242 | 8.23, 0.245 | 8, 0.25 |
+| held-out run (motor speed; IMU rate) | 2.97 rpm (noise 2.85); 0.45 deg/s (0.50) | 3.00 rpm (3.05); 0.52 deg/s (0.46) | |
+
+The motors (121 rpm, 0.15 A, 0.3, kp 2) and the battery (0.1 Ω) come back as vexsim's own, as they should, so `--apply` leaves them. Each fit takes under 3 minutes on 4 CPUs. A robot whose motor 9 runs backward and whose distance sensors on ports 1 and 8 are swapped stops at the device check, the error naming both.

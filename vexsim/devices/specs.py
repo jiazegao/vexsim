@@ -78,9 +78,20 @@ class DistanceSensorSpec:
     max_range_mm: float = 2000.0
     short_noise_mm: float = 7.5  # std. dev. below 200 mm (VEX: about +/-15 mm)
     long_noise_fraction: float = 0.025  # std. dev. above 200 mm (VEX: about +/-5%)
+    # Real sensors miss surfaces met at a glancing angle far away: past glancing_deg off
+    # square and glancing_mm, a reading is missed this often (0: never).
+    glancing_miss: float = 0.0
+    glancing_deg: float = 45.0
+    glancing_mm: float = 1500.0
+    # The confidence (0 to 63) a reading comes with: 63, less this per meter past 0.2 m and
+    # per degree off square.
+    confidence_per_m: float = 0.0
+    confidence_per_deg: float = 0.0
 
     def __post_init__(self) -> None:
         _check(self, "sensor.distance")
+        if self.glancing_miss > 1:
+            raise ValueError("sensor.distance.glancing_miss is a probability: 0 to 1")
 
 
 @dataclass(frozen=True)

@@ -14,9 +14,8 @@ from vexsim.units import rad_s_to_rpm
 NAN = math.nan
 BRAKE_CODE = {BrakeMode.COAST: 0, BrakeMode.BRAKE: 1, BrakeMode.HOLD: 2}  # PROS enum values
 PERIOD_MS = 10
-# What the simulated distance sensors report besides the distance, as the robot code sees it
-# (bridge/cpp/runtime/devices.cpp): the most confidence there is, and a large object (a wall)
-DISTANCE_CONFIDENCE = 63
+# What the simulated distance sensors report besides the distance and its confidence, as the
+# robot code sees it (bridge/cpp/runtime/devices.cpp): a large object (a wall)
 DISTANCE_OBJECT_SIZE = 400
 
 
@@ -76,7 +75,7 @@ class RobotLogger:
                     r.temperature_c,
                 ]
         for kind, port in self._sensor_ports:
-            values += _sensor_values(kind, devices[port].value)
+            values += _sensor_values(kind, devices[port])
         return values
 
     def log(self) -> RobotLog:
@@ -89,7 +88,8 @@ class RobotLogger:
         return ", ".join(f"{port} {kind}" for port, kind in sorted(found))
 
 
-def _sensor_values(kind: str, value) -> list[float]:
+def _sensor_values(kind: str, device) -> list[float]:
+    value = device.value
     if kind == "gps":
         if value is None:
             return [NAN] * 4
@@ -97,7 +97,7 @@ def _sensor_values(kind: str, value) -> list[float]:
     if kind == "distance":  # mm; with nothing in range, no confidence and no object
         if value is None:
             return [NAN, 0, 0]
-        return [value, DISTANCE_CONFIDENCE, DISTANCE_OBJECT_SIZE]
+        return [value, device.confidence, DISTANCE_OBJECT_SIZE]
     if value is None:
         return [NAN]
     if kind == "imu":

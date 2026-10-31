@@ -38,6 +38,8 @@ REACT_S = 0.3  # how long the student takes to act on what the screen says
 PRESS_S = 0.1  # how long a button is held
 STILL_RAD = 1.0  # wheels whose motors turned less than this (rad) "didn't turn"
 HAND_GAINS = (200.0, 28.0)  # how stiffly a hand moves the robot: 1/s^2, 1/s
+HOLD_GAINS = (2000.0, 90.0)  # holding it there at the end, firmly: lined up on the tape
+HOLD_S = 1.0  # how long the hand holds it there, lining it up, before letting go
 COVER_MM = 30.0  # a hand over a distance sensor reads this
 TURN_S = 2.0  # seconds a turn by hand takes
 PUSH_IN_S = 12.0  # how fast a hand pushes (in/s)
@@ -333,17 +335,14 @@ class Student:
         x, y, h = robot.pose
         vx, vy = robot.field_velocity
         w = robot.body_velocity[2]
-        kp, kd = HAND_GAINS
+        # there, a person holds it firmly, lining it up on the tape whatever drags on it
+        kp, kd = HOLD_GAINS if tau >= hand.seconds else HAND_GAINS
+        error = (x0 + fx * s - x, y0 + fy * s - y, h0 + turn * s - h)
         robot.external_force = robot.mass * np.array(
-            [
-                kp * (x0 + fx * s - x) + kd * (fx * ds - vx),
-                kp * (y0 + fy * s - y) + kd * (fy * ds - vy),
-            ]
+            [kp * error[0] + kd * (fx * ds - vx), kp * error[1] + kd * (fy * ds - vy)]
         )
-        robot.external_torque = robot.yaw_inertia * (
-            kp * (h0 + turn * s - h) + kd * (turn * ds - w)
-        )
-        if t - hand.begin > hand.seconds + 0.5:  # held still a moment, then let go
+        robot.external_torque = robot.yaw_inertia * (kp * error[2] + kd * (turn * ds - w))
+        if t - hand.begin > hand.seconds + HOLD_S:  # held still, lined up, then let go
             robot.external_force = np.zeros(2)
             robot.external_torque = 0.0
             self._hand = None

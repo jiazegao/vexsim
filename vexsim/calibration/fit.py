@@ -36,7 +36,7 @@ from vexsim.calibration.log import RobotLog
 from vexsim.calibration.replay import AGES_MS, LEADS_MS, at_age, commands_logged, simulate
 from vexsim.config.robot import RobotConfig
 from vexsim.physics.params import PARAM_GROUPS, check_overrides, resolve_params
-from vexsim.workers import process_pool
+from vexsim.workers import clean_start, process_pool
 
 RATE_SAMPLES = 3  # rates from differences over 3 samples (30 ms)
 STEP = 0.02  # finite-difference step in log-parameter space (2%)
@@ -144,14 +144,18 @@ def best_age(log: RobotLog, states: RobotLog, chans: Sequence[Channel]) -> int:
 
 
 def timing(
-    config: RobotConfig, log: RobotLog, overrides: dict[str, float], chans: Sequence[Channel]
+    config: RobotConfig,
+    log: RobotLog,
+    overrides: dict[str, float],
+    chans: Sequence[Channel],
+    lifted: bool = False,
 ) -> tuple[int, int, RobotLog]:
     """(lead, age, states): when measured voltages stand in for commands, also how much
     earlier they were applied (one replay per candidate lead)."""
     leads = [0] if commands_logged(log) else list(LEADS_MS)
     best = None
     for lead in leads:
-        states = simulate(config, log, overrides, lead)
+        states = simulate(config, log, overrides, lead, lifted=lifted, distance=False)
         age = best_age(log, states, chans)
         r = residuals(log, at_age(states, log, age), chans)
         cost = float(r @ r)
@@ -163,12 +167,15 @@ def timing(
 # --- direct estimates ------------------------------------------------------------------------
 
 
-def battery_resistance(log: RobotLog) -> float | None:
-    """Internal resistance (ohm) from the slope of voltage against current, if the log
-    has enough current variation to tell (at least 2 A spread)."""
-    if "battery_mv" not in log or "battery_ma" not in log:
+def battery_resistance(log: RobotLog | Sequence[RobotLog]) -> float | None:
+    """Internal resistance (ohm) from the slope of voltage against current, if the log (or
+    the logs, together) has enough current variation to tell (at least 2 A spread)."""
+    logs = [log] if isinstance(log, RobotLog) else list(log)
+    logs = [g for g in logs if "battery_mv" in g and "battery_ma" in g]
+    if not logs:
         return None
-    v, i = log["battery_mv"] / 1000.0, log["battery_ma"] / 1000.0
+    v = np.concatenate([g["battery_mv"] for g in logs]) / 1000.0
+    i = np.concatenate([g["battery_ma"] for g in logs]) / 1000.0
     ok = np.isfinite(v) & np.isfinite(i)
     if ok.sum() < 20 or np.ptp(i[ok]) < 2.0:
         return None
@@ -192,8 +199,9 @@ class FitResult:
     age_ms: int  # how old the log's readings were when the code read them
     lead_ms: int  # measured voltages applied this much before their rows
     direct: dict[str, float] = field(default_factory=dict)  # read off the log
-    sim_before: RobotLog | None = None
+    sim_before: RobotLog | None = None  # the (first) log's replay, before and after
     sim_after: RobotLog | None = None
+    sims_after: list[RobotLog] = field(default_factory=list)  # each log's, fitted (fit_logs)
 
     @property
     def overrides(self) -> dict[str, float]:
@@ -201,9 +209,9 @@ class FitResult:
         return {**self.after, **self.direct}
 
 
-def _simulate_job(args: tuple[RobotConfig, RobotLog, dict[str, float], int]) -> RobotLog:
-    config, log, overrides, lead = args
-    return simulate(config, log, overrides, lead)
+def _simulate_job(args: tuple[RobotConfig, RobotLog, dict[str, float], int, bool]) -> RobotLog:
+    config, log, overrides, lead, lifted = args
+    return simulate(config, log, overrides, lead, lifted=lifted, distance=False)
 
 
 def fit(
@@ -214,8 +222,35 @@ def fit(
     max_iterations: int = 12,
     workers: int = 1,
     progress: Callable[[str], None] | None = None,
+    lifted: bool = False,
 ) -> FitResult:
-    """Fit ``parameters`` (dotted override keys; default: the wheel parameters) to the log."""
+    """Fit ``parameters`` (dotted override keys; default: the wheel parameters) to the log;
+    ``lifted``: the robot was off the ground (on its side) for it."""
+    return fit_logs(
+        config,
+        [log],
+        parameters,
+        max_iterations=max_iterations,
+        workers=workers,
+        progress=progress,
+        lifted=[lifted],
+    )
+
+
+def fit_logs(
+    config: RobotConfig,
+    logs: Sequence[RobotLog],
+    parameters: Sequence[str] | None = None,
+    *,
+    max_iterations: int = 12,
+    workers: int = 1,
+    progress: Callable[[str], None] | None = None,
+    lifted: Sequence[bool] | None = None,
+) -> FitResult:
+    """``fit`` to several logs at once, each weighing the same (``lifted``: which of them had
+    the robot off the ground). Each log gets its own replay and its own timing."""
+    logs = list(logs)
+    up = list(lifted) if lifted is not None else [False] * len(logs)
     names = list(default_parameters(config) if parameters is None else parameters)
     problems = [f"{k}: {m}" for s, k, m in check_overrides({n: 1.0 for n in names}) if s == "error"]
     if problems:
@@ -224,46 +259,67 @@ def fit(
         if name.rpartition(".")[0] not in PARAM_GROUPS or name.startswith("sensor."):
             raise ValueError(f"can't fit {name}: only physics parameters can be fitted")
     say = progress or (lambda text: None)
-    chans = channels(config, log)
-    if not chans:
+    chans = [channels(config, log) for log in logs]
+    if not any(chans):
         raise ValueError("the log has no drive motor, rotation sensor or IMU readings to compare")
     direct = {}
-    resistance = battery_resistance(log)
+    resistance = battery_resistance(logs)
     if resistance is not None:
         direct["battery.internal_resistance_ohm"] = round(resistance, 4)
     base = {**config.overrides, **direct}
     config = config.model_copy(update={"overrides": base})
     start = np.log([current_value(config, n) for n in names])
     lower, upper = start - math.log(20.0), start + math.log(20.0)
-    pool = process_pool(workers) if workers > 1 and names else None
+    # a fit may run beside threads (a simulation's, the app's): forking those can deadlock
+    pool = process_pool(workers, clean_start()) if workers > 1 and names else None
     count = 0
-    age = 10
-    lead = 0
+    ages = [10] * len(logs)
+    leads = [0] * len(logs)
 
-    def states_at(thetas: list[np.ndarray]) -> list[RobotLog]:
+    def values(theta: np.ndarray) -> dict[str, float]:
+        return dict(zip(names, np.exp(theta).tolist(), strict=True))
+
+    def states_at(thetas: list[np.ndarray]) -> list[list[RobotLog]]:
+        """Each theta's replay of every log."""
         nonlocal count
         jobs = [
-            (config, log, dict(zip(names, np.exp(t).tolist(), strict=True)), lead) for t in thetas
+            (config, log, values(t), lead, lift)
+            for t in thetas
+            for log, lead, lift in zip(logs, leads, up, strict=True)
         ]
         count += len(jobs)
-        return (
+        done = (
             [_simulate_job(j) for j in jobs]
             if pool is None
             else list(pool.map(_simulate_job, jobs))
         )
+        n = len(logs)
+        return [done[k * n : (k + 1) * n] for k in range(len(thetas))]
+
+    def resid(states: list[RobotLog]) -> np.ndarray:
+        return np.concatenate(
+            [
+                residuals(log, at_age(st, log, age), ch)
+                for log, st, age, ch in zip(logs, states, ages, chans, strict=True)
+            ]
+        )
 
     try:
         theta = start.copy()
-        lead, age, states = timing(
-            config, log, dict(zip(names, np.exp(theta).tolist(), strict=True)), chans
-        )
-        count += 1 if commands_logged(log) else len(LEADS_MS)
-        if commands_logged(log):
-            say(f"timing: the log's readings are {age} ms old")
+        states = []
+        for k, log in enumerate(logs):
+            leads[k], ages[k], replayed = timing(config, log, values(theta), chans[k], up[k])
+            states.append(replayed)
+            count += 1 if commands_logged(log) else len(LEADS_MS)
+        if all(commands_logged(log) for log in logs):
+            say(f"timing: the log's readings are {'/'.join(map(str, ages))} ms old")
         else:
-            say(f"timing: readings {age} ms old; replaying measured voltages {lead} ms early")
-        sim = sim_before = at_age(states, log, age)
-        r = residuals(log, sim, chans)
+            say(
+                f"timing: readings {'/'.join(map(str, ages))} ms old; replaying measured "
+                f"voltages {'/'.join(map(str, leads))} ms early"
+            )
+        states_before = states
+        r = resid(states)
         cost = float(r @ r)
         say(f"start: cost {cost:.4g}")
         damping, iterations = 1e-2, 0
@@ -273,14 +329,14 @@ def fit(
                 break
             probes = [theta + STEP * np.eye(len(names))[i] for i in range(len(names))]
             for i, probe in enumerate(states_at(probes)):
-                jac[:, i] = (residuals(log, at_age(probe, log, age), chans) - r) / STEP
+                jac[:, i] = (resid(probe) - r) / STEP
             jtj, jtr = jac.T @ jac, jac.T @ r
             improved = False
             for _ in range(8):
                 a = jtj + damping * np.diag(np.maximum(np.diag(jtj), 1e-12))
                 candidate = np.clip(theta - np.linalg.solve(a, jtr), lower, upper)
                 trial_states = states_at([candidate])[0]
-                trial_r = residuals(log, at_age(trial_states, log, age), chans)
+                trial_r = resid(trial_states)
                 trial_cost = float(trial_r @ trial_r)
                 if trial_cost < cost:
                     step = np.abs(candidate - theta).max()
@@ -289,21 +345,26 @@ def fit(
                     damping, improved = max(damping / 3, 1e-6), True
                     break
                 damping *= 4
-            values = ", ".join(
+            shown = ", ".join(
                 f"{n.rsplit('.', 1)[1]} {v:.4g}" for n, v in zip(names, np.exp(theta), strict=True)
             )
-            say(f"iteration {iterations}: cost {cost:.4g} ({values})")
+            say(f"iteration {iterations}: cost {cost:.4g} ({shown})")
             converged = not improved or gain < 1e-4 or step < 1e-4
             if converged:
                 # The timing was judged with the starting parameters; check it with the fit's.
-                new_age = best_age(log, states, chans)
-                if new_age == age:
+                new_ages = [
+                    best_age(log, st, ch) for log, st, ch in zip(logs, states, chans, strict=True)
+                ]
+                if new_ages == ages:
                     break
-                age = new_age
-                say(f"timing: the log's readings are {age} ms old")
-                r = residuals(log, at_age(states, log, age), chans)
+                ages = new_ages
+                say(f"timing: the log's readings are {'/'.join(map(str, ages))} ms old")
+                r = resid(states)
                 cost = float(r @ r)
-        sim = at_age(states, log, age)
+        sims = [at_age(st, log, age) for st, log, age in zip(states, logs, ages, strict=True)]
+        sims_before = [
+            at_age(st, log, age) for st, log, age in zip(states_before, logs, ages, strict=True)
+        ]
     finally:
         if pool is not None:
             pool.shutdown()
@@ -320,24 +381,49 @@ def fit(
         before=dict(zip(names, np.exp(start).tolist(), strict=True)),
         after={n: float(f"{v:.4g}") for n, v in zip(names, np.exp(theta), strict=True)},
         uncertainty=dict(zip(names, spread.tolist(), strict=True)),
-        rms_before=rms_by_group(log, sim_before, chans),
-        rms_after=rms_by_group(log, sim, chans),
+        rms_before=rms_over(logs, sims_before, chans),
+        rms_after=rms_over(logs, sims, chans),
         iterations=iterations,
         replays=count,
-        age_ms=age,
-        lead_ms=lead,
+        age_ms=ages[0],
+        lead_ms=leads[0],
         direct=direct,
-        sim_before=sim_before,
-        sim_after=sim,
+        sim_before=sims_before[0],
+        sim_after=sims[0],
+        sims_after=sims,
     )
 
 
+def rms_over(
+    logs: Sequence[RobotLog], sims: Sequence[RobotLog], chans: Sequence[Sequence[Channel]]
+) -> dict[str, float]:
+    """``rms_by_group`` over several logs together."""
+    total: dict[str, list[float]] = {}
+    for log, sim, ch in zip(logs, sims, chans, strict=True):
+        for group in GROUPS:
+            diffs = [
+                signal_of(sim, c) - signal_of(log, c)
+                for c in ch
+                if c.group == group and c.name in sim
+            ]
+            if diffs:
+                d = np.concatenate(diffs)
+                d = d[np.isfinite(d)]
+                acc = total.setdefault(group, [0.0, 0.0])
+                acc[0] += float(np.sum(d**2))
+                acc[1] += len(d)
+    return {g: math.sqrt(s / n) if n else math.nan for g, (s, n) in total.items()}
+
+
 def compare(
-    config: RobotConfig, log: RobotLog, overrides: dict[str, float] | None = None
+    config: RobotConfig,
+    log: RobotLog,
+    overrides: dict[str, float] | None = None,
+    lifted: bool = False,
 ) -> tuple[dict[str, float], RobotLog]:
     """Replay a log without fitting: RMS differences per group, and the simulated log."""
     chans = channels(config, log)
-    _, age, states = timing(config, log, overrides or {}, chans)
+    _, age, states = timing(config, log, overrides or {}, chans, lifted)
     sim = at_age(states, log, age)
     return rms_by_group(log, sim, chans), sim
 

@@ -29,7 +29,8 @@ from vexsim.config.robot import RobotConfig
 ConfigKind = Literal["robot", "field"]
 Path_ = list[str | int]  # "drivetrain.wheels[2].pos_in" as ["drivetrain", "wheels", 2, "pos_in"]
 
-_TOKEN = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
+# a key, a list index, or a key with dots in it, quoted: overrides["wheel.omni.lateral_mu"]
+_TOKEN = re.compile(r'([^.\[\]"]+)|\[(\d+)\]|\["([^"]+)"\]')
 _MERGE = "<<"
 DECIMALS = 4  # numbers written by a drag: 0.0001 in, 0.0001 deg
 
@@ -75,7 +76,9 @@ class Edit:
 
 
 def parse_location(location: str) -> Path_:
-    return [int(index) if index else name for name, index in _TOKEN.findall(location)]
+    return [
+        int(index) if index else name or quoted for name, index, quoted in _TOKEN.findall(location)
+    ]
 
 
 class _Composer(yaml.SafeLoader):

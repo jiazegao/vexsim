@@ -6,7 +6,9 @@ shows how well the model reproduces the real robot; the fit (fit.py) adjusts
 parameters until they agree.
 
 * Sensors are read without noise, per-device errors or latency (the
-  ``replay`` preset): the model can't know a particular robot's errors.
+  ``replay`` preset, whatever ``sensor.*`` overrides the config has): the
+  model can't know a particular robot's errors. An IMU's ``scale_error`` in
+  the config, measured on the robot, is the exception: it reads with it.
 * A reading is a few ms old by the time robot code sees it: the sensor's
   latency plus however long ago its last 10 ms update was, which depends on
   the phase between the code's loop and the sensor. That age is constant for
@@ -19,6 +21,8 @@ parameters until they agree.
   (``m<p>_mv``), which works for any program, whatever its control mode. That
   voltage is a reading too, so it is applied ``lead_ms`` before its row.
 * The robot starts at rest, on an endless floor (no walls). Start logs at rest.
+* The IMU starts calibrated, as if it had stood still for its calibration (the replay's
+  IMU has no noise, so that's what standing still would give).
 """
 
 from __future__ import annotations
@@ -66,10 +70,14 @@ class LoggedSupply:
 
 
 def commands_logged(log: RobotLog) -> bool:
-    """Whether every motor in the log has its commands logged (not just its voltage)."""
+    """Whether every motor in the log that was driven has its commands logged (not just its
+    voltage): one that never was (a mechanism the program left alone) needs none."""
     for port in log.ports("m"):
         known = [log[f"m{port}_{k}"] for k in ("cmd_mv", "cmd_rpm") if f"m{port}_{k}" in log]
-        if not any(np.isfinite(c).any() for c in known):
+        if any(np.isfinite(c).any() for c in known):
+            continue
+        volts = log[f"m{port}_mv"] if f"m{port}_mv" in log else np.zeros(0)
+        if np.nan_to_num(np.abs(volts)).max(initial=0.0) >= 1.0:
             return False
     return True
 
@@ -79,15 +87,34 @@ def simulate(
     log: RobotLog,
     overrides: dict[str, float] | None = None,
     lead_ms: int = 0,
+    *,
+    lifted: bool = False,
+    distance: bool = True,
+    noisy: bool = False,
 ) -> RobotLog:
     """The simulated robot's readings every millisecond while it follows the log's commands
-    (``time_ms`` from 0, the log's first row)."""
-    params = resolve_params({**config.overrides, **(overrides or {})})
+    (``time_ms`` from 0, the log's first row); ``lifted``: with its wheels off the ground,
+    as for a free spin on its side; ``distance``: with its distance sensors' readings (the
+    fit doesn't compare them, and they're read every millisecond here); ``noisy``: its
+    sensors with their noise, as the config has it (against a replay without, that's what
+    noise alone leaves)."""
+    merged = {**config.overrides, **(overrides or {})}
+    if not noisy:  # the replay's sensors read without errors, whatever the config's have
+        merged = {k: v for k, v in merged.items() if not k.startswith("sensor.")}
+    params = resolve_params(merged)
+    if not distance:
+        kept = tuple(s for s in config.sensors if s.type != "distance")
+        config = config.model_copy(update={"sensors": kept})
     world = World(seed=0)
     robot = world.add_system(Robot(config, params=params))
-    sensors = SensorSuite(robot, world.rng, noise="replay").attach(world)
-    imus = [d for d in sensors.devices.values() if isinstance(d, ImuDevice)]
-    world.run_until(lambda w: all(d.value is not None for d in imus), timeout_s=10.0)
+    robot.lifted = lifted
+    if noisy:
+        sensors = SensorSuite(robot, world.rng, noise_only=True).attach(world)
+    else:
+        sensors = SensorSuite(robot, world.rng, noise="replay").attach(world)
+    for imu in sensors.devices.values():
+        if isinstance(imu, ImuDevice):
+            imu.finish_boot_calibration(world.clock.us)
 
     times = np.round(log.time_ms - log.time_ms[0]).astype(int)
     if "battery_mv" in log and np.isfinite(log["battery_mv"]).any():

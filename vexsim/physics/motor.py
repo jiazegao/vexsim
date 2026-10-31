@@ -54,10 +54,13 @@ class MotorSpec:
     velocity_filter_s: float = 0.002  # velocity estimate low-pass time constant
     integral_gate: float = 0.25  # integrate only below this accel, in rated speeds per second
     position_kp: float = 15.0  # 1/s: position error (rad) -> velocity target (rad/s)
+    # Voltage commands held to this fraction of the rated speed, as a firmware that caps
+    # them would (0: not capped). A free spin at 12 V tells: capped motors stop at rated speed.
+    voltage_cap: float = 0.0
 
     def __post_init__(self) -> None:
         for name, value in vars(self).items():
-            if name == "coulomb_fraction":
+            if name in ("coulomb_fraction", "voltage_cap"):
                 continue
             if not (math.isfinite(value) and value > 0):
                 raise ValueError(f"motor.{name} must be positive, got {value}")
@@ -67,6 +70,8 @@ class MotorSpec:
             raise ValueError("motor.free_current_a must be below natural_stall_current_a")
         if self.current_limit_a > self.natural_stall_current_a:
             raise ValueError("motor.current_limit_a cannot exceed natural_stall_current_a")
+        if not (math.isfinite(self.voltage_cap) and self.voltage_cap >= 0):
+            raise ValueError("motor.voltage_cap must be 0 (no cap) or more")
 
 
 @dataclass(frozen=True)
@@ -310,7 +315,14 @@ class V5Motor:
     def _drive_voltage(self, v_bus: float, dt: float) -> float:
         mode = self._mode
         if mode is ControlMode.VOLTAGE:
-            return self._voltage_cmd
+            cap = self.spec.voltage_cap
+            if cap <= 0:
+                return self._voltage_cmd
+            # Capped: no more than the velocity loop would give to hold the cap's speed.
+            held = self._velocity_loop(
+                math.copysign(cap * self.rated_speed, self._voltage_cmd), v_bus, dt
+            )
+            return math.copysign(min(abs(self._voltage_cmd), abs(held)), self._voltage_cmd)
         if mode is ControlMode.VELOCITY:
             return self._velocity_loop(self._velocity_cmd, v_bus, dt)
         if mode is ControlMode.POSITION:

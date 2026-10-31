@@ -63,7 +63,9 @@ include = ["vexsim*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Whole calibration sessions take minutes: left out unless asked for (pytest -m session).
+addopts = "-ra -m 'not session'"
+markers = ["session: fits whole simulated calibration sessions (minutes; pytest -m session)"]
 
 [tool.ruff]
 line-length = 100

@@ -264,7 +264,7 @@ class CppProgram:
             elif isinstance(device, RotationDevice) and value is not None:
                 lines.append(f"r {port} {value.position_cdeg} {value.velocity_cdeg_s:.6g}")
             elif isinstance(device, DistanceDevice):
-                lines.append(f"d {port} {-1 if value is None else value}")
+                lines.append(f"d {port} {-1 if value is None else value} {device.confidence}")
             elif isinstance(device, GpsDevice) and value is not None:
                 lines.append(
                     f"g {port} {value.x_m:.9g} {value.y_m:.9g} {value.heading_deg:.9g} "
