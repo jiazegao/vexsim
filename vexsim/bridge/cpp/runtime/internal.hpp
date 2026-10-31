@@ -79,4 +79,9 @@ void devices_set_competition(std::uint8_t status);
 void devices_flush_commands();  // emit pending motor commands into the reply
 void devices_poll_pose();       // report a library's odometry pose (LemLib), if it has one
 
+// usd.cpp: the folder that stands in for the SD card (VEXSIM_SD_DIR; null: no card), and
+// where a /usd/ path opens in it
+const char* usd_folder();
+std::string usd_path(const char* path);
+
 }  // namespace vexsim

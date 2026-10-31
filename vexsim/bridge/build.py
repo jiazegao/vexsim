@@ -676,6 +676,9 @@ def _link(
     link = [tc.cxx, "-o", str(_linked(exe)), *map(str, inputs), "-pthread"]
     if tc.windows:
         link.append("-static")  # no MinGW DLLs needed at run time
+        link.append("-Wl,--wrap=fopen,--wrap=fopen64")  # /usd/ files (runtime/usd.cpp)
+    else:
+        link.append("-ldl")  # dlsym, for runtime/usd.cpp's fopen
     result = _run(link)
     if result.returncode == 0:
         return None

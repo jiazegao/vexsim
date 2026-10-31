@@ -434,7 +434,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.record and sim.recorder is not None:
         print(f"wrote {sim.recorder.write_csv(args.record)}")
     if args.robot_log and robot_logs:
-        print(f"wrote {robot_logs[-1].log().write(args.robot_log)}")
+        from pathlib import Path
+
+        log = robot_logs[-1].log()
+        name = Path(args.program).stem if args.program else "no program"
+        devices = robot_logs[-1].devices()
+        log.info = {"vexsim-log": "2", "name": f"{name} in vexsim", "devices": devices}
+        print(f"wrote {log.write(args.robot_log)}")
     return EXIT_OK
 
 
@@ -708,6 +714,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="an environment variable for the robot program (getenv() in C++); repeatable. "
         "VEXSIM_SEED is always set to --seed",
     )
+    p.add_argument(
+        "--sd",
+        metavar="FOLDER",
+        help="PROS projects: a folder that stands in for the brain's SD card (made if it "
+        "isn't there): files the code opens under /usd/ go there, as vexsim_log's logs do",
+    )
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser(
@@ -833,6 +845,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_calibration_routine)
 
     p = sub.add_parser(
+        "logger",
+        help="vexsim's logger for PROS projects: what the robot's devices read, for vexsim",
+        description=(
+            "vexsim's logger is two files (include/vexsim_log.hpp, src/vexsim_log.cpp), the same "
+            "in every PROS 4 project: it finds what is plugged into each port and logs it every "
+            "10 ms, with any poses and numbers the code adds, to the SD card or the terminal, "
+            "for vexsim calibrate and comparing a real run with a simulated one."
+        ),
+    )
+    actions = p.add_subparsers(dest="action", required=True)
+    add = actions.add_parser("add", help="copy the logger's two files into a PROS project")
+    add.add_argument("project", help="PROS project folder")
+    add.set_defaults(func=cmd_logger_add)
+
+    p = sub.add_parser(
         "calibrate",
         help="fit model parameters to a robot log",
         description=(
@@ -928,8 +955,37 @@ def cmd_calibration_routine(args: argparse.Namespace) -> int:
     seconds = schedule(config, standard_routine(config))[-1][0] / 1000
     print(
         f"Call vexsim_calibration::run() from autonomous() (it takes {seconds:g} s plus IMU "
-        "calibration, and needs about 3 x 3 m of open floor), then copy /usd/vexsim_log.csv "
-        "from the SD card, or save the terminal output, and run: vexsim calibrate ROBOT.yaml LOG"
+        "calibration, and needs about 3 x 3 m of open floor), then copy its log from the SD "
+        "card (vexsim_0001_calibration.csv, numbered up from there), or save the terminal "
+        "output, and run: vexsim calibrate ROBOT.yaml LOG"
+    )
+    return EXIT_OK
+
+
+def cmd_logger_add(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from vexsim.bridge.build import is_pros_project
+    from vexsim.bridge.logger import add_logger
+
+    project = Path(args.project)
+    if not is_pros_project(project):
+        print(f"error: {project} isn't a PROS project (no project.pros or src/)")
+        return EXIT_INVALID
+    for path, state in add_logger(project):
+        print(f"{path}: {state}")
+    print(
+        "\nTo log, in src/main.cpp:\n"
+        '  #include "vexsim_log.hpp"\n'
+        "  void autonomous() {\n"
+        '      vexsim_log::start("my routine");  // finds every device, logs it every 10 ms\n'
+        "      ...\n"
+        "      vexsim_log::stop();  // or it saves itself when autonomous ends\n"
+        "  }\n"
+        "vexsim_log::pose() and value() add what only your code knows (include/vexsim_log.hpp "
+        "says how).\nLogs go to the SD card (vexsim_0001_my_routine.csv, numbered up from "
+        "there), or to the terminal without a card (pros terminal > log.txt). In vexsim, "
+        "vexsim run --sd FOLDER stands in for the card."
     )
     return EXIT_OK
 

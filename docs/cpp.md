@@ -129,7 +129,7 @@ The robot code runs in its own process, in **lockstep** with the physics:
 | `pros::adi::*` (pneumatics, encoders, ...) | Not simulated yet. Outputs remember what was written, so a `Pneumatics` reads back as extended. Inputs and encoders read 0. The first use logs a note. |
 | `pros::Optical`, `Vision`, `Link`, `Serial` | Not simulated yet. Calls fail with `errno = ENODEV`, and the first one logs a note. |
 | LVGL 9 (`liblvgl`) | A stand-in: screens, objects, labels (`set_text`, `set_text_fmt`), buttons, images (including `lv_image_dsc_t` files from LVGL's image converter), event callbacks, timers and the common style setters compile and run. Nothing is drawn, and no event or timer ever fires, since nobody touches the screen. Other LVGL functions won't compile: add them to `include/liblvgl/lvgl.h` and `runtime/lvgl.cpp`. |
-| SD card | Not inserted: `pros::usd::is_installed()` reads 0, and files under `/usd/` don't open, as on a brain without a card. |
+| SD card | Not inserted: `pros::usd::is_installed()` reads 0, and files under `/usd/` don't open, as on a brain without a card. With `vexsim run --sd FOLDER` (or `VEXSIM_SD_DIR`), the folder stands in for a card: `is_installed()` reads 1, and a file the code opens under `/usd/`, with `fopen` or a C++ file stream, opens in the folder (`runtime/usd.cpp`). |
 | AI Vision | Not available. Code using its headers won't compile. |
 
 **PROS 4 behaviors that are reproduced, so they can bite in the simulator too**

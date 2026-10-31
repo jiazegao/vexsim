@@ -402,6 +402,8 @@ def test_the_server_calibrates_with_a_robot_log(client, tmp_path):
     assert [f.path.rsplit("/", 1)[1] for f in plan.files] == [
         "vexsim_calibration.hpp",
         "vexsim_calibration.cpp",
+        "vexsim_log.hpp",  # vexsim's logger, which the routine logs through
+        "vexsim_log.cpp",
     ]
     assert plan.seconds > 5 and plan.steps[0].name == "settle"
     assert (

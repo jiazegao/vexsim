@@ -398,6 +398,7 @@ Without `--program`, you drive the robot from the keyboard or a gamepad. To star
 | `--follow LOG` | drive along a real robot's path, from its MCL log ([below](#following-a-real-robots-log)); `--sticks tank\|arcade` and `--curve DEADBAND,MIN,CURVE` say how the program drives from the sticks. Without `--start`, the robot starts where the log does. |
 | `--record FILE.csv` | telemetry log |
 | `--robot-log FILE.csv` | a robot log: what the robot's own sensors read, as on a real robot (for calibration) |
+| `--sd FOLDER` | PROS projects: a folder that stands in for the brain's SD card (made if it isn't there): files the code opens under `/usd/` go there, as [vexsim's logger](#vexsims-logger)'s logs do |
 | `--headless` | no window: run, print a summary, save files |
 | `--seconds S` / `--max-seconds S` | headless: run exactly S seconds / give up after S (default 180) |
 | `--screenshot FILE.png` | headless: save the final frame |
@@ -588,7 +589,7 @@ The tabs along the top hold a page for each of the other commands: *Sweeps*, *Be
 
 **Bench: benchmarks** (`vexsim bench`, [section 11](#11-benchmarking-algorithms-vexsim-bench)). Pick a scenario (or click one in the workspace list) and the page describes it: the task, the robot, what goes wrong, what each seed changes. Choose the localizers and controllers to compare, the seeds and the workers, and *Run*; a bar counts the trials. The result: each combination's success rate, final position error and localization error at the end (mean and 95th percentile), completion time and path error; a chart per metric of how often each combination does at least that well; and each combination's worst trial, which *Watch on the field* plays back on the *Simulate* page with the scenario's robot and field, plots and all. *Open the report* opens the HTML report `vexsim bench` writes (it needs matplotlib: `pip install -e ".[viz]"`), and the CSVs download. The command line that runs the same benchmark is at the bottom.
 
-**Calibrate** (`vexsim calibration-routine` and `vexsim calibrate`, [section 12](#12-calibrating-to-your-robot)). *1. Log the routine on the robot:* pick the robot and its PROS project; the page lists the routine's maneuvers and the two files it adds (new, already there, or replacing what's there), and *Add the routine* writes them. *2. Fit the simulator to the log:* robot logs in the folder are listed under *Robot logs* in the workspace list (the CSV from the SD card, or a saved terminal capture, `.txt` or `.log`, with one inside). Pick one and the parameters to fit (the wheel parameters by default, with their values now), or *Only compare*, and *Fit*. The result: the fitted values and how sure the fit is of each, the battery's resistance read off the log, the difference between simulated and logged readings before and after, and charts of each logged reading against the simulation's replay. *Add the fitted values* opens the robot's config with them under `overrides`, written in place (comments kept), for you to look over and save. To try it, `examples/logs/full_omni_routine.csv` is the routine logged in the simulator by the example full-omni robot with its wheels and battery changed (longitudinal μ 0.75, lateral μ 0.28, rolling resistance 0.14, 0.15 Ω): fitting all three wheel parameters finds them again in about half a minute.
+**Calibrate** (`vexsim calibration-routine` and `vexsim calibrate`, [section 12](#12-calibrating-to-your-robot)). *1. Log the routine on the robot:* pick the robot and its PROS project; the page lists the routine's maneuvers and the files it adds, the routine's two and vexsim's logger's two (new, already there, or replacing what's there), and *Add the routine* writes them. *2. Fit the simulator to the log:* robot logs in the folder are listed under *Robot logs* in the workspace list (the CSV from the SD card, or a saved terminal capture, `.txt` or `.log`, with one inside). Pick one and the parameters to fit (the wheel parameters by default, with their values now), or *Only compare*, and *Fit*. The result: the fitted values and how sure the fit is of each, the battery's resistance read off the log, the difference between simulated and logged readings before and after, and charts of each logged reading against the simulation's replay. *Add the fitted values* opens the robot's config with them under `overrides`, written in place (comments kept), for you to look over and save. To try it, `examples/logs/full_omni_routine.csv` is the routine logged in the simulator by the example full-omni robot with its wheels and battery changed (longitudinal μ 0.75, lateral μ 0.28, rolling resistance 0.14, 0.15 Ω): fitting all three wheel parameters finds them again in about half a minute.
 
 **Analyze** (`vexsim motor-curves`, `drift` and `odometry`, [section 10](#10-analysis-commands-motor-curves-drift-odometry)): a motor's torque, current (with its limit) and output power against speed, under `move_velocity` and `move_voltage`; a differential robot's arc at fixed side speeds for up to three roller frictions, its true path beside what drive-encoder odometry believes; and a scripted drive, gentle or aggressive, with each baseline localizer's path and its position and heading errors over time.
 
@@ -878,7 +879,7 @@ A copy the project already has is left as it is (the export says so, when it dif
 | `printf`, `std::cout`, `std::cerr` | console panel and terminal, stamped with simulated time |
 | `pros::adi::*` | not simulated yet: outputs remember what was written (a `Pneumatics` reads back as extended); inputs read 0 |
 | `pros::Optical`, `Vision`, `Link`, `Serial` | not simulated yet: calls fail with `ENODEV`, and the first one logs a note |
-| SD card | not inserted: `pros::usd::is_installed()` reads 0 and files under `/usd/` don't open |
+| SD card | not inserted: `pros::usd::is_installed()` reads 0 and files under `/usd/` don't open. With `--sd FOLDER`, the folder stands in for a card: `is_installed()` reads 1, and files the code opens under `/usd/` (`fopen`, C++ file streams) open in it |
 
 **PROS 4 behaviors reproduced, so they bite in the simulator too:** plain `MotorGroup` setters (`set_brake_mode`, `tare_position`) act on the first motor only, and the `_all` versions on every motor; `set_zero_position(p)` makes the current position read `p` and belongs to the port; declaring `green` on a `blue` cartridge makes `move_velocity(100)` spin 3× faster than meant (the console warns once); reversal is per object, while brake mode, limits, units, gearing and zero belong to the port.
 
@@ -1129,10 +1130,10 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
    | spin in place | roller friction and scrub |
    | fast arc, then coast | sideways sliding (drift) |
 
-   The log goes to the SD card (`/usd/vexsim_log.csv`). Without a card it goes to the terminal, between `#vexsim-log begin` and `#vexsim-log end`; capture it with `pros terminal > run.txt` over USB. Either file works.
+   It logs with [vexsim's logger](#vexsims-logger), which `calibration-routine` adds to the project too: to the SD card (`vexsim_0001_calibration.csv`, the next number each run), or without a card to the terminal, between `#vexsim-log begin` and `#vexsim-log end`; capture that with `pros terminal > run.txt` over USB. Either file works.
 3. **Fit:**
    ```
-   vexsim calibrate ROBOT.yaml vexsim_log.csv --out calibration
+   vexsim calibrate ROBOT.yaml vexsim_0001_calibration.csv --out calibration
    ```
    ```
    parameter                           before      after  uncertainty
@@ -1157,12 +1158,35 @@ Most physics parameters are estimates: how well your wheels grip your tiles, how
 
 - **What it fits** by default: the parameters of each wheel type on the robot (omni: `longitudinal_mu`, `lateral_mu`, `rolling_resistance`; traction: `mu`, `rolling_resistance`; mecanum: `grip_mu`, `roller_mu`, `rolling_resistance`). The battery's internal resistance is read off the log, as the slope of its voltage against its current.
 - **How:** the log's motor commands are replayed in the simulator at the log's times, with ideal sensors, the logged battery voltage, and the readings' age found from the motor currents. Levenberg-Marquardt adjusts the parameters (in log space, so they stay positive) until the simulated motor velocities and currents, tracking-wheel speeds and heading rates match the log, each group weighted equally.
-- **Check it on another run:** `vexsim calibrate ROBOT.yaml another_run.csv --fit none`. Any program can log: call `vexsim_calibration::start_logging()` and `save()`. To compare a simulated run with a real one, record the simulated run with `vexsim run ... --headless --robot-log sim_run.csv`.
+- **Check it on another run:** `vexsim calibrate ROBOT.yaml another_run.csv --fit none`. Any program can log, with [vexsim's logger](#vexsims-logger). To compare a simulated run with a real one, record the simulated run with `vexsim run ... --headless --robot-log sim_run.csv`, or run the program with `--sd FOLDER` so its own logger writes the log there.
 - **Try it without a robot:** `examples/pros_projects/calibration` is the routine for `full_omni_6m`:
   ```
   vexsim run examples/robots/full_omni_6m.yaml --program examples/pros_projects/calibration --headless > run.txt
   vexsim calibrate examples/robots/full_omni_6m.yaml run.txt
   ```
+
+### vexsim's logger
+`vexsim logger add MY_PROS_PROJECT` copies two files into a project, `include/vexsim_log.hpp` and `src/vexsim_log.cpp`. They're the same in every project, whatever the robot, and use only the PROS 4 C API, so they build with PROS and run unchanged in vexsim:
+```cpp
+#include "vexsim_log.hpp"
+
+void initialize() {
+    vexsim_log::pose("lemlib", [] {  // what only your code knows, logged every 10 ms
+        lemlib::Pose p = chassis.getPose();
+        return vexsim_log::Pose{p.x, p.y, p.theta};
+    });
+}
+
+void autonomous() {
+    vexsim_log::start("Left 40");
+    left40();
+    vexsim_log::stop();  // or it saves itself when autonomous ends
+}
+```
+- `start(name)` finds what is plugged into each port and logs all of it every 10 ms, in a task of its own: every motor (position, velocity, current, voltage, temperature, brake mode), rotation sensors, IMUs, distance sensors (with their confidence and the object's size), GPS sensors and the battery. `pose(name, fn)` and `value(name, fn)` add your code's own poses (as LemLib has them) and numbers, `mark(text)` notes a moment, and `info(key, value)` a line at the top of the log.
+- The rows stay in memory while the robot drives, so nothing writes to the card mid-run. `stop()` saves them; a log started in autonomous saves itself when autonomous ends (even if the routine runs past it), and any log after 3 minutes (`set_limit_s`).
+- Logs go to the SD card as `vexsim_0001_left_40.csv`, `vexsim_0002_...` (the number goes up each time; `vexsim_count.txt` keeps it), or without a card to the terminal, framed as above.
+- In vexsim, `vexsim run --sd FOLDER` stands in for the card, so the same code writes the same files there.
 
 [docs/calibration.md](docs/calibration.md) has the log format and more detail.
 
@@ -1405,8 +1429,10 @@ vexsim/
 | `doctor.py` | `vexsim doctor`: toolchain checks, and a test build and run. |
 | `cpp/include/` | The PROS 4 shim headers robot code compiles against: `api.h`; `pros/*.h(pp)` (motors, IMU, rotation, distance, GPS, rtos, misc, llemu, screen, adi, and stubs for unsimulated devices); `liblvgl/` (LLEMU and the LVGL stand-in); `vexsim/sim.hpp` (`report_pose`, `benchmark_task`); `vexsim/newlib_compat.h` (newlib extras). |
 | `cpp/route/runner.cpp` | The route runner, compiled into route builds: it reads the steps from the file `VEXSIM_ROUTE` names, makes LemLib's calls, vexsim's own motions' and the team's, and says on the console as each step starts and its call returns, and as each motion starts and ends. |
+| `logger.py` | vexsim's logger: `logger_files` (its two files, as a project gets them) and `add_logger` (`vexsim logger add`). |
+| `cpp/logger/` | vexsim's logger, `include/vexsim_log.hpp` and `src/vexsim_log.cpp`: finds the devices on every port, logs them every 10 ms with the code's own poses, numbers and marks, and saves the log to the next numbered file on the SD card or prints it. |
 | `cpp/motions/` | vexsim's own motions for a LemLib chassis: `include/vexsim/trajectory.hpp` (plans: an arc, or a smooth path through points, timed on a speed profile within the drive's limits), `include/vexsim/motions.hpp` and `src/vexsim/motions.cpp` (`vexsim::Motions`: `moveArc` and `ramsete`, followed with RAMSETE and a feedforward model of the drive, queued with LemLib's motions). A LemLib project's builds can include them, a route build compiles them (unless the project has its own copy), and an export copies them into the project. |
-| `cpp/runtime/` | The C++ side, linked into every build: `host.cpp` (process setup, the protocol loop, console capture, crash reports; a route build's runner in place of `autonomous()`), `scheduler.cpp` (the lockstep FreeRTOS-style scheduler: tasks, delays, mutexes, notifications, and the tasks the route runner follows: those LemLib starts for its async motions), `devices.cpp` (the PROS device C API over a device table), `lvgl.cpp` (the LVGL stand-in), `defaults/` (empty competition functions, used only when the code has none, like PROS's weak defaults). |
+| `cpp/runtime/` | The C++ side, linked into every build: `host.cpp` (process setup, the protocol loop, console capture, crash reports; a route build's runner in place of `autonomous()`), `scheduler.cpp` (the lockstep FreeRTOS-style scheduler: tasks, delays, mutexes, notifications, and the tasks the route runner follows: those LemLib starts for its async motions), `devices.cpp` (the PROS device C API over a device table), `lvgl.cpp` (the LVGL stand-in), `usd.cpp` (the `--sd` folder that stands in for the SD card: on Linux the robot host defines `fopen` and `fopen64` itself, on Windows the link wraps them), `defaults/` (empty competition functions, used only when the code has none, like PROS's weak defaults). |
 
 ### `bench/`: benchmarks
 | Module | What it does |
@@ -1421,8 +1447,8 @@ vexsim/
 | Module | What it does |
 |---|---|
 | `routine.py` | The calibration maneuvers (launch, coast, reverse, strafe, spin, arc) as fixed-voltage steps, scaled to the robot. |
-| `cpp.py` | Generates the routine and a 10 ms logger as PROS 4 C++ for one robot config. |
-| `log.py` | `RobotLog`: the robot-log CSV format, read from a file or cut out of terminal output. |
+| `cpp.py` | Generates the routine as PROS 4 C++ for one robot config; it logs with vexsim's logger (`bridge/logger.py`). |
+| `log.py` | `RobotLog`: the robot-log CSV format (2: with a log's `# key: value` lines, marks, and the code's own poses and numbers; 1 reads too), read from a file or cut out of terminal output (`parse_all`: every log in it). |
 | `record.py` | `RobotLogger`: writes the same log from a simulation (`--robot-log`). |
 | `replay.py` | Replays a log's commands in the simulator, with ideal sensors and the logged battery voltage, at the log's reading age. |
 | `fit.py` | A Levenberg-Marquardt fit of any parameters to a log; the battery's resistance from voltage against current; `compare`. |
@@ -1541,7 +1567,7 @@ All use the arc method, which is exact for constant-curvature motion. X-drive, m
 - There are no other robots (a benchmark `push` disturbance stands in for a shove).
 - The field is flat: no ramps, nothing to climb, no pitch or roll.
 - The distance sensor is a ray (the real one has a cone of view), and its confidence is constant.
-- Not simulated: ADI devices (outputs only remember what was written), the optical, vision and AI vision sensors, serial and radio links, the SD card, and touch input on the brain screen (LVGL runs headless).
+- Not simulated: ADI devices (outputs only remember what was written), the optical, vision and AI vision sensors, serial and radio links, the SD card (unless `--sd` names a folder for it), and touch input on the brain screen (LVGL runs headless).
 - Compute time on the brain isn't charged, and precompiled ARM libraries other than LemLib can't run.
 - Many physics parameters are estimates until you [calibrate](#12-calibrating-to-your-robot). Voltage-mode speed and thermal timing are the least certain; [docs/models.md](docs/models.md#calibrating-against-a-real-robot) lists experiments to measure them.
 

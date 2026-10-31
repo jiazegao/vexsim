@@ -84,6 +84,7 @@ class RunSpec(BaseModel):
     input: str | None = None
     follow: Follow | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    sd: str | None = None  # PROS projects: a folder that stands in for the brain's SD card
     busy_timeout: float = DEFAULT_BUSY_TIMEOUT_S
 
     @classmethod
@@ -124,6 +125,7 @@ class RunSpec(BaseModel):
             input=args.input,
             follow=follow,
             env=parse_env(args.env or ()),
+            sd=getattr(args, "sd", None),
             busy_timeout=args.busy_timeout,
         )
 
@@ -157,6 +159,8 @@ class RunSpec(BaseModel):
                 args.append("--curve=" + ",".join(_number(v) for v in self.follow.curve))
         for key, value in self.env.items():
             args += ["--env", f"{key}={value}"]
+        if self.sd:
+            args += ["--sd", self.sd]
         if self.busy_timeout != DEFAULT_BUSY_TIMEOUT_S:
             args += ["--busy-timeout", _number(self.busy_timeout)]
         return args
@@ -187,6 +191,7 @@ class RunSpec(BaseModel):
                 "field": absolute(self.field),
                 "input": absolute(self.input),
                 "follow": follow,
+                "sd": absolute(self.sd),
             }
         )
 
@@ -571,12 +576,18 @@ def program_factory(
             checked = prepared.route
             route = runner_input(checked.route, checked.functions, checked.drive)
 
+        env = dict(spec.env)
+        if spec.sd:  # the folder that stands in for the SD card (bridge/cpp/runtime/usd.cpp)
+            folder = Path(spec.sd).resolve()
+            folder.mkdir(parents=True, exist_ok=True)
+            env["VEXSIM_SD_DIR"] = str(folder)
+
         def make_cpp():
             return CppProgram(
                 executable,
                 name=name,
                 busy_timeout_s=spec.busy_timeout,
-                env=dict(spec.env),
+                env=env,
                 routine=spec.routine,
                 route=route,
             )

@@ -1220,7 +1220,7 @@ double battery_get_capacity(void) {
 	return D().battery_pct;
 }
 
-int32_t usd_is_installed(void) { return 0; }
+int32_t usd_is_installed(void) { return usd_folder() != nullptr ? 1 : 0; }  // vexsim run --sd
 int32_t usd_list_files(const char* path, char* buffer, int32_t len) {
 	(void)path;
 	if (buffer && len > 0) buffer[0] = 0;

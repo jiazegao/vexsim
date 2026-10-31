@@ -4,16 +4,16 @@
 namespace vexsim_calibration {
 
 // Calibrates the IMU, drives the calibration routine (7 s; it needs about 3 x 3 m of
-// open floor: start in the middle, facing the longer free direction), stops, and saves the log.
-// Call it from autonomous(), or from opcontrol() on a button press.
+// open floor: start in the middle, facing the longer free direction), stops, and saves the
+// log with vexsim's logger (vexsim_log.hpp): to the next numbered file on the SD card, or to
+// the terminal without a card. Call it from autonomous(), or from opcontrol() on a button.
 void run();
 
 // Logs every 10 ms in the background, for your own programs, until save(). Motor commands
 // aren't known then, so vexsim replays the motors' measured voltages.
 void start_logging();
 
-// Writes the log to /usd/vexsim_log.csv, or prints it to the terminal if there is no SD card.
-// Returns the number of rows.
+// Saves the log, as run() does. Returns the number of rows.
 int save();
 
 }  // namespace vexsim_calibration

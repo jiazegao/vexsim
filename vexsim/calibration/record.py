@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from vexsim.calibration.log import RobotLog, columns_for
+from vexsim.calibration.log import RobotLog, columns_for, motor_ports
 from vexsim.devices.suite import SensorSuite
 from vexsim.physics.motor import BrakeMode, ControlMode
 from vexsim.physics.robot import Robot
@@ -14,6 +14,10 @@ from vexsim.units import rad_s_to_rpm
 NAN = math.nan
 BRAKE_CODE = {BrakeMode.COAST: 0, BrakeMode.BRAKE: 1, BrakeMode.HOLD: 2}  # PROS enum values
 PERIOD_MS = 10
+# What the simulated distance sensors report besides the distance, as the robot code sees it
+# (bridge/cpp/runtime/devices.cpp): the most confidence there is, and a large object (a wall)
+DISTANCE_CONFIDENCE = 63
+DISTANCE_OBJECT_SIZE = 400
 
 
 class RobotLogger:
@@ -29,9 +33,7 @@ class RobotLogger:
         self.rows: list[list[float]] = []
         self._t0_us: int | None = None
         config = robot.config
-        self._motor_ports = sorted(
-            {abs(p) for g in config.drivetrain.gearing.values() for p in g.motors}
-        )
+        self._motor_ports = motor_ports(config)
         # (type, port) in column order, as columns_for lists them
         self._sensor_ports = [
             (s.type, s.port) for s in sorted(config.sensors, key=lambda s: s.port)
@@ -80,16 +82,24 @@ class RobotLogger:
     def log(self) -> RobotLog:
         return RobotLog.from_rows(self.names, self.rows)
 
+    def devices(self) -> str:
+        """What is on each port, as vexsim's logger lists it ("1 motor, 10 imu")."""
+        found = [(p, "motor") for p in self._motor_ports]
+        found += [(port, kind) for kind, port in self._sensor_ports]
+        return ", ".join(f"{port} {kind}" for port, kind in sorted(found))
+
 
 def _sensor_values(kind: str, value) -> list[float]:
     if kind == "gps":
         if value is None:
             return [NAN] * 4
         return [value.x_m, value.y_m, value.heading_deg, value.error_m]
+    if kind == "distance":  # mm; with nothing in range, no confidence and no object
+        if value is None:
+            return [NAN, 0, 0]
+        return [value, DISTANCE_CONFIDENCE, DISTANCE_OBJECT_SIZE]
     if value is None:
         return [NAN]
     if kind == "imu":
         return [value.rotation_deg]
-    if kind == "rotation":
-        return [value.position_cdeg]
-    return [value]  # distance, mm
+    return [value.position_cdeg]  # rotation

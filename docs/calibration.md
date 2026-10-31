@@ -14,9 +14,10 @@ The black line is the robot's log. Orange dashed is the simulation with the defa
 ```
 vexsim calibration-routine ROBOT.yaml MY_PROS_PROJECT
 ```
-This writes two files into the project:
+This writes four files into the project:
 - `include/vexsim_calibration.hpp`
 - `src/vexsim_calibration.cpp`, which holds your robot's ports and the routine's voltages
+- `include/vexsim_log.hpp` and `src/vexsim_log.cpp`: vexsim's logger, which the routine logs with (the same two files `vexsim logger add` copies into any project)
 
 Call `vexsim_calibration::run()` from `autonomous()`, or from `opcontrol()` on a button press:
 ```cpp
@@ -43,15 +44,15 @@ The routine first calibrates the IMU, so keep the robot still. Then it drives, w
 - The fit assumes the robot touches nothing but the floor. If it hits something, run it again.
 - Use the tiles you compete on, and a charged battery.
 
-**Getting the log:**
-- **With a microSD card** in the brain, the log is saved to `/usd/vexsim_log.csv`.
+**Getting the log:** the routine logs with vexsim's logger (`vexsim_log.hpp`, which `calibration-routine` adds to the project with it).
+- **With a microSD card** in the brain, the log is saved to `vexsim_0001_calibration.csv`, then `vexsim_0002_calibration.csv` and so on: each run gets the next number (`vexsim_count.txt` on the card keeps it).
 - **Without one**, it is printed to the terminal between `#vexsim-log begin` and `#vexsim-log end` lines. Capture it with `pros terminal > run.txt` over USB; a wireless connection is too slow for this.
 
 `vexsim calibrate` accepts either file as it is.
 
 ## 3. Fit
 ```
-vexsim calibrate ROBOT.yaml vexsim_log.csv --out calibration
+vexsim calibrate ROBOT.yaml vexsim_0001_calibration.csv --out calibration
 ```
 ```
 Robot log: 700 rows (7.0 s): 6 motors, 2 rotation sensors, 1 IMU
@@ -97,12 +98,13 @@ vexsim calibrate ROBOT.yaml another_run.csv --fit none
 ```
 This replays the log with the robot config's current parameters and prints the RMS differences, with no fitting. The tests do exactly this with simulated "real" robots (`tests/test_calibration.py`). The fitted model must reproduce a run it never saw within 3° of total turn and about 0.2 in of tracking-wheel travel.
 
-Any program can make such a log. Call `vexsim_calibration::start_logging()` when it starts and `vexsim_calibration::save()` at the end; the logger samples every 10 ms in its own task. It doesn't know what your code commanded, so the replay drives each motor with the voltage the motor reported (see [How the replay works](#how-the-replay-works)).
+Any program can make such a log with vexsim's logger: `vexsim logger add MY_PROS_PROJECT` copies it in, then `vexsim_log::start("name")` begins a log and `vexsim_log::stop()` saves it (the README's [vexsim's logger](../README.md#vexsims-logger) has the rest). It samples every 10 ms in its own task. It doesn't know what your code commanded (unless the code tells it, with `vexsim_log::command`), so the replay drives each motor with the voltage the motor reported (see [How the replay works](#how-the-replay-works)).
 
-To compare a program's simulated run with its real one, log the simulated run too:
+To compare a program's simulated run with its real one, log the simulated run too: run it with a folder standing in for the SD card, and its own logger writes the same file there,
 ```
-vexsim run ROBOT.yaml --program MY_PROS_PROJECT --headless --robot-log sim_run.csv
+vexsim run ROBOT.yaml --program MY_PROS_PROJECT --headless --sd sim_card
 ```
+or have the simulator record what the robot's sensors read, whatever the program does: `--robot-log sim_run.csv`.
 
 ## Trying it in the simulator
 `examples/pros_projects/calibration` is the routine for `examples/robots/full_omni_6m.yaml`:
@@ -113,7 +115,24 @@ vexsim calibrate examples/robots/full_omni_6m.yaml run.txt
 Here the "robot" is the simulator with its default parameters, so the fit leaves them about where they are. To see it find different values, add overrides to a copy of the robot config before `vexsim run`, then calibrate with the original.
 
 ## The log format
-CSV, one row every 10 ms, written the same way by the robot (`vexsim_calibration.cpp`) and by the simulator (`--robot-log`). Readings are raw, as PROS reports them for a positive port: a motor on a negative config port reads backwards, and rotation sensors are read with reversal off.
+CSV, one row every 10 ms, written the same way by the robot (vexsim's logger, `vexsim_log.cpp`) and by the simulator (`--robot-log`). Readings are raw, as PROS reports them for a positive port: a motor on a negative config port reads backwards, and a rotation sensor reads as if it weren't reversed.
+
+This is format 2. Before the header, `# key: value` lines say what the log is:
+```
+# vexsim-log: 2
+# name: Left 40
+# started_ms: 2350
+# mode: autonomous
+# battery_pct: 98
+# devices: 1 motor, 2 motor, 10 imu, 13 distance
+# robot: 1239E 2026-27
+time_ms,battery_mv,battery_ma,m1_cmd_mv,...
+0,12620,410,...
+#mark,500,intake on
+```
+`name` is the one `vexsim_log::start` was given, `started_ms` the brain's clock then, `mode` the competition mode it started in, `devices` what the logger found on each port; `vexsim_log::info` adds the rest. Among the rows, `#mark,<time_ms>,<text>` lines are the code's marks (`vexsim_log::mark`) and the competition mode's changes (`mode: disabled`). Format 1, the calibration routine's before the logger, is only the header and rows, with `d<p>_mm` alone for a distance sensor; it still reads.
+
+Motors come first, every one of them (the drive's and the mechanisms'), then the other devices, each by port:
 
 | Column | Meaning |
 |---|---|
@@ -125,8 +144,10 @@ CSV, one row every 10 ms, written the same way by the robot (`vexsim_calibration
 | `m<p>_deg`, `m<p>_rpm`, `m<p>_ma`, `m<p>_mv`, `m<p>_temp` | position, actual velocity, current, voltage, temperature |
 | `r<p>_cdeg` | rotation sensor position (centidegrees) |
 | `imu<p>_deg` | IMU rotation (degrees, clockwise) |
-| `d<p>_mm` | distance sensor (empty when nothing is in range) |
+| `d<p>_mm`, `d<p>_conf`, `d<p>_size` | distance sensor (empty when nothing is in range), its confidence (0 to 63) and the object's size (0 to 400) |
 | `gps<p>_x_m`, `gps<p>_y_m`, `gps<p>_heading_deg`, `gps<p>_error_m` | GPS |
+| `pose_<name>_x_in`, `pose_<name>_y_in`, `pose_<name>_theta_deg` | a pose the code logged (`vexsim_log::pose`), as LemLib has them: inches, and degrees clockwise from +y |
+| `val_<name>` | a number the code logged (`vexsim_log::value`) |
 
 ## How the replay works
 `vexsim/calibration/replay.py` gives the simulated robot the log's motor commands at the log's times and reads its sensors every millisecond. It differs from a normal simulation in four ways:

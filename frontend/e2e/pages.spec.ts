@@ -111,7 +111,7 @@ test("calibrates the simulated robot with a robot log, into its config", async (
   await page.getByTestId(`item-${ROBOT_LOG}`).click(); // a robot log: to the Calibrate page
   await expect(page.getByTestId("calibrate-log")).toHaveValue(ROBOT_LOG);
   await page.getByTestId("calibrate-robot").selectOption(ROBOT);
-  await expect(page.getByTestId("routine-files").locator("li")).toHaveCount(2);
+  await expect(page.getByTestId("routine-files").locator("li")).toHaveCount(4); // the routine and vexsim's logger
   const fit = page.getByTestId("fit");
   await fit.getByLabel(/longitudinal_mu/).uncheck();
   await fit.getByLabel(/rolling_resistance/).uncheck();

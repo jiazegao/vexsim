@@ -1,6 +1,6 @@
 """The Calibrate page: ``vexsim calibration-routine`` and ``vexsim calibrate`` for the UI.
 
-First the calibration routine goes into a PROS project (two files), for the real robot
+First the calibration routine goes into a PROS project (with vexsim's logger), for the real robot
 to drive while it logs what its motors and sensors read; then a job fits the simulator's
 physics parameters to that log. A fit's result goes to the workspace's
 .vexsim/calibrations/<id>/: what the page shows in result.json, beside the fitted values
@@ -27,19 +27,15 @@ MAX_POINTS = 3000  # samples per chart, at most
 def routine_plan(config: RobotConfig, project: Path, root: Path) -> dict:
     """What adding the routine to ``project`` does: the files it writes (and whether each
     is there already, as written for this robot or otherwise), and the maneuvers."""
-    from vexsim.calibration.cpp import generate, routine_files
+    from vexsim.bridge.logger import file_state
+    from vexsim.calibration.cpp import routine_files, routine_texts
     from vexsim.calibration.routine import schedule, standard_routine
 
     workspace = Workspace(root)
-    texts = generate(config)
-    files = []
-    for path, text in zip(routine_files(project), texts, strict=True):
-        if not path.is_file():
-            state = "new"
-        else:
-            same = path.read_text(encoding="utf-8", errors="replace") == text
-            state = "same" if same else "different"
-        files.append({"path": workspace.relative(path), "state": state})
+    files = [
+        {"path": workspace.relative(path), "state": file_state(path, text)}
+        for path, text in zip(routine_files(project), routine_texts(config), strict=True)
+    ]
     plan = schedule(config, standard_routine(config))
     return {
         "project": workspace.relative(project),

@@ -87,7 +87,7 @@ def test_columns_follow_the_config():
     assert columns[3:11] == [
         "m1_cmd_mv", "m1_cmd_rpm", "m1_brake", "m1_deg", "m1_rpm", "m1_ma", "m1_mv", "m1_temp",
     ]  # fmt: skip
-    assert columns[-4:] == ["imu10_deg", "r11_cdeg", "r12_cdeg", "d13_mm"]
+    assert columns[-6:] == ["imu10_deg", "r11_cdeg", "r12_cdeg", "d13_mm", "d13_conf", "d13_size"]
 
 
 def test_log_round_trip_and_extraction(real_log, tmp_path):

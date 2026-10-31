@@ -33,6 +33,7 @@ export interface RunSpec {
   input?: string | null;
   follow?: Follow | null;
   env?: Record<string, string>;
+  sd?: string | null;
   busy_timeout?: number;
 }
 
@@ -420,6 +421,7 @@ export interface RunConfiguration {
   input?: string | null;
   follow?: Follow | null;
   env?: Record<string, string>;
+  sd?: string | null;
   busy_timeout?: number;
   name: string;
 }

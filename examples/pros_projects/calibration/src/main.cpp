@@ -8,8 +8,9 @@
  * and call vexsim_calibration::run() the same way.
  *
  * On the robot: run autonomous with the robot in the middle of a field (or 3 x 3 m of open
- * floor), facing the longer free direction. The log goes to /usd/vexsim_log.csv on the SD card,
- * or to the terminal (pros terminal) without a card. Then: vexsim calibrate ROBOT.yaml LOG
+ * floor), facing the longer free direction. vexsim's logger (vexsim_log.hpp) saves the log to
+ * the SD card (vexsim_0001_calibration.csv, numbered up from there), or prints it to the
+ * terminal (pros terminal) without a card. Then: vexsim calibrate ROBOT.yaml LOG
  *
  * In vexsim: vexsim run examples/robots/full_omni_6m.yaml --program
  *   examples/pros_projects/calibration --headless > run.txt, then vexsim calibrate on run.txt.
