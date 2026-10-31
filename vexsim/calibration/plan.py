@@ -813,9 +813,9 @@ def _run(jobs: list, workers: int | None) -> list[Trial]:
     n = min(worker_count(workers), len(jobs))
     if n <= 1:
         return [simulate(job) for job in jobs]
-    from vexsim.workers import process_pool
+    from vexsim.workers import clean_start, process_pool
 
-    with process_pool(n) as pool:
+    with process_pool(n, clean_start()) as pool:  # make_plan may run beside threads (the app)
         return list(pool.map(simulate, jobs))
 
 

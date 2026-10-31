@@ -7,20 +7,34 @@ each worker watches the process that made the pool and exits as soon as it's gon
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
+from multiprocessing.context import BaseContext
 
 POLL_S = 0.5
 
 
-def process_pool(workers: int) -> ProcessPoolExecutor:
-    """A pool of ``workers`` processes that exit when this process does."""
+def process_pool(workers: int, context: BaseContext | None = None) -> ProcessPoolExecutor:
+    """A pool of ``workers`` processes that exit when this process does, started the
+    ``multiprocessing`` context's way (the default's, if None)."""
     return ProcessPoolExecutor(
-        max_workers=workers, initializer=_watch_parent, initargs=(os.getpid(),)
+        max_workers=workers,
+        mp_context=context,
+        initializer=_watch_parent,
+        initargs=(os.getpid(),),
     )
+
+
+def clean_start() -> BaseContext:
+    """Workers started by a process with no threads running (a fork server; spawned where
+    there is none), for a pool made by a process that may have threads: forking one can
+    deadlock its children."""
+    methods = multiprocessing.get_all_start_methods()
+    return multiprocessing.get_context("forkserver" if "forkserver" in methods else "spawn")
 
 
 def default_workers() -> int:
