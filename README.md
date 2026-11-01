@@ -468,7 +468,7 @@ vexsim vscode [--code CODE] [--out FILE] [--no-install]
 ```
 `vexsim ui` opens vexsim in your web browser for a folder of robot configs, fields, programs and PROS projects (default: the current folder). It can also open in a window of its own, from a shortcut, or in a panel in VS Code ([below](#a-window-of-its-own-a-shortcut-a-vs-code-panel)). You pick what to run from lists instead of typing a command line, then watch the run live. It is the same simulation as `vexsim run`, drawn by the browser.
 
-It needs the `ui` extra: `python -m pip install -e ".[ui]"`. The page itself comes prebuilt with the package, so you don't need Node.js, and it works offline.
+It needs the `ui` extra: `python -m pip install -e ".[ui]"` (the *Calibrate* page's maps and plots need the `viz` extra too, matplotlib). The page itself comes prebuilt with the package, so you don't need Node.js, and it works offline.
 
 ![The browser app after the 1239E port's Left 40 autonomous: where the robot went (green) and where its MCL code thought it was (blue, dashed)](docs/img/ui_1239e.png)
 

@@ -445,6 +445,15 @@ export function SessionPanel(props: {
   );
 }
 
+/** What vexsim draws with matplotlib (the `viz` extra), and how to get it. */
+export function NeedsMatplotlib(props: { what: string; then: string }) {
+  return (
+    <p className="muted small" data-testid="needs-matplotlib">
+      {props.what} need matplotlib: <code>python -m pip install -e ".[viz]"</code> in the vexsim folder, then {props.then}.
+    </p>
+  );
+}
+
 /** How to put the written program on the robot, with the PROS CLI. */
 function ProgramSteps(props: { program: CalibrationProgram }) {
   const { program } = props;
@@ -504,6 +513,7 @@ function PlanView(props: { plan: ProgramPlan; version: number }) {
           ))}
         </tbody>
       </table>
+      {plan.tests.some((t) => t.place.length > 0 && !t.map) && <NeedsMatplotlib what="The maps" then="plan and write the program again" />}
       {plan.missing.length > 0 && (
         <div className="problem" role="alert">
           <strong>Left out, with no room on this field:</strong>{" "}
@@ -718,6 +728,7 @@ function ReportView(props: { report: SessionReport; session: string; version: nu
           )}
         </details>
       ))}
+      {report.plots.length === 0 && <NeedsMatplotlib what="The report's plots" then="fit the session again" />}
       {report.plots.length > 0 && (
         <div className="report-plots" data-testid="session-plots">
           {report.plots.map((p) => (

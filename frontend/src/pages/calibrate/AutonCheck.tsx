@@ -4,7 +4,7 @@ import { JobStatus, ProblemBox, ResultList } from "../../components/JobPanel";
 import { isActive, latest, useJob } from "../../jobs";
 import type { AutonCheckResult, EndFound, PassMarks, ResultAbout, RunProblem, WorkspaceInfo } from "../../protocol";
 import { when } from "../../recording";
-import { figure } from "./SessionPanel";
+import { figure, NeedsMatplotlib } from "./SessionPanel";
 
 const EXAMPLE_END = "front-left: 23.5 from -x, 40 from +y; back-right: 35.25 from -x, 52 from +y";
 const PLOTS: Record<string, string> = {
@@ -350,6 +350,7 @@ function CheckView(props: { result: AutonCheckResult; onPlayLog: (path: string) 
           {result.sim_spread ? `; up to ${result.sim_spread[0].toFixed(1)} in and ${result.sim_spread[1].toFixed(1)}° apart` : ""}).
         </p>
       )}
+      {result.plots.length === 0 && <NeedsMatplotlib what="The plots" then="check it again" />}
       <div className="report-plots">
         {result.plots.map((name) => (
           <figure key={name}>
