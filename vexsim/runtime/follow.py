@@ -116,19 +116,29 @@ def _from_set_pose(log, name: str):
     (radians counter-clockwise from +x, unwrapped)."""
     import numpy as np
 
+    rows = set_pose_rows(log, name)
     x, y, theta = log.pose(name)
-    known = np.isfinite(x) & np.isfinite(y) & np.isfinite(theta)
-    times, x, y = log.time_s[known], x[known], y[known]
-    heading = np.unwrap(np.radians(90.0 - theta[known]))  # counter-clockwise from +x
+    heading = np.unwrap(np.radians(90.0 - theta[rows]))  # counter-clockwise from +x
+    return log.time_s[rows], x[rows], y[rows], heading
+
+
+def set_pose_rows(log, name: str):
+    """The log's rows (indices) of a logged pose from the code's first setPose on, where the
+    pose is known."""
+    import numpy as np
+
+    x, y, theta = log.pose(name)
+    rows = np.flatnonzero(np.isfinite(x) & np.isfinite(y) & np.isfinite(theta))
+    x, y = x[rows], y[rows]
+    heading = np.unwrap(np.radians(90.0 - theta[rows]))
     # Before the code first sets its pose (a routine's setPose), the pose stands still, then
     # jumps further than a robot moves between two rows: where it was before isn't a place.
     jumps = np.flatnonzero(
         (np.hypot(np.diff(x), np.diff(y)) > JUMP_IN) | (np.abs(np.diff(heading)) > JUMP_RAD)
     )
     if jumps.size and np.ptp(x[: jumps[0] + 1]) == np.ptp(y[: jumps[0] + 1]) == 0:
-        first = jumps[0] + 1
-        times, x, y, heading = times[first:], x[first:], y[first:], heading[first:]
-    return times, x, y, heading
+        rows = rows[jumps[0] + 1 :]
+    return rows
 
 
 def drive_geometry(config) -> tuple[float, float]:

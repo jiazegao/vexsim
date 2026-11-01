@@ -36,6 +36,7 @@ ItemKind = Literal[
     "route",
     "input",
     "log",
+    "calsession",
     "robotlog",
     "mcllog",
     "invalid",
@@ -43,7 +44,7 @@ ItemKind = Literal[
 SessionState = Literal["building", "starting", "running", "paused", "finished", "error", "stopped"]
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 ConfigKind = Literal["robot", "field"]
-ResultKind = Literal["bench", "sweeps", "calibrations"]
+ResultKind = Literal["bench", "sweeps", "calibrations", "checks"]
 Workers = Annotated[int, Field(ge=1, le=64)]
 # What robot code draws on the field (vexsim.runtime.drawing), by layer: colors from the
 # field's palette, then shapes in inches and degrees, as lists that start with their kind
@@ -224,10 +225,73 @@ class RouteJob(_Message):
     text: str | None = None  # the route as the editor has it, when that isn't saved
 
 
+class CalibrationProgramJob(_Message):
+    """Plan a calibration session on the field and write its program into a PROS project
+    (``vexsim calibration program``); its result is the project's folder."""
+
+    kind: Literal["calibration_program"]
+    robot: str
+    field: str
+    folder: str  # the program's project, in the workspace (made if it isn't there)
+    margin: Annotated[float, Field(gt=0, le=24)] = 6.0  # room to keep around each test (in)
+    force: bool = False  # write over a src/main.cpp that isn't the program's
+    workers: Workers | None = None
+
+
+class CalibrationPracticeJob(_Message):
+    """A practice session: the simulated student runs the program in vexsim, its logs
+    collected into ``session`` (marked as practice)."""
+
+    kind: Literal["calibration_practice"]
+    robot: str
+    field: str
+    program: str  # the program's project, written
+    session: str  # the session's folder (made if it isn't there)
+    tests: list[str] | None = None  # the menu's tests to run; None: every one
+    unlike: bool = True  # the simulated robot as a real one is, not quite as its config says
+
+
+class CalibrationUsbJob(_Message):
+    """Collect over USB (no card in the brain) until stopped (``DELETE /api/jobs/{id}``):
+    each log the program prints, added to the session as it ends."""
+
+    kind: Literal["calibration_usb"]
+    session: str  # it listens through `pros terminal` (no other command: a request names none)
+
+
+class CalibrationFitJob(_Message):
+    """Fit a calibration session (``vexsim calibrate ROBOT SESSION``): its report, and
+    report/report.json for the page (``SessionReport``)."""
+
+    kind: Literal["calibration_fit"]
+    robot: str
+    session: str
+    field: str | None = None  # the field the session ran on (for the distance sweeps)
+    workers: Workers | None = None
+
+
+class CalibrationCheckJob(_Message):
+    """The autonomous check (``vexsim calibration check-auton``); its result is the id of an
+    ``AutonCheckResult``."""
+
+    kind: Literal["calibration_check"]
+    robot: str
+    field: str
+    program: str  # the PROS project the robot ran
+    logs: Annotated[list[str], Field(min_length=1)]  # the real runs' robot logs
+    ends: list[str]  # where each ended: two corners' tape marks, one for each log
+    routine: str | None = None  # None: the routine the logs are named for
+    seeds: Annotated[int, Field(ge=1, le=10)] = 3
+    max_distance_in: Annotated[float, Field(gt=0)] | None = None  # None: the team's marks
+    max_heading_deg: Annotated[float, Field(gt=0)] | None = None
+    workers: Workers | None = None
+
+
 StartJob = Annotated[
     Union[  # noqa: UP007 - a named union, for the TypeScript generator
         BuildJob, DoctorJob, MotorCurvesJob, DriftJob, OdometryJob, BenchJob, CalibrateJob,
-        SweepJob, RouteJob,
+        SweepJob, RouteJob, CalibrationProgramJob, CalibrationPracticeJob, CalibrationUsbJob,
+        CalibrationFitJob, CalibrationCheckJob,
     ],
     Field(discriminator="kind"),
 ]  # fmt: skip
@@ -543,12 +607,66 @@ class MclLogTape(_Message):
     it was, update by update, and what it saw, drawn as the robot code's drawings are. There's
     no truth: only the real robot knew where it was."""
 
+    kind: Literal["mcl"] = "mcl"
     name: str
     path: str
     summary: MclLogSummary
     times: list[float]  # each update's, from the first (s)
     estimate: list[tuple[float, float, float]]  # each update's: x, y, heading
     drawings: list[tuple[float, dict[str, list[Shape]]]]  # each update's: rays, particles, spread
+
+
+class RobotLogSummary(_Message):
+    """What a robot log (vexsim's logger) holds, as it plays on the field."""
+
+    rows: int
+    duration_s: float  # from its first pose to its last
+    interval_ms: float | None  # between rows: the median
+    pose: str  # the pose it plays: the code's first logged (lemlib), or "odometry" (from a spot)
+    poses: list[str]  # every pose the code logged
+    start: tuple[float, float, float]  # where it starts: x, y, heading
+    distance_sensors: int  # drawn as rays, from where the robot config mounts them
+    no_reading_pct: float | None  # of their readings
+    robot: str | None  # the robot it names (calibration logs do)
+    field: str | None  # and the field
+    test: str | None  # a calibration program's test
+    routine: str | None  # a routine's name, as the code named the log (Left 40)
+
+
+class LogPath(_Message):
+    """Another pose a robot log's code logged (MCL's, beside LemLib's), as a path: its point at
+    each frame from ``first`` on (a frame it didn't log keeps the point before)."""
+
+    name: str
+    color: DrawColor
+    first: int  # the frame its path starts at
+    xs: list[float]
+    ys: list[float]
+
+
+class RobotLogTape(_Message):
+    """A robot log (``vexsim.app.logtape``), to play on the field as an MCL log plays: where
+    its code thought it was (a pose it logged; a calibration log's, by odometry from its spot),
+    its other poses and each distance sensor's reading as a ray, row by row. There's no truth:
+    only the real robot knew where it was."""
+
+    kind: Literal["robot"] = "robot"
+    name: str
+    path: str
+    summary: RobotLogSummary
+    times: list[float]  # each frame's, from the first (s)
+    estimate: list[tuple[float, float, float]]  # each frame's: x, y, heading
+    drawings: list[tuple[float, dict[str, list[Shape]]]]  # each frame's: rays, poses
+    paths: list[LogPath]  # the other poses' paths
+
+
+class NothingToPlay(_Message):
+    """A robot log that reads but has no path to play on the field: no pose of its code's, and
+    no spot it started on (the quick fit's routine logs none). Why, in words."""
+
+    kind: Literal["none"] = "none"
+    path: str
+    why: str
 
 
 class RoutineInfo(_Message):
@@ -1034,6 +1152,259 @@ class CalibrationResult(_Message):
     drive: FittedDrive | None = None  # for vexsim's own motions, if it's a two-sided drive
 
 
+# --- a calibration session (the Calibrate page, phase 14.7) -----------------------------------
+
+
+class ProgramTest(_Message):
+    """One of the session's tests, as the program's menu numbers it."""
+
+    number: int
+    key: str
+    title: str
+    kind: Literal["on_hand", "drive", "push", "spin"]  # on_hand: on its side, or by hand
+    runs: int  # runs it takes
+    place: list[str]  # how to put the robot on its spot, from two walls
+    clearance_in: float | None  # the least room around it
+    map: str | None  # its map, in the workspace
+    scale: float | None  # a driving test slowed for room
+
+
+class MissingTest(_Message):
+    """A test with no room on the field, left out."""
+
+    key: str
+    title: str
+    blocked_by: list[str]
+
+
+class ProgramPlan(_Message):
+    robot: str
+    field: str
+    margin_in: float
+    tests: list[ProgramTest]
+    missing: list[MissingTest]
+
+
+class CalibrationProgram(_Message):
+    """A calibration program's folder (``GET /api/calibration/program``): whether the program
+    and a PROS project are there, and the plan it was written with."""
+
+    folder: str
+    exists: bool
+    pros_project: bool  # pros c n made it a project: it builds and uploads to the robot
+    written: bool  # its src/main.cpp is the calibration program
+    plan: ProgramPlan | None
+
+
+class SessionRun(_Message):
+    """One of a session's runs: its log, what collecting made of it, and what it measured."""
+
+    file: str
+    test: str
+    run: int
+    name: str
+    started_ms: int
+    ended: str
+    quality: str  # "good", or what's wrong with it
+    use: bool  # whether the fit uses it
+    warnings: list[str]
+    result: str  # what it measured, in a line (as the brain's screen said it)
+
+
+class SessionValue(_Message):
+    """A value a step of the fit found."""
+
+    key: str
+    before: float | None
+    after: float | None
+    uncertainty: float | None  # one standard deviation; None: the logs can't tell
+    tolerance: float | None
+    pinned: bool  # known within its tolerance
+    note: str
+    why_not: str  # why it isn't written ("": it is)
+
+
+class SessionRms(_Message):
+    group: str
+    unit: str
+    before: float | None
+    after: float | None
+
+
+class SessionStep(_Message):
+    name: str
+    runs: list[str]
+    skipped: str  # why it didn't run ("": it did)
+    values: list[SessionValue]
+    rms: list[SessionRms]
+    notes: list[str]
+    warnings: list[str]
+
+
+class HeldOutGroup(_Message):
+    group: str
+    unit: str
+    rms: float | None  # simulated against logged
+    noise: float | None  # what the sensors' noise alone leaves
+
+
+class HeldOutRun(_Message):
+    """The driving run the fit left out, replayed with what it found."""
+
+    run: str
+    matches: bool  # within the sensors' noise
+    groups: list[HeldOutGroup]
+
+
+class SessionChange(_Message):
+    """One change the fit writes into the robot's config."""
+
+    location: str  # overrides["motor.voltage_cap"], drivetrain.wheels[0].diameter_in, ...
+    value: float | list[float]
+    key: str  # the value's name in the report
+
+
+class SessionPlot(_Message):
+    title: str
+    file: str  # in the session's report/
+
+
+class SessionReport(_Message):
+    """A session's fit (its report/report.json)."""
+
+    robot: str
+    robot_file: str  # the robot config it was fitted to
+    config_digest: str  # that config's text, as it was: Apply refuses a changed one
+    fitted: str  # the date
+    session: str
+    steps: list[SessionStep]
+    held_out: HeldOutRun | None
+    drive: str | None  # the drive model, in words
+    drive_section: str | None  # the line a route's drive: section takes
+    changes: list[SessionChange]  # what Apply writes
+    warnings: list[str]
+    plots: list[SessionPlot]
+
+
+class CalibrationSessionState(_Message):
+    """A calibration session (``GET /api/calibration/session``): its runs and its latest fit."""
+
+    path: str
+    name: str
+    exists: bool  # it has a session.yaml
+    robot: str | None  # the robot's name, as its logs give it
+    field: str | None
+    practice: bool  # its runs are the simulated student's
+    runs: list[SessionRun]
+    report: SessionReport | None
+
+
+class SessionCollectRequest(_Message):
+    session: str
+    folder: str | None = None  # a folder of logs (anywhere on this computer); None: the card
+
+
+class SessionCollected(_Message):
+    card: str  # where the logs came from
+    added: int  # new runs
+    messages: list[str]  # what collecting said of each log
+    state: CalibrationSessionState
+
+
+class SessionUseRequest(_Message):
+    session: str
+    file: str
+    use: bool
+
+
+class SessionApplyRequest(_Message):
+    session: str
+    text: str  # the robot config's text, as its editor has it
+
+
+class SessionApplied(_Message):
+    text: str  # with the session's changes written in, its comments kept
+    check: ConfigCheck
+    changes: int
+
+
+class PassMarks(_Message):
+    """The autonomous check's pass marks: the team's (.vexsim/calibration.yaml), or vexsim's."""
+
+    max_distance_in: float
+    max_heading_deg: float
+    source: str
+    file: str | None
+    warnings: list[str]
+
+
+class SavePassMarks(_Message):
+    max_distance_in: Annotated[float, Field(gt=0)]
+    max_heading_deg: Annotated[float, Field(gt=0)]
+
+
+class EndRequest(_Message):
+    """Where two corners' tape marks put the robot (``parse_end``'s words)."""
+
+    robot: str
+    field: str
+    text: str
+
+
+class EndFound(_Message):
+    x: float
+    y: float
+    heading: float
+    misfit_in: float  # the marks' spacing against the corners'
+    corners: list[str]
+    warning: str | None
+
+
+class CheckMarks(_Message):
+    max_distance_in: float
+    max_heading_deg: float
+    source: str
+
+
+class CheckRun(_Message):
+    """A real run, against the simulated ones."""
+
+    log: str
+    end: str | None  # its tape marks
+    measured: tuple[float, float, float] | None  # where it ended: x, y, heading
+    end_off: tuple[float, float] | None  # from the simulated runs' end: in, degrees
+    run_rms_in: float | None  # its code's pose against theirs, through the run
+    parted_s: float | None  # when it first parted from them by more than the mark
+
+
+class CheckSim(_Message):
+    seed: int
+    end: tuple[float, float, float]
+
+
+class AutonCheckResult(_Message):
+    """An autonomous check (``GET /api/results/checks/{id}``)."""
+
+    about: ResultAbout
+    routine: str
+    robot: str | None
+    field: str | None
+    program: str | None
+    start: tuple[float, float, float] | None
+    marks: CheckMarks
+    passed: bool
+    failures: list[str]
+    warnings: list[str]
+    runs: list[CheckRun]
+    sims: list[CheckSim]
+    sim_end: tuple[float, float, float] | None
+    end_off: tuple[float, float] | None
+    run_rms_in: float | None
+    sim_spread: tuple[float, float] | None
+    real_spread: tuple[float, float] | None
+    plots: list[str]  # in the result's folder
+
+
 class RouteParamInfo(_Message):
     name: str
     type: str  # as C++ has it
@@ -1327,6 +1698,11 @@ MODELS: list[type[BaseModel]] = [
     Sweep,
     SweepJob,
     RouteJob,
+    CalibrationProgramJob,
+    CalibrationPracticeJob,
+    CalibrationUsbJob,
+    CalibrationFitJob,
+    CalibrationCheckJob,
     RouteStepEnd,
     RouteRun,
     RouteParamInfo,
@@ -1387,6 +1763,10 @@ MODELS: list[type[BaseModel]] = [
     Replay,
     MclLogSummary,
     MclLogTape,
+    RobotLogSummary,
+    LogPath,
+    RobotLogTape,
+    NothingToPlay,
     RoutineInfo,
     NotRoutineInfo,
     RouteInfo,
@@ -1442,6 +1822,33 @@ MODELS: list[type[BaseModel]] = [
     CalibrationPanel,
     FittedDrive,
     CalibrationResult,
+    ProgramTest,
+    MissingTest,
+    ProgramPlan,
+    CalibrationProgram,
+    SessionRun,
+    SessionValue,
+    SessionRms,
+    SessionStep,
+    HeldOutGroup,
+    HeldOutRun,
+    SessionChange,
+    SessionPlot,
+    SessionReport,
+    CalibrationSessionState,
+    SessionCollectRequest,
+    SessionCollected,
+    SessionUseRequest,
+    SessionApplyRequest,
+    SessionApplied,
+    PassMarks,
+    SavePassMarks,
+    EndRequest,
+    EndFound,
+    CheckMarks,
+    CheckRun,
+    CheckSim,
+    AutonCheckResult,
     ConfigOverridesRequest,
     ConsoleMessage,
     BuildMessage,

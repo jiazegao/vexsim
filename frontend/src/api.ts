@@ -5,12 +5,15 @@
 
 import type {
   AppInfo,
+  CalibrationProgram,
+  CalibrationSessionState,
   CalibrationSetup,
   ConfigCheck,
   ConfigEdit,
   ConfigFile,
   ConfigKind,
   ConfigPatched,
+  EndFound,
   NewRobot,
   NewRobotRequest,
   NewRoute,
@@ -18,8 +21,11 @@ import type {
   JobInfo,
   MirroredRoute,
   MclLogTape,
+  PassMarks,
   ProjectRoutines,
   Preview,
+  NothingToPlay,
+  RobotLogTape,
   Replay,
   ResultAbout,
   ResultKind,
@@ -37,6 +43,8 @@ import type {
   RunSpec,
   RunUpdate,
   ScenarioInfo,
+  SessionApplied,
+  SessionCollected,
   SessionInfo,
   StartJob,
   Sweep,
@@ -168,6 +176,30 @@ export const api = {
     request<Replay>("/api/replay", { method: "POST", body: JSON.stringify({ log, robot, field }) }),
   /** An MCL log from the workspace, to play on the field; a RunProblem if it doesn't read. */
   mclLog: (log: string) => orProblem<MclLogTape>(`/api/mcllog?path=${encodeURIComponent(log)}`, { method: "GET" }),
+  /** A robot log (vexsim's logger), to play on the field: its rays drawn from where `robot` mounts the sensors. */
+  robotLog: (log: string, robot: string) =>
+    orProblem<RobotLogTape | NothingToPlay>(`/api/robotlog?path=${encodeURIComponent(log)}${robot ? `&robot=${encodeURIComponent(robot)}` : ""}`, { method: "GET" }),
+  /** A calibration program's folder: the program, the PROS project, the plan it was written with. */
+  calibrationProgram: (folder: string) => orProblem<CalibrationProgram>(`/api/calibration/program?folder=${encodeURIComponent(folder)}`, { method: "GET" }),
+  /** A calibration session: its runs (what each measured, by the robot's config) and its latest fit. */
+  calibrationSession: (session: string, robot: string) =>
+    orProblem<CalibrationSessionState>(`/api/calibration/session?path=${encodeURIComponent(session)}${robot ? `&robot=${encodeURIComponent(robot)}` : ""}`, { method: "GET" }),
+  /** The calibration logs on the brain's card (folder null) or in a folder, into the session. */
+  collectSession: (session: string, folder: string | null, robot: string) =>
+    orProblem<SessionCollected>(`/api/calibration/collect${robot ? `?robot=${encodeURIComponent(robot)}` : ""}`, post({ session, folder })),
+  /** Leave a run out of the fit, or put it back. */
+  setRunUse: (session: string, file: string, use: boolean, robot: string) =>
+    orProblem<CalibrationSessionState>(`/api/calibration/use${robot ? `?robot=${encodeURIComponent(robot)}` : ""}`, post({ session, file, use })),
+  /** A robot config's text with the session's fitted changes written in. */
+  applySession: (session: string, text: string) => request<SessionApplied>("/api/calibration/apply", post({ session, text })),
+  /** The autonomous check's pass marks: the team's, or vexsim's. */
+  passMarks: () => request<PassMarks>("/api/calibration/marks"),
+  savePassMarks: (max_distance_in: number, max_heading_deg: number) =>
+    orProblem<PassMarks>("/api/calibration/marks", { method: "PUT", body: JSON.stringify({ max_distance_in, max_heading_deg }) }),
+  /** Where two corners' tape marks put the robot. */
+  endFound: (robot: string, field: string, text: string) => orProblem<EndFound>("/api/calibration/end", post({ robot, field, text })),
+  /** A picture in the workspace (a plan's map, a report's plot), for an <img>. */
+  imageUrl: (path: string, version = "") => withToken(`/api/image?path=${encodeURIComponent(path)}${version ? `&v=${encodeURIComponent(version)}` : ""}`),
   /** A PROS project's autonomous routines (include/custom/auton.hpp), to pick one to run. */
   routines: (project: string) => orProblem<ProjectRoutines>(`/api/routines?project=${encodeURIComponent(project)}`, { method: "GET" }),
   saveConfigurations: (configurations: RunConfiguration[]) =>

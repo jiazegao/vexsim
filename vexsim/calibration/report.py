@@ -40,7 +40,7 @@ class Write:
 
     location: str  # as yamledit takes it: overrides["motor.free_current_a"], sensors[6].scale_error
     value: Any
-    value_of: Value
+    value_of: Value | None = None  # (None: read back from a report, as the app applies it)
 
 
 def _significant(v: Value) -> bool:

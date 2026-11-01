@@ -1,5 +1,5 @@
 """What's in a folder: robots, fields, scenarios, Python programs, PROS projects, inputs,
-telemetry logs, robot logs and MCL logs.
+telemetry logs, calibration sessions, robot logs and MCL logs.
 
 The UI works on one folder, its workspace. ``Workspace.scan`` finds what vexsim can use
 in it by reading the files, never running them, and ``Workspace.path`` turns the paths the
@@ -23,6 +23,7 @@ ItemKind = Literal[
     "route",
     "input",
     "log",
+    "calsession",
     "robotlog",
     "mcllog",
     "invalid",
@@ -36,6 +37,7 @@ KIND_ORDER: tuple[str, ...] = (
     "scenario",
     "input",
     "log",
+    "calsession",
     "robotlog",
     "mcllog",
     "invalid",
@@ -48,6 +50,9 @@ MAX_READ = 512 * 1024  # bytes read to classify a file
 _PROGRAM_FUNCTION = re.compile(r"^def (initialize|autonomous|opcontrol)\b", re.MULTILINE)
 _TELEMETRY_HEADER = "time_s,phase,x_in,y_in,heading_deg"
 _ROBOT_LOG_HEADER = "time_ms,battery_mv"  # vexsim.calibration.log
+_ROBOT_LOG_INFO = "# vexsim-log:"  # format 2 opens with its "# key: value" lines
+_SESSION_FILE = "session.yaml"  # a calibration session's (vexsim.calibration.session)
+_SESSION_PARTS = ("runs", "report")  # its logs and its report: the session's, not listed
 _ROBOT_LOG_BEGIN = "#vexsim-log begin"  # a robot log in a terminal capture
 _CAPTURES = (".txt", ".log")
 MAX_CAPTURE = 20 * 1024 * 1024  # bytes: bigger text files aren't looked into
@@ -103,10 +108,16 @@ class Workspace:
                 items += self._routes(here)
                 dirs[:] = []  # a project's sources and headers aren't workspace files
                 continue
+            session = self._session(here) if _SESSION_FILE in files else None
+            if session is not None:
+                items.append(session)
             dirs[:] = sorted(
                 d
                 for d in dirs
-                if not d.startswith(".") and d not in SKIP_DIRS and depth < MAX_DEPTH
+                if not d.startswith(".")
+                and d not in SKIP_DIRS
+                and depth < MAX_DEPTH
+                and not (session is not None and d in _SESSION_PARTS)
             )
             for name in sorted(files):
                 seen += 1
@@ -162,6 +173,25 @@ class Workspace:
             items.append(WorkspaceItem("route", self.relative(path), route.name, detail, problem))
         return items
 
+    def _session(self, folder: Path) -> WorkspaceItem | None:
+        """A calibration session (``vexsim calibration collect``'s folder): its runs, whose
+        robot, and whether it's been fitted."""
+        import yaml
+
+        try:
+            data = yaml.safe_load((folder / _SESSION_FILE).read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            return None
+        if not isinstance(data, dict) or not isinstance(data.get("runs"), list):
+            return None
+        runs = len(data["runs"])
+        detail = f"calibration session: {runs} run{'s' if runs != 1 else ''}"
+        if data.get("robot"):
+            detail += f" of {data['robot']}"
+        if (folder / "report" / "report.md").is_file():
+            detail += ", fitted"
+        return WorkspaceItem("calsession", self.relative(folder), folder.name, detail)
+
     def _classify(self, path: Path) -> WorkspaceItem | None:
         suffix = path.suffix.lower()
         if suffix in (".yaml", ".yml"):
@@ -176,11 +206,17 @@ class Workspace:
             return None
         if suffix == ".csv":
             text = _read(path, 4096) or ""
-            header = text.splitlines()[0] if text else ""
+            lines = text.splitlines()
+            header = lines[0].lstrip("\ufeff") if lines else ""
             if header.startswith(_TELEMETRY_HEADER):
                 return WorkspaceItem("log", self.relative(path), path.name, "telemetry log")
-            if header.lstrip("\ufeff").startswith(_ROBOT_LOG_HEADER):
+            if header.startswith(_ROBOT_LOG_HEADER):
                 return WorkspaceItem("robotlog", self.relative(path), path.name, "robot log")
+            if header.startswith("#"):  # format 2: its "# key: value" lines, then the header
+                columns = next((line for line in lines if not line.startswith("#")), "")
+                if header.startswith(_ROBOT_LOG_INFO) or columns.startswith(_ROBOT_LOG_HEADER):
+                    detail = _robot_log_detail(lines)
+                    return WorkspaceItem("robotlog", self.relative(path), path.name, detail)
             columns = {c.strip() for c in header.split(",")}
             if "time_s" in columns and columns & _INPUT_COLUMNS:
                 return WorkspaceItem("input", self.relative(path), path.name, "controller input")
@@ -256,6 +292,22 @@ class Workspace:
         if count:
             detail += f", {count} element{'s' if count != 1 else ''}"
         return WorkspaceItem("field", relative, name, detail)
+
+
+def _robot_log_detail(lines: list[str]) -> str:
+    """What a format-2 robot log is, by its opening "# key: value" lines: a calibration
+    program's test, or a routine's log."""
+    info = {}
+    for line in lines:
+        if not line.startswith("#"):
+            break
+        key, _, value = line[1:].partition(":")
+        info[key.strip()] = value.strip()
+    if info.get("program") == "vexsim calibration" and info.get("test"):
+        test = info["test"].replace("_", " ").replace("imu", "IMU")
+        detail = f"calibration log: {test}"
+        return detail + (f", run {info['run']}" if info.get("run") else "")
+    return f"robot log: {info['name']}" if info.get("name") else "robot log"
 
 
 def _first_error(report) -> str:

@@ -4,7 +4,7 @@
 import { frontOf, outlineOf } from "./body";
 import type { Palette } from "./palette";
 import { mix, withAlpha } from "./palette";
-import type { Shape as DrawnShape, FieldScene, FrameMessage, OverlayMessage, RobotScene } from "./protocol";
+import type { DrawColor, Shape as DrawnShape, FieldScene, FrameMessage, OverlayMessage, RobotScene } from "./protocol";
 import { handlePoint } from "./startpose";
 import type { View } from "./view";
 import { toScreen } from "./view";
@@ -64,6 +64,7 @@ export interface Picture {
   ghosts?: Ghost[];
   drawings?: Drawings | null;
   logged?: readonly [number, number, number] | null; // a real robot's estimate, from its log
+  paths?: { color: DrawColor; trail: TrailLike }[]; // the log's other poses' paths (MCL's, say)
   stamp?: string | null; // written in the corner (a video's run and time)
 }
 
@@ -88,6 +89,7 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
   if (scene) drawElements(ctx, view, colors, scene, frame?.pieces ?? picture.pieces ?? []);
   if (layers.trails) {
     drawTrail(ctx, view, picture.truth, colors.truth);
+    if (layers.estimate) for (const path of picture.paths ?? []) drawTrail(ctx, view, path.trail, colors.hues[path.color], 1.5);
     if (layers.estimate) drawTrail(ctx, view, picture.estimate, colors.estimate);
   }
   if (picture.overlay) drawOverlay(ctx, view, colors, picture.overlay);
@@ -180,7 +182,7 @@ export function drawElements(ctx: CanvasRenderingContext2D, view: View, colors: 
   });
 }
 
-function drawTrail(ctx: CanvasRenderingContext2D, view: View, trail: TrailLike, color: string): void {
+function drawTrail(ctx: CanvasRenderingContext2D, view: View, trail: TrailLike, color: string, width = 2): void {
   if (trail.length < 2) return;
   ctx.beginPath();
   for (let i = 0; i < trail.length; i++) {
@@ -189,7 +191,7 @@ function drawTrail(ctx: CanvasRenderingContext2D, view: View, trail: TrailLike, 
     else ctx.lineTo(sx, sy);
   }
   ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = width;
   ctx.lineJoin = "round";
   ctx.stroke();
 }

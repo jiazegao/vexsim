@@ -8,6 +8,10 @@ sweep, say). What the function returns is the job's result.
 
 Jobs with the same ``key`` don't run twice at once: asking again while one runs returns
 the running one, which is how two runs of the same PROS project share one build.
+
+Cancelling a job ends its process, except for the kinds in ``GRACEFUL``, which run until
+told to stop (listening over USB, say): those are asked to stop (``report.stopping`` is set
+in their process), finish as they do, and only if they don't within ``GRACE_S`` are ended.
 """
 
 from __future__ import annotations
@@ -38,14 +42,23 @@ JOB_KINDS: dict[str, str] = {
     "calibrate": "vexsim.app.calibrate:calibrate",
     "sweep": "vexsim.app.sweeps:run_sweep",
     "route": "vexsim.app.routes:route_job",
+    "calibration_program": "vexsim.app.calsession:program_job",
+    "calibration_practice": "vexsim.app.calsession:practice_job",
+    "calibration_usb": "vexsim.app.calsession:usb_job",
+    "calibration_fit": "vexsim.app.calsession:fit_job",
+    "calibration_check": "vexsim.app.calsession:check_job",
 }
+GRACEFUL = {"calibration_usb"}  # asked to stop, they finish with what they have
+GRACE_S = 5.0  # how long one has to finish, once asked
 
 
 class Report:
-    """How a job's function tells the UI how it's going."""
+    """How a job's function tells the UI how it's going (and, for the ``GRACEFUL`` kinds,
+    hears that it's time to stop: ``stopping``)."""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn, stopping: threading.Event | None = None) -> None:
         self._conn = conn
+        self.stopping = stopping or threading.Event()
 
     def __call__(self, line: str) -> None:
         """A line of the job's log."""
@@ -104,10 +117,22 @@ def run_job(conn, kind: str, params: dict) -> None:
     # Worker pools start fresh interpreters on every system, as on Windows (forking a
     # process that has threads, as this one does, can deadlock).
     multiprocessing.set_start_method("spawn", force=True)
+    stopping = threading.Event()
+    if kind in GRACEFUL:
+
+        def hear() -> None:  # the parent's ("stop", None); a closed connection means stop too
+            try:
+                while conn.recv()[0] != "stop":
+                    pass
+            except (EOFError, OSError):
+                pass
+            stopping.set()
+
+        threading.Thread(target=hear, daemon=True, name="vexsim-job-stop").start()
     try:
         module, name = JOB_KINDS[kind].split(":")
         function = getattr(importlib.import_module(module), name)
-        conn.send(("result", finite(function(params, Report(conn)))))
+        conn.send(("result", finite(function(params, Report(conn, stopping)))))
     except BaseException as exc:  # report everything, even KeyboardInterrupt
         conn.send(("error", str(exc) or type(exc).__name__))
 
@@ -280,6 +305,28 @@ class JobManager:
         return job._done.wait(timeout)
 
     def cancel(self, job: Job) -> None:
+        """End a job: a ``GRACEFUL`` one that's running is asked to stop, and ended only if it
+        hasn't within ``GRACE_S``."""
+        with self._lock:
+            if not job.active:
+                return
+            process = job._process
+            if job.kind in GRACEFUL and process is not None and not job._cancelled:
+                try:
+                    process.send(("stop", None))
+                except OSError:
+                    pass
+                else:
+                    timer = threading.Timer(GRACE_S, self._end, args=(job,))
+                    timer.daemon = True
+                    timer.start()
+                    return
+            job._cancelled = True
+        if process is not None:
+            process.terminate()
+
+    def _end(self, job: Job) -> None:
+        """A graceful job that didn't stop when asked: end it."""
         with self._lock:
             if not job.active:
                 return

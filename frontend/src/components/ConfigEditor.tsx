@@ -26,6 +26,10 @@ interface Drawn {
  * goes, with the issues at their lines; dragging on the diagram rewrites just the numbers
  * it changes; nothing is written to the file until Save (Ctrl+S). A robot has a Design view
  * too: forms and drawing tools in place of the text, whose changes are written into it. */
+/** What a page asks an open config's editor to write in: a fit's values under overrides, or a
+ * calibration session's changes (its report's), each a new request (by id). */
+export type ConfigRequest = { id: number; overrides: Record<string, number> } | { id: number; session: string };
+
 export function ConfigEditor(props: {
   path: string;
   active: boolean;
@@ -34,7 +38,7 @@ export function ConfigEditor(props: {
   onKeepOpen: () => void;
   onDirty: (path: string, dirty: boolean) => void;
   onSaved: (path: string) => void;
-  request?: { id: number; overrides: Record<string, number> } | null; // fitted values to add
+  request?: ConfigRequest | null; // fitted values to add, or a calibration session's changes
   design?: boolean; // open in the Design view (a robot just made)
 }) {
   const { path } = props;
@@ -99,7 +103,8 @@ export function ConfigEditor(props: {
     };
   }, [file, text, checked, take]);
 
-  // a calibration's fitted values, added under overrides (undoable), for you to look over
+  // a calibration's fitted values, added under overrides, or a session's changes written in
+  // (undoable), for you to look over
   const handled = useRef(0);
   const { request } = props;
   useEffect(() => {
@@ -108,16 +113,21 @@ export function ConfigEditor(props: {
     (async () => {
       try {
         const before = textRef.current;
-        const patched = await api.setOverrides(before, request.overrides);
+        const patched = "session" in request ? await api.applySession(request.session, before) : await api.setOverrides(before, request.overrides);
         editor.current?.replace(patched.text);
         setText(patched.text);
         take(patched.text, patched.check);
         const change = textChange(before, patched.text);
         if (change) editor.current?.select(change.from, change.from + change.insert.length); // in view
-        const count = Object.keys(request.overrides).length;
-        setNotice({ bad: false, text: `Added ${count} fitted value${count === 1 ? "" : "s"} under overrides: look them over, then save (Ctrl+Z takes them out).` });
+        if ("session" in request) {
+          const count = "changes" in patched ? patched.changes : 0;
+          setNotice({ bad: false, text: `Wrote what ${request.session} found in (${count} change${count === 1 ? "" : "s"}): look them over, then save (Ctrl+Z takes them out).` });
+        } else {
+          const count = Object.keys(request.overrides).length;
+          setNotice({ bad: false, text: `Added ${count} fitted value${count === 1 ? "" : "s"} under overrides: look them over, then save (Ctrl+Z takes them out).` });
+        }
       } catch (error) {
-        setNotice({ bad: true, text: `Couldn't add the fitted values: ${(error as Error).message}` });
+        setNotice({ bad: true, text: `Couldn't write the ${"session" in request ? "session's changes" : "fitted values"} in: ${(error as Error).message}` });
       }
     })();
   }, [file, request, take]);

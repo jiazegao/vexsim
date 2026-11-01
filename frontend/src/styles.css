@@ -3083,3 +3083,131 @@ ol.steps {
   user-select: all;
   overflow-wrap: anywhere;
 }
+
+/* the Calibrate page: a session, step by step (phase 14.7) */
+.page-tabs {
+  padding: 0;
+}
+
+.warning-text {
+  color: var(--critical);
+}
+
+.snippet {
+  font-family: var(--mono);
+  font-size: 12px;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  user-select: all;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.program-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan table td {
+  vertical-align: top;
+}
+
+.map-thumb {
+  display: block;
+  width: 96px;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.verdict {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border-left: 4px solid var(--border);
+  background: var(--surface-2);
+}
+
+.verdict.good {
+  border-left-color: var(--good);
+}
+
+.verdict.bad {
+  border-left-color: var(--critical);
+}
+
+.verdict ul,
+.report ul.warnings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.report details.step {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.report details.step summary {
+  cursor: pointer;
+}
+
+.report-plots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.report-plots figure {
+  margin: 0;
+}
+
+.report-plots img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+details.practice {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+details.practice[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+details.practice summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+fieldset.choices.stack {
+  flex-direction: column;
+  flex-wrap: nowrap;
+}
+
+.check-log {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.check-log .end-input {
+  margin-left: 22px;
+}

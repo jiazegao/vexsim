@@ -2,6 +2,7 @@
 (calibration/plan.py), and what the simulator gained for the session: lifted robots, robots
 put down by hand, a hand over a distance sensor."""
 
+import json
 import math
 import re
 
@@ -248,9 +249,18 @@ def test_the_plan_is_written_with_a_map_of_each_spot(plan, tmp_path):
         "map_7_spin.png",
         "map_8_arc.png",
         "map_9_sweep_1.png",
+        "plan.json",
         "plan.txt",
         "plan.yaml",
     ]
+    order = json.loads((tmp_path / "plan.json").read_text())  # the app's: the menu's order
+    assert [(t["number"], t["key"], t["kind"]) for t in order["session"]][3:7] == [
+        (4, "imu_turns", "on_hand"),
+        (5, "push", "push"),
+        (6, "straight", "drive"),
+        (7, "spin", "drive"),
+    ]
+    assert order["session"][4]["map"] == "map_5_push.png" and order["missing"] == []
     text = (tmp_path / "plan.txt").read_text()
     assert "6. Straight (3 runs)" in text and "Its back 41 in from the -x wall" in text
     data = yaml.safe_load((tmp_path / "plan.yaml").read_text())

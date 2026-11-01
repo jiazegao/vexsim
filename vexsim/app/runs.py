@@ -404,6 +404,7 @@ def mcl_tape(path: Path, shown: str) -> dict:
     times = [round(t, 4) for t in log.times()]
     return finite(
         {
+            "kind": "mcl",
             "name": log.name,
             "path": shown,
             "summary": log.summary(),

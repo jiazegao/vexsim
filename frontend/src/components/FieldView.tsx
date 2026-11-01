@@ -183,6 +183,7 @@ export function FieldView(props: FieldViewProps) {
           overlay: null,
           truth: NO_TRAIL,
           estimate: source.log.trail(at),
+          paths: source.log.paths(at),
           pieces: [], // where the real robot left the pieces isn't known
           drawings: shownDrawings(source.log.drawingsAt(at), hiddenDrawings),
           logged,

@@ -16,7 +16,8 @@ const GROUPS: { kinds: ItemKind[]; title: string; hint: string }[] = [
   { kinds: ["route"], title: "Autonomous routes", hint: "Click to run this route in its project's autonomous()" },
   { kinds: ["input"], title: "Controller inputs", hint: "Click to drive with this recorded input" },
   { kinds: ["log"], title: "Telemetry logs", hint: "Click to play this log back, drawn with the robot and field picked above" },
-  { kinds: ["robotlog"], title: "Robot logs", hint: "Click to calibrate the simulated robot with this log" },
+  { kinds: ["calsession"], title: "Calibration sessions", hint: "Click to open this session on the Calibrate page" },
+  { kinds: ["robotlog"], title: "Robot logs", hint: "Click to play this real robot's log on the field, beside the simulator (a log with no path to play opens on the Calibrate page, to fit)" },
   { kinds: ["mcllog"], title: "MCL logs", hint: "Click to play this real robot's log on the field, beside the simulator" },
   { kinds: ["scenario"], title: "Benchmark scenarios", hint: "Click to benchmark it" },
   { kinds: ["invalid"], title: "Unreadable configs", hint: "Click to open it and fix the YAML" },
@@ -29,7 +30,7 @@ const PAGE_HINTS: Record<string, Partial<Record<ItemKind, string>>> = {
   build: { project: "Click to pick this project" },
 };
 
-function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null, mclLog: string | null): boolean {
+function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null, realLog: string | null): boolean {
   switch (item.kind) {
     case "robot":
       return form.robot === item.path;
@@ -45,7 +46,8 @@ function inUse(item: WorkspaceItem, form: RunForm, shownLog: string | null, mclL
     case "log":
       return shownLog === item.path;
     case "mcllog":
-      return mclLog === item.path;
+    case "robotlog":
+      return realLog === item.path;
     default:
       return false;
   }
@@ -110,7 +112,7 @@ export function Sidebar(props: {
   onRefresh: () => void;
   loading: boolean;
   shownLog: string | null; // the telemetry log being played back
-  mclLog: string | null; // the MCL log open beside the simulator
+  realLog: string | null; // the real robot's log open beside the simulator (MCL or vexsim's)
   runs: ReactNode; // the Runs tab
   runCount: number;
   onRunsTab: () => void; // the Runs tab was opened: time to look for new runs
@@ -154,7 +156,7 @@ export function Sidebar(props: {
         </button>
         <span className="spacer" />
         {tab === "workspace" && (
-          <button className="ghost small" onClick={props.onRefresh} disabled={props.loading} title="Look for new and changed files">
+          <button className="ghost small" onClick={props.onRefresh} disabled={props.loading} title="Look for new and changed files" data-testid="refresh">
             {props.loading ? "Scanning…" : "Refresh"}
           </button>
         )}
@@ -198,7 +200,7 @@ export function Sidebar(props: {
                 </h2>
                 <ul>
                   {items.map((item) => {
-                    const selected = props.picked ? props.picked.includes(item.path) : inUse(item, form, props.shownLog, props.mclLog);
+                    const selected = props.picked ? props.picked.includes(item.path) : inUse(item, form, props.shownLog, props.realLog);
                     return (
                       <li key={item.kind + item.path} className="with-menu" onContextMenu={(e) => openMenu(item, e)}>
                         <button

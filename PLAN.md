@@ -331,7 +331,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 14.4 | **[done]** Collect a session and fit it | From simulated "real" robots with hidden changes (1239E's, and `full_omni_6m` with two tracking wheels), the tools recover each value within its tolerance, a held-out run matches within the sensors' noise, and `--apply` writes the robot config with its comments kept |
 | 14.5 | **[done]** The autonomous check: the real routine against the simulated one | 1239E's Left 40 on a simulated "real" robot passes with the calibrated config and fails with the default one, at pass marks the team sets |
 | 14.6 | **[done]** The calibration guide, for students | `docs/calibration_guide.md` takes a student from an uncalibrated robot to a checked autonomous, every command written out, its pictures made from 1239E's robot and field |
-| 14.7 | The Calibrate page | A whole session runs in the app, and a robot log plays on the field beside its simulated run |
+| 14.7 | **[done]** The Calibrate page | A whole session runs in the app, and a robot log plays on the field beside its simulated run |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |
@@ -569,5 +569,51 @@ A team calibrates vexsim to its own robot without help. A program on the robot r
   - *The device check's result now shows each problem whole,* wrapped onto as many of the page's four lines as it takes: the guide's table showed that "the sensor at the front left, facing forward is on port 8, not 1" (63 characters) was cut at the brain's 48. Problems that don't fit are counted ("...and 2 more (see the log)"). With motor 9 reversed and two sensors swapped, the page is as before.
   - *The check* (`tests/test_calibration_guide.py`, fast): every picture and link in the guide and its example report is there, headings' anchors included, and every picture the script makes is in the guide; every `vexsim` command in its code blocks parses with vexsim's own parser, and the example files they name exist; every screen text it quotes (its "The screen says" tables, and "the screen says `...`") is one of the program's strings with its printf fields filled in; the README links to it. In `test_calibration_program.py`, three distance sensors wired round in a ring show the first problem over two lines and "...and 2 more". Not done: students using the guide on the real robot; the first session will show what's unclear.
 - **The Calibrate page (14.7):** the whole session in the app: the robot and field, the plan's maps, writing the program, collecting from the card or USB, each test's result, the fit and its report, *Apply*, and the autonomous check with its pass marks. Robot logs play on the field as MCL logs do now (the logged poses' paths, the distance readings as rays, a timeline), beside the simulated run.
+- **As built (14.7):** The Calibrate page has three tabs:
+  - *Session*: the plan's whole session.
+  - *Autonomous check*.
+  - *Quick fit*: the page as it was, the routine's fit from one run.
+
+  The services are in `vexsim/app/calsession.py`: the session's state, and its jobs `calibration_program`, `calibration_practice`, `calibration_usb`, `calibration_fit` and `calibration_check`. Robot logs become tapes in `vexsim/app/logtape.py`. The endpoints are under `/api/calibration/`, with `/api/robotlog` and `/api/image`. Where it differs from the plan, or says more:
+  - *The session's steps,* down the page:
+    1. The robot and the field.
+    2. The program, planned and written. The plan's table shows each test, its runs, its place (from two walls) and its map. `/api/image` serves the maps, and only PNGs inside the workspace.
+    3. Collecting: from the card, from a folder, or over USB. USB is a job that runs `pros terminal` until *Stop listening*. That stop is graceful: the job is told to stop, and has 5 s to end the terminal and save the log it's receiving before it's ended.
+    4. Each test's runs, with what each measured (`run_result`):
+       - the free spin's speed;
+       - the IMU's drift, and its error over the turns;
+       - the push's wheel travel against the lane's length;
+       - a driving run's length, top wheel speed and turn.
+
+       Each run has a *Use* box.
+    5. The fit and its report, read from `report/report.json` (written beside `report.md` by the fit), and *Apply*.
+
+    The sessions are listed beside the page, and in the workspace list as items of their own (`calsession`). A session's runs and report aren't listed on their own.
+  - *Practice in vexsim first,* not in the plan. The simulated student runs the program from step 2, test by test, on the robot made unlike its config (`student.unlike`):
+    - the wheels at 3.20/3.25 of their size;
+    - the IMU 0.25% further off;
+    - the wheels' grip and rolling as on real tiles;
+    - voltage commands held to rated speed;
+    - the real distance sensors.
+
+    Its logs go into a practice session (`practice: true` in `session.yaml`). A practice session refuses real logs, and a session with real runs refuses practice. The student needs the plan the program was written with, so `write_plan` now writes `plan.json` too: the tests in the menu's order, with their numbers, kinds, spots and maps. The page reads the same file.
+  - *Apply* writes what the fit found into the robot's config in its editor, in place with the comments kept, for the student to look over and save. The quick fit's *Add the fitted values* works the same way. The report keeps a digest of the config it was fitted to, and Apply refuses a config that has changed since ("fit the session again").
+  - *The autonomous check:*
+    - The page reads each end as it's typed (`/api/calibration/end`): where the robot ended, and a warning when the two corners don't fit the robot's outline.
+    - The team's pass marks are saved to `.vexsim/calibration.yaml` from the page.
+    - Checks are kept as results in `.vexsim/checks/`, with their report's plots.
+  - *Robot logs on the field:*
+    - The workspace finds format-2 logs by their `# vexsim-log:` line.
+    - A log plays from its code's first pose, from its first `setPose` on (as `--follow` takes it). Each distance sensor's reading is a ray from where the config mounts it. The other poses are drawn beside it, each with its path (`LogPath`, a point a frame).
+    - A calibration log has no pose of its code's, so it plays from its spot by odometry. Its heading comes from the IMU, with its configured scale error. Its travel comes from the drive motors, by least squares through the drive's kinematics. It plays with the robot and field the log names.
+    - A routine's log gets *Run left40* (its routine, by the log's name). It runs the routine from the run bar's program, in autonomous, from the routine's `setPose`, on one timeline with the log.
+    - A log with nothing to play, such as the quick fit's routine log, opens on the quick fit, as robot logs did before. `/api/robotlog` answers it with `NothingToPlay`, a 200, not a 422: it's a log for a fit, not an error.
+  - *A fix to the session's fit.* With only some driving tests (straight and spin runs, no arcs), the drive step can't pin the longitudinal μ: it came out 79 ± 29. The second round used it anyway, and put the wheels at 3.25 in against the truth's 3.20. The second round now carries forward only the drive values the logs pin down.
+  - *The checks:*
+    - `tests/test_calibration_app.py`, fast: the tapes and odometry; the workspace's sessions and logs; each run's result line and *Use*; practice and real runs kept apart; Apply and its refusal; the pass marks and ends; the USB job's graceful stop; the endpoints.
+    - Its session-marked test runs a whole session through the services (program; practice of five tests; fit; apply) and finds the wheels within 0.02 in.
+    - `frontend/e2e/calibrate.spec.ts` runs a whole session in the app: written, practiced, fitted with the held-out run matching, applied, and a run played on the field. It also plays a routine's log beside its routine and checks the routine against it. That log is written by the simulated 1239E running Left 40 with `--sd`.
+
+    Not done: a real robot's session in the app.
 - **Testing without the robot:** "real" robots in the simulator, each a config with hidden changes: wheels 3.20 in, an IMU 0.25% off, omni friction 0.75, voltage mode capped at rated speed, the real distance sensors' noise, a motor reversed in the config, two distance sensors swapped. Each runs the generated program in vexsim, by scripted controller presses, with `--sd`; the session tools have to recover each value and catch each mistake. The same for `full_omni_6m`, with its two tracking wheels. The first session on the real robot is the real test; its logs tune the warnings and thresholds.
 - **Risks:** an open-loop test can hit an element, so the plan covers the parameter spread with a margin, leaving the plan's envelope stops the robot, and any button does. The shim's headers can differ from PROS's, so the program uses only PROS 4 C API calls, each checked against PROS 4's own headers, and a CI job builds it with the real PROS kernel and ARM toolchain if the network allows. PROS may not make folders on the card, so logs go to its root, numbered by a counter file, as 1239E's MCL logs were. A fit can trade one parameter for another (a lighter robot, or more grip), so each test measures only a few, in an order where each fit builds on measured values, and the report says which values the logs pin down.

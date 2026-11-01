@@ -1,14 +1,14 @@
 // Generated from vexsim/ui/protocol.py: python -m vexsim.ui.protocol frontend/src/protocol.ts
 // Don't edit by hand; a test fails when this file is stale.
 
-export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "route" | "input" | "log" | "robotlog" | "mcllog" | "invalid";
+export type ItemKind = "robot" | "field" | "scenario" | "program" | "project" | "route" | "input" | "log" | "calsession" | "robotlog" | "mcllog" | "invalid";
 export type SessionState = "building" | "starting" | "running" | "paused" | "finished" | "error" | "stopped";
 export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type ConfigKind = "robot" | "field";
-export type ResultKind = "bench" | "sweeps" | "calibrations";
+export type ResultKind = "bench" | "sweeps" | "calibrations" | "checks";
 export type DrawColor = "violet" | "blue" | "orange" | "aqua" | "yellow" | "magenta" | "green" | "red" | "ink" | "muted";
 export type Shape = ["point", number, number, DrawColor, number] | ["line", number, number, number, number, DrawColor] | ["circle", number, number, number, DrawColor] | ["ellipse", number, number, number, number, number, DrawColor] | ["pose", number, number, number, DrawColor] | ["text", number, number, string, DrawColor];
-export type StartJob = BuildJob | DoctorJob | MotorCurvesJob | DriftJob | OdometryJob | BenchJob | CalibrateJob | SweepJob | RouteJob;
+export type StartJob = BuildJob | DoctorJob | MotorCurvesJob | DriftJob | OdometryJob | BenchJob | CalibrateJob | SweepJob | RouteJob | CalibrationProgramJob | CalibrationPracticeJob | CalibrationUsbJob | CalibrationFitJob | CalibrationCheckJob;
 export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | DrawingsMessage | FollowingMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
 export type ClientCommand = SimpleCommand | StepCommand | SpeedCommand | InputCommand;
 
@@ -190,6 +190,58 @@ export interface RouteJob {
   seed?: number;
   noise?: "ideal" | "default" | "harsh" | null;
   text?: string | null;
+}
+
+/** Plan a calibration session on the field and write its program into a PROS project (`vexsim calibration program`); its result is the project's folder. */
+export interface CalibrationProgramJob {
+  kind: "calibration_program";
+  robot: string;
+  field: string;
+  folder: string;
+  margin?: number;
+  force?: boolean;
+  workers?: number | null;
+}
+
+/** A practice session: the simulated student runs the program in vexsim, its logs collected into `session` (marked as practice). */
+export interface CalibrationPracticeJob {
+  kind: "calibration_practice";
+  robot: string;
+  field: string;
+  program: string;
+  session: string;
+  tests?: string[] | null;
+  unlike?: boolean;
+}
+
+/** Collect over USB (no card in the brain) until stopped (`DELETE /api/jobs/{id}`): each log the program prints, added to the session as it ends. */
+export interface CalibrationUsbJob {
+  kind: "calibration_usb";
+  session: string;
+}
+
+/** Fit a calibration session (`vexsim calibrate ROBOT SESSION`): its report, and report/report.json for the page (`SessionReport`). */
+export interface CalibrationFitJob {
+  kind: "calibration_fit";
+  robot: string;
+  session: string;
+  field?: string | null;
+  workers?: number | null;
+}
+
+/** The autonomous check (`vexsim calibration check-auton`); its result is the id of an `AutonCheckResult`. */
+export interface CalibrationCheckJob {
+  kind: "calibration_check";
+  robot: string;
+  field: string;
+  program: string;
+  logs: string[];
+  ends: string[];
+  routine?: string | null;
+  seeds?: number;
+  max_distance_in?: number | null;
+  max_heading_deg?: number | null;
+  workers?: number | null;
 }
 
 /** Where a step of a route ended in a run (LemLib's convention: x, y in inches, theta in degrees clockwise from +y); times are seconds into the autonomous period. */
@@ -704,12 +756,57 @@ export interface MclLogSummary {
 
 /** A robot's MCL log (`vexsim.mcllog`), to play on the field: where its code thought it was, update by update, and what it saw, drawn as the robot code's drawings are. There's no truth: only the real robot knew where it was. */
 export interface MclLogTape {
+  kind?: "mcl";
   name: string;
   path: string;
   summary: MclLogSummary;
   times: number[];
   estimate: [number, number, number][];
   drawings: [number, Record<string, Shape[]>][];
+}
+
+/** What a robot log (vexsim's logger) holds, as it plays on the field. */
+export interface RobotLogSummary {
+  rows: number;
+  duration_s: number;
+  interval_ms: number | null;
+  pose: string;
+  poses: string[];
+  start: [number, number, number];
+  distance_sensors: number;
+  no_reading_pct: number | null;
+  robot: string | null;
+  field: string | null;
+  test: string | null;
+  routine: string | null;
+}
+
+/** Another pose a robot log's code logged (MCL's, beside LemLib's), as a path: its point at each frame from `first` on (a frame it didn't log keeps the point before). */
+export interface LogPath {
+  name: string;
+  color: DrawColor;
+  first: number;
+  xs: number[];
+  ys: number[];
+}
+
+/** A robot log (`vexsim.app.logtape`), to play on the field as an MCL log plays: where its code thought it was (a pose it logged; a calibration log's, by odometry from its spot), its other poses and each distance sensor's reading as a ray, row by row. There's no truth: only the real robot knew where it was. */
+export interface RobotLogTape {
+  kind?: "robot";
+  name: string;
+  path: string;
+  summary: RobotLogSummary;
+  times: number[];
+  estimate: [number, number, number][];
+  drawings: [number, Record<string, Shape[]>][];
+  paths: LogPath[];
+}
+
+/** A robot log that reads but has no path to play on the field: no pose of its code's, and no spot it started on (the quick fit's routine logs none). Why, in words. */
+export interface NothingToPlay {
+  kind?: "none";
+  path: string;
+  why: string;
 }
 
 /** A PROS project's routine (`vexsim.bridge.routines`): a function its include/custom/auton.hpp declares that takes no arguments. */
@@ -1281,6 +1378,242 @@ export interface CalibrationResult {
   panels: CalibrationPanel[];
   files: string[];
   drive?: FittedDrive | null;
+}
+
+/** One of the session's tests, as the program's menu numbers it. */
+export interface ProgramTest {
+  number: number;
+  key: string;
+  title: string;
+  kind: "on_hand" | "drive" | "push" | "spin";
+  runs: number;
+  place: string[];
+  clearance_in: number | null;
+  map: string | null;
+  scale: number | null;
+}
+
+/** A test with no room on the field, left out. */
+export interface MissingTest {
+  key: string;
+  title: string;
+  blocked_by: string[];
+}
+
+export interface ProgramPlan {
+  robot: string;
+  field: string;
+  margin_in: number;
+  tests: ProgramTest[];
+  missing: MissingTest[];
+}
+
+/** A calibration program's folder (`GET /api/calibration/program`): whether the program and a PROS project are there, and the plan it was written with. */
+export interface CalibrationProgram {
+  folder: string;
+  exists: boolean;
+  pros_project: boolean;
+  written: boolean;
+  plan: ProgramPlan | null;
+}
+
+/** One of a session's runs: its log, what collecting made of it, and what it measured. */
+export interface SessionRun {
+  file: string;
+  test: string;
+  run: number;
+  name: string;
+  started_ms: number;
+  ended: string;
+  quality: string;
+  use: boolean;
+  warnings: string[];
+  result: string;
+}
+
+/** A value a step of the fit found. */
+export interface SessionValue {
+  key: string;
+  before: number | null;
+  after: number | null;
+  uncertainty: number | null;
+  tolerance: number | null;
+  pinned: boolean;
+  note: string;
+  why_not: string;
+}
+
+export interface SessionRms {
+  group: string;
+  unit: string;
+  before: number | null;
+  after: number | null;
+}
+
+export interface SessionStep {
+  name: string;
+  runs: string[];
+  skipped: string;
+  values: SessionValue[];
+  rms: SessionRms[];
+  notes: string[];
+  warnings: string[];
+}
+
+export interface HeldOutGroup {
+  group: string;
+  unit: string;
+  rms: number | null;
+  noise: number | null;
+}
+
+/** The driving run the fit left out, replayed with what it found. */
+export interface HeldOutRun {
+  run: string;
+  matches: boolean;
+  groups: HeldOutGroup[];
+}
+
+/** One change the fit writes into the robot's config. */
+export interface SessionChange {
+  location: string;
+  value: number | number[];
+  key: string;
+}
+
+export interface SessionPlot {
+  title: string;
+  file: string;
+}
+
+/** A session's fit (its report/report.json). */
+export interface SessionReport {
+  robot: string;
+  robot_file: string;
+  config_digest: string;
+  fitted: string;
+  session: string;
+  steps: SessionStep[];
+  held_out: HeldOutRun | null;
+  drive: string | null;
+  drive_section: string | null;
+  changes: SessionChange[];
+  warnings: string[];
+  plots: SessionPlot[];
+}
+
+/** A calibration session (`GET /api/calibration/session`): its runs and its latest fit. */
+export interface CalibrationSessionState {
+  path: string;
+  name: string;
+  exists: boolean;
+  robot: string | null;
+  field: string | null;
+  practice: boolean;
+  runs: SessionRun[];
+  report: SessionReport | null;
+}
+
+export interface SessionCollectRequest {
+  session: string;
+  folder?: string | null;
+}
+
+export interface SessionCollected {
+  card: string;
+  added: number;
+  messages: string[];
+  state: CalibrationSessionState;
+}
+
+export interface SessionUseRequest {
+  session: string;
+  file: string;
+  use: boolean;
+}
+
+export interface SessionApplyRequest {
+  session: string;
+  text: string;
+}
+
+export interface SessionApplied {
+  text: string;
+  check: ConfigCheck;
+  changes: number;
+}
+
+/** The autonomous check's pass marks: the team's (.vexsim/calibration.yaml), or vexsim's. */
+export interface PassMarks {
+  max_distance_in: number;
+  max_heading_deg: number;
+  source: string;
+  file: string | null;
+  warnings: string[];
+}
+
+export interface SavePassMarks {
+  max_distance_in: number;
+  max_heading_deg: number;
+}
+
+/** Where two corners' tape marks put the robot (`parse_end`'s words). */
+export interface EndRequest {
+  robot: string;
+  field: string;
+  text: string;
+}
+
+export interface EndFound {
+  x: number;
+  y: number;
+  heading: number;
+  misfit_in: number;
+  corners: string[];
+  warning: string | null;
+}
+
+export interface CheckMarks {
+  max_distance_in: number;
+  max_heading_deg: number;
+  source: string;
+}
+
+/** A real run, against the simulated ones. */
+export interface CheckRun {
+  log: string;
+  end: string | null;
+  measured: [number, number, number] | null;
+  end_off: [number, number] | null;
+  run_rms_in: number | null;
+  parted_s: number | null;
+}
+
+export interface CheckSim {
+  seed: number;
+  end: [number, number, number];
+}
+
+/** An autonomous check (`GET /api/results/checks/{id}`). */
+export interface AutonCheckResult {
+  about: ResultAbout;
+  routine: string;
+  robot: string | null;
+  field: string | null;
+  program: string | null;
+  start: [number, number, number] | null;
+  marks: CheckMarks;
+  passed: boolean;
+  failures: string[];
+  warnings: string[];
+  runs: CheckRun[];
+  sims: CheckSim[];
+  sim_end: [number, number, number] | null;
+  end_off: [number, number] | null;
+  run_rms_in: number | null;
+  sim_spread: [number, number] | null;
+  real_spread: [number, number] | null;
+  plots: string[];
 }
 
 /** Set `overrides` in a robot config's text (`POST /api/config/overrides`). */

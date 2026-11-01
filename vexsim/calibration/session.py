@@ -22,6 +22,7 @@ import re
 import string
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -66,6 +67,9 @@ class Session:
     robot: str | None = None  # the robot's name, from its logs
     runs: list[Run] = field(default_factory=list)
     field_name: str | None = None  # the field's name, from its logs
+    practice: bool = (
+        False  # its runs are the simulated student's (the app's practice), not a robot's
+    )
 
     @property
     def runs_dir(self) -> Path:
@@ -87,14 +91,20 @@ class Session:
             Run(**{k: v for k, v in r.items() if k in Run.__dataclass_fields__})
             for r in data.get("runs") or []
         ]
-        return cls(folder, data.get("robot"), runs, data.get("field"))
+        return cls(folder, data.get("robot"), runs, data.get("field"), bool(data.get("practice")))
 
     def save(self) -> Path:
+        """Write session.yaml, whole or not at all (a new file, then moved over the old)."""
         self.folder.mkdir(parents=True, exist_ok=True)
         runs = sorted(self.runs, key=lambda r: (r.started_ms, r.file))
-        data = {"robot": self.robot, "field": self.field_name, "runs": [r.to_dict() for r in runs]}
+        data: dict = {"robot": self.robot, "field": self.field_name}
+        if self.practice:
+            data["practice"] = True
+        data["runs"] = [r.to_dict() for r in runs]
         text = yaml.safe_dump(data, sort_keys=False, width=200, default_flow_style=None)
-        self.file.write_text(HEADER + text, encoding="utf-8", newline="\n")
+        partial = self.file.with_name(self.file.name + ".new")
+        partial.write_text(HEADER + text, encoding="utf-8", newline="\n")
+        os.replace(partial, self.file)
         return self.file
 
     def logs(self, test: str | None = None, *, used: bool = True) -> list[tuple[Run, RobotLog]]:
@@ -291,9 +301,10 @@ def from_usb(
     command: list[str] | None = None,
     *,
     say: Callable[[str], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> list[Run]:
     """Run ``pros terminal`` (or ``command``) and add each log the program prints over USB
-    (with no card in the brain), until it ends or Ctrl+C; the runs added."""
+    (with no card in the brain), until it ends, Ctrl+C or ``stop`` is set; the runs added."""
     say = say or (lambda text: None)
     command = command or ["pros", "terminal"]
     added: list[Run] = []
@@ -303,6 +314,8 @@ def from_usb(
         )
     except OSError as exc:
         raise OSError(f"couldn't run {' '.join(command)}: {exc}") from exc
+    if stop is not None:  # stopping ends the terminal, and so the reading
+        threading.Thread(target=lambda: stop.wait() and process.terminate(), daemon=True).start()
     say(f"listening to {' '.join(command)}: run the tests; Ctrl+C when done")
     try:
         for text in framed_logs(process.stdout):

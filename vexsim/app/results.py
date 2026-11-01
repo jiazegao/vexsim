@@ -21,7 +21,7 @@ from typing import Any, Literal
 from vexsim.app.jsonsafe import finite
 
 ResultKind = Literal["bench", "sweeps", "calibrations"]
-KINDS: tuple[str, ...] = ("bench", "sweeps", "calibrations")
+KINDS: tuple[str, ...] = ("bench", "sweeps", "calibrations", "checks")
 KEEP = 20
 STALE_S = 24 * 3600  # a folder still without its result.json after this was abandoned
 _ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")

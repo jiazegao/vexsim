@@ -75,6 +75,8 @@ from vexsim.config.field import FieldConfig
 from vexsim.config.robot import RobotConfig
 from vexsim.ui.protocol import (
     AppInfo,
+    CalibrationProgram,
+    CalibrationSessionState,
     CalibrationSetup,
     ClientCommand,
     ConfigCheck,
@@ -86,6 +88,8 @@ from vexsim.ui.protocol import (
     ConfigPatchRequest,
     ConfigSave,
     ConfigSaved,
+    EndFound,
+    EndRequest,
     ExportedFile,
     ExportedRoutine,
     JobInfo,
@@ -98,6 +102,7 @@ from vexsim.ui.protocol import (
     NewRouteRequest,
     NotRouteFunctionInfo,
     NotRoutineInfo,
+    PassMarks,
     PlacedIssue,
     Preview,
     PreviewRequest,
@@ -127,9 +132,15 @@ from vexsim.ui.protocol import (
     RunRecord,
     RunUpdate,
     SaveConfigurations,
+    SavePassMarks,
     SaveSweeps,
     ScenarioInfo,
+    SessionApplied,
+    SessionApplyRequest,
+    SessionCollected,
+    SessionCollectRequest,
     SessionInfo,
+    SessionUseRequest,
     StartJob,
     StartSession,
     SweepsFile,
@@ -375,6 +386,75 @@ class UIServer:
             text = hashlib.blake2b((request.text or "").encode(), digest_size=8).hexdigest()
             key = f"route:{route}:{request.seed}:{request.noise}:{text}"  # the same run, joined
             return self.jobs.submit(kind, params, title=title, key=key)
+        if kind.startswith("calibration_"):
+            return self.submit_calibration(request, params)
+        raise ValueError(f"unknown job kind {kind}")
+
+    def submit_calibration(self, request, params: dict):
+        """A calibration session's jobs (``vexsim.app.calsession``), their files checked."""
+        ws, kind = self.workspace, request.kind
+        root = str(ws.root)
+
+        def folder(relative: str) -> Path:
+            path = ws.path(relative)
+            if path == ws.root or path.is_file():
+                raise ValueError(f"{relative} isn't a folder of its own")
+            return path
+
+        if kind == "calibration_program":
+            target = folder(request.folder)
+            params.update(
+                robot=str(self.robot_file(request.robot)),
+                field=str(self.robot_file(request.field)),
+                folder=str(target),
+                root=root,
+            )
+            title = f"Plan and write the calibration program: {target.name}"
+            return self.jobs.submit(kind, params, title=title, key=f"{kind}:{target}")
+        if kind == "calibration_practice":
+            session = folder(request.session)
+            params.update(
+                robot=str(self.robot_file(request.robot)),
+                field=str(self.robot_file(request.field)),
+                program=str(folder(request.program)),
+                session=str(session),
+            )
+            title = f"Practice in vexsim: {session.name}"
+            return self.jobs.submit(kind, params, title=title, key=f"{kind}:{session}")
+        if kind == "calibration_usb":
+            session = folder(request.session)
+            params.update(session=str(session))
+            title = f"Collect over USB: {session.name}"
+            return self.jobs.submit(kind, params, title=title, key=kind)  # one port, one listener
+        if kind == "calibration_fit":
+            session = folder(request.session)
+            params.update(
+                robot=str(self.robot_file(request.robot)),
+                robot_name=request.robot,
+                session=str(session),
+                field=str(self.robot_file(request.field)) if request.field else None,
+            )
+            title = f"Fit the session: {session.name}"
+            return self.jobs.submit(kind, params, title=title, key=f"{kind}:{session}")
+        if kind == "calibration_check":
+            if len(request.ends) != len(request.logs):
+                raise ValueError("give where each run ended: two corners' tape marks per log")
+            logs = [self.robot_file(log) for log in request.logs]
+            program = folder(request.program)
+            params.update(
+                robot=str(self.robot_file(request.robot)),
+                robot_name=request.robot,
+                field=str(self.robot_file(request.field)),
+                field_name=request.field,
+                program=str(program),
+                program_name=request.program,
+                logs=[str(log) for log in logs],
+                log_names=list(request.logs),
+                root=root,
+                results=str(results.results_root(ws.root, "checks")),
+            )
+            title = f"Autonomous check: {', '.join(log.name for log in logs)}"
+            return self.jobs.submit(kind, params, title=title)
         raise ValueError(f"unknown job kind {kind}")
 
     def robot_file(self, relative: str) -> Path:
@@ -1105,6 +1185,24 @@ def create_app(
             return JSONResponse(RunProblem(error=f"{path}: {exc}", issues=[]).model_dump(), 422)
         return Response(dumps(tape), media_type="application/json")
 
+    @app.get("/api/robotlog", responses={422: {"model": RunProblem}})
+    def robot_log(path: str, robot: str | None = None) -> Response:
+        """A robot log from the workspace, to play on the field (``RobotLogTape``): its rays
+        drawn from where ``robot`` (a robot config) mounts the distance sensors. A log with no
+        path to play answers why (``NothingToPlay``): it isn't an error, but a log for a fit."""
+        from vexsim.app.logtape import LogTapeError, NothingToPlay, robot_log_tape
+
+        try:
+            config = _robot_config(robot) if robot else None
+            tape = robot_log_tape(server.workspace.path(path), path, config)
+        except RunError as exc:
+            return _problem(exc)
+        except NothingToPlay as exc:
+            return JSONResponse({"kind": "none", "path": path, "why": str(exc)})
+        except (LogTapeError, ValueError) as exc:
+            return JSONResponse(RunProblem(error=f"{path}: {exc}", issues=[]).model_dump(), 422)
+        return Response(dumps(tape), media_type="application/json")
+
     @app.get("/api/routines", responses={422: {"model": RunProblem}})
     def project_routines(project: str) -> Response:
         """A PROS project's autonomous routines (``ProjectRoutines``), to pick one to run."""
@@ -1393,6 +1491,135 @@ def create_app(
     def _robot_config(path: str) -> RobotConfig:
         prepared = server.check(RunSpec(robot=path))  # raises RunError
         return prepared.config
+
+    # --- a calibration session (the Calibrate page, vexsim.app.calsession) -----------------
+
+    def _detail(exc: Exception) -> JSONResponse:
+        return JSONResponse(RunProblem(error=str(exc), issues=[]).model_dump(), 422)
+
+    def _session_folder(relative: str) -> Path:
+        path = server.workspace.path(relative)
+        if path == server.workspace.root or path.is_file():
+            raise ValueError(f"{relative} isn't a session's folder")
+        return path
+
+    def _session_state(relative: str, robot: str | None) -> CalibrationSessionState:
+        from vexsim.app.calsession import session_state
+
+        config = _robot_config(robot) if robot else None
+        folder = _session_folder(relative)
+        return CalibrationSessionState.model_validate(
+            session_state(server.workspace.root, folder, config)
+        )
+
+    @app.get("/api/calibration/program", responses={422: {"model": RunProblem}})
+    def calibration_program(folder: str):
+        """A calibration program's folder: the program, the PROS project, the plan."""
+        from vexsim.app.calsession import program_info
+
+        try:
+            path = _session_folder(folder)
+        except ValueError as exc:
+            return _detail(exc)
+        return CalibrationProgram.model_validate(program_info(server.workspace.root, path))
+
+    @app.get("/api/calibration/session", responses={422: {"model": RunProblem}})
+    def calibration_session(path: str, robot: str | None = None):
+        """A calibration session: its runs (each with what it measured, by ``robot``'s config)
+        and its latest fit."""
+        try:
+            return _session_state(path, robot)
+        except RunError as exc:
+            return _problem(exc)
+        except ValueError as exc:
+            return _detail(exc)
+
+    @app.post("/api/calibration/collect", responses={422: {"model": RunProblem}})
+    def calibration_collect(request: SessionCollectRequest, robot: str | None = None):
+        """The calibration logs on the brain's card (or in a folder), into the session."""
+        from vexsim.app.calsession import collect_logs
+
+        try:
+            folder = _session_folder(request.session)
+            source = Path(request.folder).expanduser() if request.folder else None
+            found = collect_logs(folder, source)
+            state = _session_state(request.session, robot)
+        except RunError as exc:
+            return _problem(exc)
+        except (OSError, ValueError) as exc:
+            return _detail(exc)
+        return SessionCollected(**found, state=state)
+
+    @app.post("/api/calibration/use", responses={422: {"model": RunProblem}})
+    def calibration_use(request: SessionUseRequest, robot: str | None = None):
+        """Leave a run out of the fit, or put it back."""
+        from vexsim.app.calsession import set_use
+
+        try:
+            set_use(_session_folder(request.session), request.file, request.use)
+            return _session_state(request.session, robot)
+        except RunError as exc:
+            return _problem(exc)
+        except (OSError, ValueError) as exc:
+            return _detail(exc)
+
+    @app.post("/api/calibration/apply", responses={422: {"model": RunProblem}})
+    def calibration_apply(request: SessionApplyRequest):
+        """A robot config's text with what the session's fit found written in (to look over in
+        its editor, and save)."""
+        from vexsim.app.calsession import apply_session
+
+        try:
+            text, count = apply_session(_session_folder(request.session), request.text)
+        except (OSError, ValueError) as exc:
+            return _detail(exc)
+        checked = configs.check_text(text, "robot")
+        return SessionApplied(text=text, check=_checked(checked), changes=count)
+
+    @app.get("/api/calibration/marks")
+    def calibration_marks() -> PassMarks:
+        """The autonomous check's pass marks: the team's, or vexsim's."""
+        from vexsim.app.calsession import pass_marks
+
+        return PassMarks.model_validate(pass_marks(server.workspace.root))
+
+    @app.put("/api/calibration/marks", responses={422: {"model": RunProblem}})
+    def save_calibration_marks(request: SavePassMarks):
+        """Set the team's pass marks, in the workspace's .vexsim/calibration.yaml."""
+        from vexsim.app.calsession import save_marks
+
+        try:
+            marks = save_marks(
+                server.workspace.root, request.max_distance_in, request.max_heading_deg
+            )
+        except (OSError, ValueError) as exc:
+            return _detail(exc)
+        return PassMarks.model_validate(marks)
+
+    @app.post("/api/calibration/end", responses={422: {"model": RunProblem}})
+    def calibration_end(request: EndRequest):
+        """Where two corners' tape marks put the robot, as the student types them."""
+        from vexsim.app.calsession import end_found
+
+        try:
+            prepared = server.check(RunSpec(robot=request.robot, field=request.field))
+            found = end_found(prepared.config, prepared.field or FieldConfig(), request.text)
+        except RunError as exc:
+            return _problem(exc)
+        except ValueError as exc:
+            return _detail(exc)
+        return EndFound.model_validate(found)
+
+    @app.get("/api/image", responses={404: {}})
+    def workspace_image(path: str) -> Response:
+        """A picture in the workspace: a calibration plan's map, a session's report's plots."""
+        try:
+            file = server.workspace.path(path)
+        except ValueError:
+            file = None
+        if file is None or file.suffix.lower() != ".png" or not file.is_file():
+            return JSONResponse({"detail": f"no picture {path}"}, status_code=404)
+        return FileResponse(file, media_type="image/png", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/calibrate/parameters", responses={422: {"model": RunProblem}})
     def calibration_setup(robot: str):

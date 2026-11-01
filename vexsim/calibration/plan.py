@@ -928,15 +928,50 @@ def _plan_sweeps(config: RobotConfig, fmap: FieldMap, margin: float) -> list[Tes
 # --- writing it out ------------------------------------------------------------------------
 
 
+def session_order(plan: Plan) -> dict:
+    """The session as the program's menu has it, for the app (plan.json): each test's number,
+    key, title and kind, and for those that need room, the spot and its map; and the tests
+    left out, with what's in their way."""
+    session = []
+    for number, (key, title, test) in enumerate(plan.session(), 1):
+        entry: dict = {"number": number, "key": key, "title": title, "kind": "on_hand"}
+        if test is not None and test.spot is not None:
+            entry["kind"] = (
+                "drive" if test.steps else "push" if test.length_in is not None else "spin"
+            )
+            entry["spot"] = test.spot.to_dict()
+            entry["map"] = f"map_{number}_{key}.png"
+            if test.steps and test.scale != 1:
+                entry["scale"] = test.scale
+            if test.length_in is not None:
+                entry["length_in"] = test.length_in
+            if test.turns is not None:
+                entry["turns"] = test.turns
+        session.append(entry)
+    return {
+        "robot": plan.robot,
+        "field": plan.field,
+        "margin_in": plan.margin_in,
+        "session": session,
+        "missing": [
+            {"key": t.key, "title": t.title, "blocked_by": list(t.blocked_by)} for t in plan.missing
+        ],
+    }
+
+
 def write_plan(plan: Plan, folder: str | Path) -> list[Path]:
-    """plan.txt, plan.yaml and, with matplotlib, a map of each spot; returns the files."""
+    """plan.txt, plan.yaml, plan.json (the session's order, for the app) and, with matplotlib,
+    a map of each spot; returns the files."""
+    import json
+
     import yaml
 
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    out = [folder / "plan.txt", folder / "plan.yaml"]
+    out = [folder / "plan.txt", folder / "plan.yaml", folder / "plan.json"]
     out[0].write_text(plan.text(), encoding="utf-8")
     out[1].write_text(yaml.safe_dump(plan.to_dict(), sort_keys=False), encoding="utf-8")
+    out[2].write_text(json.dumps(session_order(plan), indent=1) + "\n", encoding="utf-8")
     try:
         import matplotlib  # noqa: F401
     except ImportError:

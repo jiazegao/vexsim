@@ -265,6 +265,8 @@ if __name__ == "__main__":  # worker processes import this file: only the first 
 The student holds the robot firmly at the end of each move, as a person lines it up on the tape (otherwise friction would leave it a couple of degrees short of 10 turns).
 On 1239E's robot and field, the whole session (every test, 18 logs) takes 4.6 minutes of simulated time, about a minute and a half to run.
 
+The app's *Calibrate* page does this as *Practice in vexsim first* (`vexsim/app/calsession.py`, `practice_job`). It runs the tests you pick, on the robot made unlike its config by `student.unlike(config)`. By default the drive wheels and tracking wheels are 1.5% smaller, as worn wheels pressed into the tiles roll, and the IMU is 0.25% further off. The wheels also grip and roll as typical tiles make them, voltage commands are held to rated speed, and the distance sensors behave as the real ones do. The logs are collected into a practice session (`practice: true` in its `session.yaml`), which the real robot's logs can't be collected into, to fit and apply as a real one.
+
 ## Collecting and fitting a session
 After the session, the logs come off the card and into a session folder, and vexsim fits them, test by test:
 ```
@@ -292,7 +294,7 @@ Each run is checked: it must be the calibration program's (`program: vexsim cali
 | Push | the push each way, replayed | each drive group's wheels' `diameter_in`; a tracking wheel's that rolls along |
 | Slow spin | the slow spin, against its replay | each tracking wheel's `pos_in`, across its wheel |
 | Drive | every driving run but the last, at once | the wheels' friction and rolling resistance (`wheel.omni.longitudinal_mu`, `lateral_mu`, `rolling_resistance`, or the traction or mecanum ones); `battery.internal_resistance_ohm` |
-| Again | | the push, the slow spin and the drive, with the friction found |
+| Again | | the push, the slow spin and the drive, with what the drive pinned down (a friction the runs can't tell apart, from straight runs alone, would skew the wheels' size) |
 | Distance sweeps | the sweeps, against what each sensor should have read | `sensor.distance.long_noise_fraction` (and `short_noise_mm`, with readings under 200 mm), `max_range_mm`, `glancing_miss`, `glancing_deg`, `glancing_mm`, `confidence_per_m`, `confidence_per_deg` |
 | Drive model | the driving runs, as logged | kS, kV, kA, kT for the robot's routes (the printed `drive:` line) |
 
@@ -332,6 +334,7 @@ Every value has an uncertainty (one standard deviation: from the fit's Jacobian,
 - `report.md`: whether the held-out run matches, the warnings, what `--apply` writes, the drive model's `drive:` line, then each step: its runs, a table of each value (before, after, how well it's known, pinned or not, and why one isn't written), the RMS difference of simulated against logged before and after, its notes and warnings.
 - `changes.yaml`: what `--apply` writes, by where it goes (`overrides["motor.voltage_cap"]`, `drivetrain.wheels[0].diameter_in`, `sensors[6].scale_error`), and the drive line.
 - with matplotlib: `free_spin.png` (the free spin against its replay, before and after), `held_out.png` (the held-out run against its replay) and `distance.png` (each sensor's readings against what it should have read, the misses marked).
+- from the app's *Calibrate* page, `report.json`: the same as data for the page, with a digest of the robot's config as it was fitted (*Apply* refuses a config changed since).
 
 ### How well it works
 The tests (`tests/test_calibration_sessions.py`, `pytest -m session`; CI runs them in a job of their own) run the program in vexsim on "real" robots that differ from their configs in ways the fit isn't told: wheels 3.20 in (the config says 3.25), an IMU further off than the config says, omni friction 0.75 (vexsim's default is 0.9), roller friction 0.25, rolling resistance 0.13, voltage commands held to rated speed, and the real distance sensors (0.3% noise, 2300 mm range, 90% of beams lost past 45 degrees and 1500 mm, confidence falling 8 per meter and 0.25 per degree). The student runs the whole session, `collect` takes the card, `calibrate` fits it:

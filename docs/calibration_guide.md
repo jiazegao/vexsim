@@ -36,6 +36,13 @@ Then: [9. When to calibrate again](#9-when-to-calibrate-again), [10. A new robot
 | the calibration program (made in section 4) | `calibration/vexsim_calibration` |
 | the session: its logs and report (section 6), named by its date | `calibration/2026-11-07` |
 
+**Or in the app.** You can do everything from section 4 on in vexsim's app instead of typing the commands. Open it with `vexsim ui` ([section 3](#3-describe-the-robot)) and click *Calibrate* at the top.
+- The *Session* tab has the steps, numbered, in this guide's order, and each one names the command it runs.
+- In its step 3, *Practice in vexsim first* runs the whole session on a simulated robot. It's a good way to learn the steps before the field.
+- The *Autonomous check* tab is [section 8](#8-the-autonomous-check).
+
+Each section below gives the command, then what the app calls that step.
+
 ---
 
 ## 1. What you need
@@ -229,6 +236,8 @@ It ends by listing the tests and where each one goes:
 ...
 ```
 If a test doesn't fit anywhere on your field, it says so (*Left out, with no room on this field*) and names what's in the way. Check the field's config ([section 3.7](#37-check-the-fields-config-against-your-field)): an element in the wrong place takes up room it doesn't really have.
+
+*In the app:* on the *Session* tab, pick the robot and the field in step 1. In step 2, type the program's folder (`calibration/vexsim_calibration`) and click *Plan and write the program*. The plan's table lists each test, where it goes, and its map.
 
 ### 4.2 The plan's maps
 The plan's maps are in `calibration/vexsim_calibration/plan/`, one for each test that needs a spot, numbered as the program's menu numbers the tests. Print them, or have them on a phone at the field.
@@ -448,6 +457,8 @@ vexsim_0018_sweep_2.csv: sweep_2, run 1: good
 - **Another visit, the same session?** Collect into the same folder again: it adds only the logs it doesn't have.
 - **Leaving a run out.** A run that was stopped, a failed device check, IMU turns that weren't 10, and a run that slowed suddenly are left out by themselves: `use: false` in `session.yaml`, its `quality` saying why. If you know a run went wrong (someone bumped the robot), open `session.yaml` and change that run's `use: true` to `use: false`.
 
+*In the app:* in step 3, type the session's folder (`calibration/2026-11-07`), then click *Collect from the card*. Without a card reader, use *Collect* for a folder, or *Over USB…*. Step 4 lists each run with what it measured; untick *Use* to leave a run out.
+
 ### 6.2 Fit them
 ```
 vexsim calibrate examples/robots/1239e_2026-27.yaml calibration/2026-11-07 --field examples/fields/1239e_2026-27.yaml
@@ -484,6 +495,8 @@ wrote calibration/2026-11-07/report/report.md (and changes.yaml, with the plots)
 16 change(s) to write: vexsim calibrate examples/robots/1239e_2026-27.yaml calibration/2026-11-07 --apply
 ```
 It doesn't change the config yet: read the report first. If it stops with `error: the device check (...) found what to fix first`, fix what it lists ([section 5.1](#51-device-check)), run the device check again and collect its log.
+
+*In the app:* in step 5, click *Fit the session*. The report shows below it when the fit is done.
 
 ---
 
@@ -523,6 +536,8 @@ It fits again (the same result) and writes the values into the robot's config, e
 # Calibrated from session 2026-11-07 on 2026-11-07 (vexsim calibrate --apply)
 ```
 The wheels' sizes go into the wheels, the IMU's error into the IMU, and the rest into the config's `overrides:` section. VS Code's *Source Control* shows what changed.
+
+*In the app:* under the report, click *Apply them to 1239e_2026-27.yaml*. It opens the robot's config with the values written in, for you to look over; save it with Ctrl+S (⌘S on a Mac).
 
 ### 7.2 For routes made in vexsim's maker
 The fit also measures how the real drive answers voltage, for the motions vexsim's autonomous maker drives (arcs and paths). If you make routes there, add the printed line to each route's file:
@@ -608,13 +623,15 @@ Here the runs are more than 2 in apart for about a second from 2.6 s, at a fast 
 
 The warning says that the simulated runs, on their own, end up to 3.1 degrees apart: a 2 degree mark could fail a run that vexsim couldn't tell from its own. That's why 1239E's heading mark is 4 (below).
 
+*In the app:* on the *Autonomous check* tab, pick the robot, the field and the competition code's project. Tick the logs, copied into `calibration/auton` as above. Under each log, type where it ended, as you wrote it down; the app shows where that puts the robot. Then click *Check it*. *Play* plays a log on the field beside the simulated routine.
+
 ### 8.4 Your team's pass marks
 Set them in a file `calibration.yaml` in a folder `.vexsim` in the vexsim folder (make the folder if it isn't there):
 ```yaml
 max_distance_in: 2
 max_heading_deg: 4
 ```
-Or for one check, add `--max-distance 2 --max-heading 4` to the command. Marks finer than a tape measure can tell (0.5 in, 1 degree) get a warning. In vexsim, 1239E's Left 40 ends 3 to 4 degrees differently from run to run, so 1239E's heading mark is 4. The first line of the check's output says which marks it used, and where they came from.
+Or for one check, add `--max-distance 2 --max-heading 4` to the command. Marks finer than a tape measure can tell (0.5 in, 1 degree) get a warning. In vexsim, 1239E's Left 40 ends 3 to 4 degrees differently from run to run, so 1239E's heading mark is 4. The first line of the check's output says which marks it used, and where they came from. *In the app:* type the marks at the top of the *Autonomous check* tab and click *Save as the team's*.
 
 ### 8.5 If it fails
 Read the report: when do the real and the simulated runs part?

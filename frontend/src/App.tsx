@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api } from "./api";
 import { ConsolePanel } from "./components/ConsolePanel";
 import { Controls, SPEEDS } from "./components/Controls";
+import type { ConfigRequest } from "./components/ConfigEditor";
 import type { Compared, FieldSource } from "./components/FieldView";
 import { FieldKey, FieldView } from "./components/FieldView";
 import { KeysHelp } from "./components/KeysHelp";
@@ -18,11 +19,13 @@ import type { ControllerInput } from "./controller";
 import { NEUTRAL } from "./controller";
 import type { Layers } from "./draw";
 import { hostTheme, onHostTheme } from "./host";
-import { LogPlayback, logSummary } from "./mcllog";
+import type { LogTape } from "./mcllog";
+import type { CalibrateTab } from "./pages/CalibratePage";
+import { isRobotLog, LogPlayback, logSummary } from "./mcllog";
 import { Playhead, usePlayheadClock } from "./playhead";
 import type { Editor } from "./problems";
 import { EDITORS } from "./problems";
-import type { AppInfo, Preview, ProjectRoutines, RunConfiguration, RunProblem, RunRecord, RunSpec, SweepTrial, WorkspaceInfo, WorkspaceItem } from "./protocol";
+import type { AppInfo, NothingToPlay, Preview, ProjectRoutines, RunConfiguration, RunProblem, RunRecord, RunSpec, SweepTrial, WorkspaceInfo, WorkspaceItem } from "./protocol";
 import type { Recording } from "./recording";
 import { COMPARE_DASHES, forgetTelemetry, MAX_COMPARED, openLog, openRun, openWorstCase, renamed, shortName } from "./recording";
 import type { RunForm } from "./runform";
@@ -89,7 +92,7 @@ export function App() {
   const [speed, setSpeed] = useState(1);
   const [layers, setLayers] = useState<Layers>({ trails: true, estimate: true, beams: true, forces: true, drawings: true });
   const [hiddenDrawings, setHiddenDrawings] = useState<string[]>([]); // layers of the robot code's drawings
-  const [mcl, setMcl] = useState<LogPlayback | null>(null); // a real robot's MCL log, beside the simulator
+  const [realLog, setRealLog] = useState<LogPlayback | null>(null); // a real robot's log (MCL or vexsim's), beside the simulator
   const [logShift, setLogShift] = useState(0); // s: the log nudged later against the run beside it
   const [replayWith, setReplayWith] = useState<string | null>(null); // the saved run to replay it with ("": the form)
   const [theme, setTheme] = useState<Theme>(() => hostTheme() ?? loadTheme());
@@ -118,9 +121,15 @@ export function App() {
   const [visited, setVisited] = useState<string[]>(["simulate"]); // pages made so far (they stay)
   const [analyzeRobot, setAnalyzeRobot] = useState("");
   const [benchScenario, setBenchScenario] = useState("");
-  const [calibration, setCalibration] = useState({ robot: "", log: "", project: "" });
+  const [calibration, setCalibration] = useState<{ robot: string; log: string; project: string; session: string; tab: CalibrateTab }>({
+    robot: "",
+    log: "",
+    project: "",
+    session: "",
+    tab: "session",
+  });
   const [buildProject, setBuildProject] = useState<string | null>(null);
-  const [overrideRequests, setOverrideRequests] = useState<Record<string, { id: number; overrides: Record<string, number> }>>({});
+  const [overrideRequests, setOverrideRequests] = useState<Record<string, ConfigRequest>>({});
   const [unsaved, setUnsaved] = useState<Record<string, boolean>>({});
   const [closing, setClosing] = useState<string | null>(null); // asking before closing it
   const playhead = useMemo(() => new Playhead(), []);
@@ -307,23 +316,23 @@ export function App() {
   const recording = source.kind === "recording" ? shown : null;
   const recordedLayers = useMemo(() => recording?.playback.drawnLayers() ?? [], [recording]);
   const runLayers = source.kind === "live" ? Object.keys(source.store.drawings) : recordedLayers;
-  const drawnLayers = mcl ? [...new Set([...mcl.layers(), ...runLayers])] : runLayers;
+  const drawnLayers = realLog ? [...new Set([...realLog.layers(), ...runLayers])] : runLayers;
   const recordingPhases = useMemo(() => recording?.playback.phases() ?? [], [recording]);
 
   // An MCL log beside the simulator: it plays on its own timeline, or with the run beside it
   // (live or recorded), its first update at the moment that run began following it (a replay
   // of it), else where the run's program began (after initialize), nudged by logShift.
-  const follows = (run: RunSpec | null | undefined) => !!mcl && !!run?.follow?.log && run.follow.log === mcl.tape.path;
+  const follows = (run: RunSpec | null | undefined) => !!realLog && !!run?.follow?.log && run.follow.log === realLog.tape.path;
   let logAt: number | null = null; // the run's time of the log's first update; null: not yet
-  if (mcl && recording) {
+  if (realLog && recording) {
     const run = recording.run;
     const began = recordingPhases.find((phase) => phase.name !== "initialize" && phase.name !== "disabled");
     logAt = (follows(run?.spec) ? run?.follow_start : null) ?? began?.start ?? 0;
-  } else if (mcl && source.kind === "live") {
+  } else if (realLog && source.kind === "live") {
     logAt = follows(source.store.scene?.spec ?? spec) ? source.store.following : source.store.programStart;
   }
   if (logAt !== null) logAt += logShift;
-  const logAlone = !!mcl && source.kind === "preview"; // nothing beside it: its own timeline
+  const logAlone = !!realLog && source.kind === "preview"; // nothing beside it: its own timeline
   const liveStore = source.kind === "live" ? source.store : null;
   const logClock = (): number | null => {
     if (logAlone) return playhead.t;
@@ -333,8 +342,8 @@ export function App() {
     return t === undefined ? null : t - logAt;
   };
   useEffect(() => {
-    if (mcl && logAlone) playhead.load(mcl.start, mcl.end, mcl.start);
-  }, [mcl, logAlone, playhead]);
+    if (realLog && logAlone) playhead.load(realLog.start, realLog.end, realLog.start);
+  }, [realLog, logAlone, playhead]);
   const onField: Compared[] = compared.map((r, i) => ({ playback: r.playback, label: shortName(r.label), dash: COMPARE_DASHES[i] }));
   const startPose = useMemo(() => startOf(form), [form]);
   const start = startPose ? { pose: startPose, editable: !busy } : null;
@@ -441,27 +450,54 @@ export function App() {
     }
   };
 
-  /** A real robot's MCL log, beside the simulator. */
-  const openMclLog = async (path: string) => {
-    setOpening(`mcl:${path}`);
+  /** A real robot's log beside the simulator: an MCL log, or a robot log of vexsim's logger, its
+   * rays drawn from where the robot it names (a calibration log does), else the run form's, mounts
+   * its distance sensors. With `orFit`, a robot log with nothing to play on the field (no pose of
+   * its code's, no spot to start from: the calibration routine's log, say) opens on the Calibrate
+   * page's quick fit instead, which fits any run's log. */
+  const openRealLog = async (kind: "mcllog" | "robotlog", path: string, orFit = false) => {
+    setOpening(`log:${path}`);
     try {
-      const result = await api.mclLog(path);
-      if ("problem" in result) setProblem(result.problem);
-      else {
-        setMcl(new LogPlayback(result.ok));
+      let result: { ok: LogTape | NothingToPlay } | { problem: RunProblem } = kind === "mcllog" ? await api.mclLog(path) : await api.robotLog(path, form.robot);
+      if ("ok" in result && isRobotLog(result.ok)) {
+        // the robot and field it names (a calibration log does): drawn, and run beside it
+        const { robot: robotName, field: fieldName } = result.ok.summary;
+        const robot = robotName ? workspace?.items.find((i) => i.kind === "robot" && !i.problem && i.name === robotName) : undefined;
+        const field = fieldName ? workspace?.items.find((i) => i.kind === "field" && !i.problem && i.name === fieldName) : undefined;
+        if ((robot && robot.path !== form.robot) || (field && field.path !== form.field)) {
+          setForm((f) => ({ ...f, ...(robot ? { robot: robot.path } : {}), ...(field ? { field: field.path } : {}) }));
+        }
+        if (robot && robot.path !== form.robot) result = await api.robotLog(path, robot.path);
+      }
+      if ("problem" in result) {
+        setPage("simulate");
+        setProblem(result.problem);
+      } else if ("why" in result.ok) {
+        // it has no path to play: a run's log for the quick fit, else why not
+        if (orFit) {
+          setCalibration((c) => ({ ...c, log: path, tab: "quick" }));
+          setPage("calibrate");
+        } else {
+          setPage("simulate");
+          setProblem({ error: `${path}: ${result.ok.why}`, issues: [] });
+        }
+      } else {
+        setPage("simulate");
+        setRealLog(new LogPlayback(result.ok));
         setLogShift(0);
         setReplayWith(null);
         setProblem(null);
       }
     } catch (error) {
+      setPage("simulate");
       setProblem({ error: `Couldn't open ${path}: ${(error as Error).message}`, issues: [] });
     } finally {
       setOpening(null);
     }
   };
 
-  const closeMclLog = () => {
-    setMcl(null);
+  const closeRealLog = () => {
+    setRealLog(null);
     if (!recording) playhead.pause();
   };
 
@@ -472,7 +508,7 @@ export function App() {
   const followers = replayRuns.filter((c) => c.follow); // saved runs made to replay logs
   const replayChoice = replayWith ?? (followers.find((c) => c.name === form.config) ?? followers.find((c) => c.program === form.program) ?? followers[0])?.name ?? "";
   const replayLog = async () => {
-    if (!mcl) return;
+    if (!realLog) return;
     const chosen = configurations.find((c) => c.name === replayChoice) ?? null;
     let base: RunSpec;
     if (chosen) base = chosen;
@@ -487,14 +523,38 @@ export function App() {
     const { name: _, ...rest } = base as RunConfiguration;
     const replay: RunSpec = {
       ...rest,
-      start: mcl.tape.summary.start,
+      start: realLog.tape.summary.start,
       input: null,
-      follow: { log: mcl.tape.path, sticks: base.follow?.sticks ?? "tank", curve: base.follow?.curve ?? null },
+      follow: { log: realLog.tape.path, sticks: base.follow?.sticks ?? "tank", curve: base.follow?.curve ?? null },
     };
     setShown(null);
     setLogShift(0);
     setForm(specToForm(replay, chosen?.name ?? ""));
-    await startRun(replay, `${chosen ? chosen.name : "Replay"} · ${mcl.name}`);
+    await startRun(replay, `${chosen ? chosen.name : "Replay"} · ${realLog.name}`);
+  };
+  // A log the code's pose plays can be replayed (a calibration log's odometry can't: its program
+  // has no driver control to steer)
+  const followable = !!realLog && !(isRobotLog(realLog.tape) && realLog.tape.summary.pose === "odometry");
+
+  // A routine's robot log beside the routine itself, run in the simulator: the run form's PROS
+  // project's routine of the log's name (Left 40 is left40()), from where its setPose puts the robot.
+  const squash = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const logged = realLog && isRobotLog(realLog.tape) ? realLog.tape.summary.routine : null;
+  const logRoutine =
+    logged && routines?.found ? (routines.routines.find((r) => squash(r.name) === squash(logged) || squash(r.name.split("::").at(-1) ?? "") === squash(logged)) ?? null) : null;
+  const runLogRoutine = async () => {
+    if (!realLog || !logRoutine) return;
+    const at = logRoutine.start ? { x: String(logRoutine.start[0]), y: String(logRoutine.start[1]), heading: String(logRoutine.start[2]) } : {};
+    const next: RunForm = { ...form, config: "", routine: logRoutine.name, route: "", mode: "autonomous", input: "", follow: "", following: false, ...at };
+    const result = formToSpec(next);
+    if ("error" in result) {
+      setProblem({ error: result.error, issues: [] });
+      return;
+    }
+    setShown(null);
+    setLogShift(0);
+    setForm(next);
+    await startRun(result.spec, `${logRoutine.name} · beside ${realLog.name}`);
   };
 
   /** A benchmark's worst case on the field, with its scenario's robot and field. */
@@ -515,11 +575,25 @@ export function App() {
   const pickCalibrationRobot = useCallback((robot: string) => setCalibration((c) => ({ ...c, robot })), []);
   const pickCalibrationLog = useCallback((log: string) => setCalibration((c) => ({ ...c, log })), []);
   const pickCalibrationProject = useCallback((project: string) => setCalibration((c) => ({ ...c, project })), []);
+  const pickCalibrationSession = useCallback((session: string) => setCalibration((c) => ({ ...c, session })), []);
+  const pickCalibrationTab = useCallback((tab: CalibrateTab) => setCalibration((c) => ({ ...c, tab })), []);
 
   /** A calibration's fitted values, added to a robot config in its editor (to save there). */
   const applyOverrides = async (robot: string, overrides: Record<string, number>) => {
     openConfig(robot);
     setOverrideRequests((all) => ({ ...all, [robot]: { id: (all[robot]?.id ?? 0) + 1, overrides } }));
+  };
+
+  /** What a calibration session's fit found, written into its robot's config in its editor (to save there). */
+  const applySession = async (robot: string, session: string) => {
+    openConfig(robot);
+    setOverrideRequests((all) => ({ ...all, [robot]: { id: (all[robot]?.id ?? 0) + 1, session } }));
+  };
+
+  /** A robot log on the field, beside the simulator (from the Calibrate page). */
+  const playLog = (path: string) => {
+    setPage("simulate");
+    void openRealLog("robotlog", path);
   };
 
   const toggleCompare = async (record: RunRecord) => {
@@ -690,14 +764,19 @@ export function App() {
       setPage("bench");
       return;
     }
-    if (item.kind === "robotlog") {
-      setCalibration((c) => ({ ...c, log: item.path }));
+    if (item.kind === "calsession") {
+      setCalibration((c) => ({ ...c, session: item.path, tab: "session" }));
       setPage("calibrate");
       return;
     }
     if (item.kind === "mcllog") {
       setPage("simulate");
-      openMclLog(item.path);
+      void openRealLog("mcllog", item.path);
+      return;
+    }
+    if (item.kind === "robotlog") {
+      // a calibration test's log is a session's; any other with nothing to play is for the quick fit
+      void openRealLog("robotlog", item.path, !item.detail.startsWith("calibration log"));
       return;
     }
     if (item.kind === "route") {
@@ -724,7 +803,7 @@ export function App() {
       : page === "bench"
         ? [benchScenario]
         : page === "calibrate"
-          ? [calibration.robot, calibration.log, calibration.project]
+          ? [calibration.robot, calibration.log, calibration.project, calibration.session]
           : page === "build"
             ? [buildProject ?? ""]
             : null;
@@ -886,7 +965,7 @@ export function App() {
           loading={scanning}
           onRefresh={() => info && scan(info, false)}
           shownLog={recording?.key.startsWith("log:") ? recording.key.slice(4) : null}
-          mclLog={mcl?.tape.path ?? null}
+          realLog={realLog?.tape.path ?? null}
           runCount={runs.length}
           onRunsTab={loadRuns}
           runs={
@@ -952,15 +1031,15 @@ export function App() {
               onStop={stop}
               command={store?.info?.command ?? store?.scene?.command ?? recording?.run?.command ?? null}
             />
-            {mcl && (
+            {realLog && (
               <div className="logbar" data-testid="logbar">
                 <div className="logrow">
-                  <span className="logname" title={mcl.tape.path}>
-                    {mcl.name}
+                  <span className="logname" title={realLog.tape.path}>
+                    {realLog.name}
                   </span>
-                  <span className="muted small">{logSummary(mcl.tape)}</span>
+                  <span className="muted small">{logSummary(realLog.tape)}</span>
                   <span className="spacer" />
-                  <button type="button" className="ghost small" onClick={closeMclLog} title="Put the log away" aria-label={`Close ${mcl.name}`} data-testid="close-log">
+                  <button type="button" className="ghost small" onClick={closeRealLog} title="Put the log away" aria-label={`Close ${realLog.name}`} data-testid="close-log">
                     ×
                   </button>
                 </div>
@@ -982,6 +1061,19 @@ export function App() {
                     </label>
                   )}
                   <span className="spacer" />
+                  {logRoutine && (
+                    <button
+                      type="button"
+                      className="small"
+                      onClick={runLogRoutine}
+                      disabled={starting}
+                      title={`Run ${logRoutine.name}() in the simulator, in autonomous, from where its setPose puts the robot: the routine the log is of, beside it`}
+                      data-testid="run-log-routine"
+                    >
+                      Run {logRoutine.name}
+                    </button>
+                  )}
+                  {followable && (
                   <label title="Replay the log in the simulator: a virtual driver drives the run's robot along the real robot's path, through its program's driver control">
                     <span className="small">Replay it with</span>
                     <select value={replayChoice} onChange={(event) => setReplayWith(event.target.value)} data-testid="replay-with">
@@ -993,23 +1085,26 @@ export function App() {
                       ))}
                     </select>
                   </label>
-                  <button type="button" className="small" onClick={replayLog} disabled={starting} data-testid="replay-log">
-                    Replay
-                  </button>
+                  )}
+                  {followable && (
+                    <button type="button" className="small" onClick={replayLog} disabled={starting} data-testid="replay-log">
+                      Replay
+                    </button>
+                  )}
                 </div>
               </div>
             )}
-            <div className={`stage${mcl ? " paired" : ""}`}>
-              <div className={`fieldcol${mcl ? " paired" : ""}`}>
-                <div className={mcl ? "fieldpair" : "fieldsingle"}>
-                  {mcl && (
+            <div className={`stage${realLog ? " paired" : ""}`}>
+              <div className={`fieldcol${realLog ? " paired" : ""}`}>
+                <div className={realLog ? "fieldpair" : "fieldsingle"}>
+                  {realLog && (
                     <div className="fieldhalf">
                       <div className="fieldlabel">
                         <b>Real robot</b> <span className="muted">its log: what its code thought and saw</span>
                       </div>
                       <FieldView
                         name="log"
-                        source={{ kind: "log", log: mcl, clock: logClock, shape: source.kind === "live" ? source.store.scene : recording ? recording.playback.tape.scene : preview }}
+                        source={{ kind: "log", log: realLog, clock: logClock, shape: source.kind === "live" ? source.store.scene : recording ? recording.playback.tape.scene : preview }}
                         compared={[]}
                         preview={null}
                         start={null}
@@ -1022,7 +1117,7 @@ export function App() {
                     </div>
                   )}
                   <div className="fieldhalf">
-                    {mcl && (
+                    {realLog && (
                       <div className="fieldlabel">
                         <b>vexsim</b>{" "}
                         <span className="muted">
@@ -1066,17 +1161,17 @@ export function App() {
                     onClose={closeRecording}
                   />
                 )}
-                {mcl && logAlone && (
+                {realLog && logAlone && (
                   <Timeline
                     phases={[]}
                     playhead={playhead}
-                    name={mcl.name}
+                    name={realLog.name}
                     run={null}
                     summary="the real robot's log, played alone: replay it, or open a run, to see it beside one"
                     csv={null}
                     video={null}
                     onVideo={() => {}}
-                    onClose={closeMclLog}
+                    onClose={closeRealLog}
                     closeTitle="Put the log away"
                   />
                 )}
@@ -1146,7 +1241,15 @@ export function App() {
                   onLog={pickCalibrationLog}
                   project={calibration.project}
                   onProject={pickCalibrationProject}
+                  session={calibration.session}
+                  onSession={pickCalibrationSession}
+                  tab={calibration.tab}
+                  onTab={pickCalibrationTab}
                   onApply={applyOverrides}
+                  onApplySession={applySession}
+                  onEdit={openConfig}
+                  onPlayLog={playLog}
+                  onRescan={() => info && scan(info, false)}
                 />
               </div>
             )}

@@ -347,3 +347,70 @@ class Student:
             robot.external_torque = 0.0
             self._hand = None
             hand.then(t)
+
+
+# --- a robot as real robots are ---------------------------------------------------------------
+
+# What real robots are like, and their configs don't say (as the tests' simulated "real"
+# robots): the wheels' grip on the tiles, voltage commands held to rated speed (PROS's), and
+# the real distance sensors (docs/1239e_real_vs_sim.md): quieter, further, missing beams that
+# glance off far away, less sure with distance and angle
+UNLIKE = {
+    "motor.voltage_cap": 1.0,
+    "sensor.distance.long_noise_fraction": 0.003,
+    "sensor.distance.short_noise_mm": 1.5,
+    "sensor.distance.max_range_mm": 2300.0,
+    "sensor.distance.glancing_miss": 0.9,
+    "sensor.distance.glancing_deg": 45.0,
+    "sensor.distance.glancing_mm": 1500.0,
+    "sensor.distance.confidence_per_m": 8.0,
+    "sensor.distance.confidence_per_deg": 0.25,
+}
+UNLIKE_WHEELS = {  # each wheel type's grip and rolling, on the tiles
+    "omni": {
+        "wheel.omni.longitudinal_mu": 0.75,
+        "wheel.omni.lateral_mu": 0.25,
+        "wheel.omni.rolling_resistance": 0.13,
+    },
+    "traction": {"wheel.traction.mu": 0.95, "wheel.traction.rolling_resistance": 0.15},
+    "mecanum": {
+        "wheel.mecanum.grip_mu": 0.7,
+        "wheel.mecanum.roller_mu": 0.2,
+        "wheel.mecanum.rolling_resistance": 0.15,
+    },
+}
+UNLIKE_DIAMETER = 3.20 / 3.25  # wheels as they really roll: worn and pressed into the tiles
+UNLIKE_SCALE = 0.0025  # an IMU this much further off than its config says
+
+
+def unlike(config: RobotConfig) -> RobotConfig:
+    """``config`` as a real robot is, not quite what its config says: its wheels about 1.5%
+    smaller (tracking wheels too), its IMU 0.25% further off, its wheels' grip and rolling on
+    the tiles, voltage commands held to rated speed and the real distance sensors (``UNLIKE``).
+    A practice session's robot, for the fit to find something."""
+    wheels = tuple(
+        w.model_copy(update={"diameter_in": round(w.diameter_in * UNLIKE_DIAMETER, 4)})
+        for w in config.drivetrain.wheels
+    )
+    sensors = []
+    for s in config.sensors:
+        if s.type == "imu":
+            s = s.model_copy(update={"scale_error": (s.scale_error or 0.0) + UNLIKE_SCALE})
+        elif s.type == "rotation" and s.tracking_wheel is not None:
+            wheel = s.tracking_wheel
+            diameter = round(wheel.diameter_in * UNLIKE_DIAMETER, 4)
+            s = s.model_copy(
+                update={"tracking_wheel": wheel.model_copy(update={"diameter_in": diameter})}
+            )
+        sensors.append(s)
+    types = {w.type for w in config.drivetrain.wheels}
+    overrides = {**config.overrides, **UNLIKE}
+    for kind in sorted(types):
+        overrides.update(UNLIKE_WHEELS.get(kind, {}))
+    return config.model_copy(
+        update={
+            "drivetrain": config.drivetrain.model_copy(update={"wheels": wheels}),
+            "sensors": tuple(sensors),
+            "overrides": overrides,
+        }
+    )

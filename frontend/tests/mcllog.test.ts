@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LogPlayback, logSummary } from "../src/mcllog";
-import type { MclLogTape } from "../src/protocol";
+import { isRobotLog, LogPlayback, logSummary } from "../src/mcllog";
+import type { MclLogTape, RobotLogTape } from "../src/protocol";
 
 const TAPE: MclLogTape = {
   name: "mcl_log7.1239e",
@@ -53,5 +53,56 @@ describe("a real robot's MCL log, played back", () => {
 
   it("sums itself up in a line", () => {
     expect(logSummary(TAPE)).toBe("3 updates over 0.1 s · every 30 ms (95%: 30) · spread 2.5 in · 33% of readings saw nothing");
+  });
+});
+
+const ROBOT_TAPE: RobotLogTape = {
+  kind: "robot",
+  name: "Left 40",
+  path: "card/vexsim_0001_left_40.csv",
+  summary: {
+    rows: 400,
+    duration_s: 3.99,
+    interval_ms: 10,
+    pose: "lemlib",
+    poses: ["lemlib", "mcl"],
+    start: [60, 0, 0],
+    distance_sensors: 5,
+    no_reading_pct: 12.4,
+    robot: null,
+    field: null,
+    test: null,
+    routine: "Left 40",
+  },
+  times: [0, 1, 2, 3],
+  estimate: [
+    [60, 0, 0],
+    [50, 0, 0],
+    [40, 0, 0],
+    [30, 0, 0],
+  ],
+  drawings: [
+    [0, { rays: [] }],
+    [1, { rays: [] }],
+    [2, { rays: [] }],
+    [3, { rays: [] }],
+  ],
+  paths: [{ name: "mcl", color: "violet", first: 1, xs: [51, 41, 31], ys: [1, 1, 1] }],
+};
+
+describe("a robot log of vexsim's logger, played back", () => {
+  const log = new LogPlayback(ROBOT_TAPE);
+
+  it("draws its other poses' paths, each from its first reading", () => {
+    expect(log.paths(0.5)).toEqual([{ name: "mcl", color: "violet", trail: { xs: [51, 41, 31], ys: [1, 1, 1], length: 0 } }]);
+    expect(log.paths(2.5)[0].trail.length).toBe(2);
+    expect(log.paths(9)[0].trail.length).toBe(3);
+    expect(new LogPlayback(TAPE).paths(0.05)).toEqual([]); // an MCL log has no others
+  });
+
+  it("is told from an MCL log, and sums itself up in a line", () => {
+    expect([isRobotLog(ROBOT_TAPE), isRobotLog(TAPE)]).toEqual([true, false]);
+    expect(isRobotLog({ kind: "none", path: "x.csv", why: "nothing to play" })).toBe(false);
+    expect(logSummary(ROBOT_TAPE)).toBe("400 rows over 4.0 s · every 10 ms · its code's lemlib pose · 5 distance sensors · 12% of readings saw nothing");
   });
 });

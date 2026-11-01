@@ -1356,8 +1356,13 @@ def calibrate(
             workers=workers,
             say=say,
         )
-        overrides.update(drive)
-        config = with_overrides(config, drive)
+        # only what the logs pin down carries on (a session without turns can't tell the
+        # wheels' sideways grip: a guess at it would mislead the second push)
+        pinned = {
+            k: v for k, v in drive.items() if (got := drive_step.value(k)) is None or got.pinned
+        }
+        overrides.update(pinned)
+        config = with_overrides(config, pinned)
     steps += [push_step, drive_step]
     if spin_step is not None:
         steps.append(spin_step)
