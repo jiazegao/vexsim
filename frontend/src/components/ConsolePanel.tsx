@@ -16,9 +16,12 @@ export function ConsolePanel(props: {
   root: string;
   editor: Editor;
   onEditor: (editor: Editor) => void;
+  open?: boolean; // false: folded to its row of tabs (a short window), until one is picked
+  onOpen?: (open: boolean) => void;
 }) {
   const { store, history, problem, root, editor } = props;
   const [tab, setTab] = useState<Tab>("console");
+  const [peek, setPeek] = useState(false); // opened by a run that failed, for as long as it shows
   const lines: Line[] = history ? history.map((text) => ({ kind: "console", text })) : (store?.lines ?? []);
   const build = lines.filter((line) => line.kind === "build");
   const output = lines.filter((line) => line.kind !== "build");
@@ -34,15 +37,30 @@ export function ConsolePanel(props: {
   useEffect(() => {
     if (state === "error" && errors > 0) setTab("problems");
   }, [state, errors]);
+  useEffect(() => setPeek(state === "error"), [state]); // a failed run's output is what to read
 
+  const open = (props.open ?? true) || peek;
+  const fold = (to: boolean) => {
+    setPeek(false);
+    props.onOpen?.(to);
+  };
   const tabButton = (name: Tab, label: string, count: number, testid?: string) => (
-    <button role="tab" aria-selected={tab === name} className={tab === name ? "on" : ""} onClick={() => setTab(name)} data-testid={testid}>
+    <button
+      role="tab"
+      aria-selected={open && tab === name}
+      className={open && tab === name ? "on" : ""}
+      onClick={() => {
+        setTab(name);
+        if (!open) fold(true);
+      }}
+      data-testid={testid}
+    >
       {label} {count > 0 && <span className={`count${name === "problems" && errors ? " bad" : ""}`}>{count}</span>}
     </button>
   );
 
   return (
-    <section className="console" aria-label="Output">
+    <section className={`console${open ? "" : " folded"}`} aria-label="Output" data-testid="bottom-panel">
       {problem && (
         <div className="problem" role="alert" data-testid="problem">
           <strong>
@@ -78,8 +96,20 @@ export function ConsolePanel(props: {
             </select>
           </label>
         )}
+        {props.onOpen && (
+          <button
+            type="button"
+            className="ghost small fold"
+            aria-expanded={open}
+            onClick={() => fold(!open)}
+            title={open ? "Fold this panel to its tabs, for more room for the field" : "Open this panel"}
+            data-testid="bottom-toggle"
+          >
+            {open ? "Hide" : "Show"}
+          </button>
+        )}
       </div>
-      {tab === "plots" ? (
+      {!open ? null : tab === "plots" ? (
         (props.plots ?? <div className="plots-empty">Plots of a run appear once it's recorded: when it ends, or when you open one from Runs.</div>)
       ) : tab === "problems" ? (
         <Problems problems={problems} root={root} editor={editor} />

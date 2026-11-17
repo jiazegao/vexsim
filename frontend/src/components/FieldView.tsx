@@ -4,6 +4,7 @@ import type { Drawings, Ghost, Layers, Picture, Shape, StartMarker } from "../dr
 import { draw, HANDLE_GAP_PX, HANDLE_RADIUS_PX } from "../draw";
 import type { Palette } from "../palette";
 import { saveFile } from "../host";
+import { usePanel } from "../layout";
 import { readPalette } from "../palette";
 import type { LogPlayback } from "../mcllog";
 import type { Playback } from "../playback";
@@ -54,6 +55,7 @@ export interface FieldViewProps {
   onFollow: (follow: boolean) => void;
   stamp?: string | null; // written in the corner with the time, as when exporting a video
   name?: string; // tells two field views apart: their canvas is "<name>-canvas" ("field-canvas")
+  tools?: ReactNode; // more buttons for the field's own row of them
 }
 
 /** The robot code's drawings without the hidden layers. */
@@ -62,9 +64,9 @@ export function shownDrawings(drawings: Drawings, hidden: readonly string[]): Dr
   return Object.fromEntries(Object.entries(drawings).filter(([name]) => !hidden.includes(name)));
 }
 
-/** The field and the run on it, drawn every animation frame. Wheel: zoom; drag: pan, or
- * move the robot to its start (and turn it by its round handle); double-click: the
- * whole field again. */
+/** The field and the run on it, drawn whenever what it shows has changed (looked at every
+ * animation frame; `data-draws` counts the draws). Wheel: zoom; drag: pan, or move the robot
+ * to its start (and turn it by its round handle); double-click: the whole field again. */
 export function FieldView(props: FieldViewProps) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -85,6 +87,8 @@ export function FieldView(props: FieldViewProps) {
     let adjusted = false; // zoomed or panned by hand: keep that view on resize
     let colors: Palette = readPalette();
     let frameId = 0;
+    let shown: unknown[] | null = null; // what the last draw was made from (see render)
+    let draws = 0;
     let drag: { kind: "pan" | "move" | "rotate"; x: number; y: number; id: number; offset: [number, number] } | null = null;
 
     const shape = (): Shape | null => {
@@ -126,6 +130,7 @@ export function FieldView(props: FieldViewProps) {
       element.style.width = `${width}px`;
       element.style.height = `${height}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      shown = null; // sizing a canvas clears it
       if (view && adjusted) view = resize(view, width, height);
       else fit();
     };
@@ -144,13 +149,48 @@ export function FieldView(props: FieldViewProps) {
       const { source, preview, layers, follow, compared, stamp, hiddenDrawings } = live.current;
       const [w, h] = fieldSize();
       if (!view || (fittedTo !== `${w}x${h}` && !adjusted)) fit();
+      if (container.clientWidth === 0) return; // its page isn't on show
       const { frame, t } = now();
       const logged = source.kind === "log" && t !== null ? source.log.estimateAt(t) : null;
       const followed = frame?.pose ?? logged;
-      if (follow && followed) {
+      if (follow && followed && (view!.cx !== followed[0] || view!.cy !== followed[1])) {
         view = { ...view!, cx: followed[0], cy: followed[1] };
         adjusted = true;
       }
+      // Everything the picture is made from. While none of it has changed, the canvas is
+      // right as it is: an idle page draws nothing.
+      const store = source.kind === "live" ? source.store : null;
+      const startEdit = live.current.start;
+      const from: unknown[] = [
+        source.kind,
+        store ?? (source.kind === "recording" ? source.playback : source.kind === "log" ? source.log : null),
+        source.kind === "log" ? source.shape : null,
+        store?.scene,
+        store?.frame,
+        store?.frames,
+        store?.overlay,
+        store?.drawings,
+        t,
+        preview,
+        startEdit?.pose[0],
+        startEdit?.pose[1],
+        startEdit?.pose[2],
+        startEdit?.editable,
+        grabbedRef.current,
+        layers,
+        hiddenDrawings,
+        stamp,
+        compared.length,
+        ...compared.flatMap((other) => [other.playback, other.label, other.dash]),
+        view!.scale,
+        view!.cx,
+        view!.cy,
+        view!.width,
+        view!.height,
+        colors,
+      ];
+      if (shown && shown.length === from.length && from.every((value, i) => Object.is(value, shown![i]))) return;
+      shown = from;
       const ghosts: Ghost[] = [];
       if (t !== null) {
         for (const other of compared) {
@@ -200,6 +240,7 @@ export function FieldView(props: FieldViewProps) {
       element.dataset.view = `${view!.scale.toFixed(4)},${view!.cx.toFixed(3)},${view!.cy.toFixed(3)}`;
       element.dataset.ghosts = String(ghosts.length);
       element.dataset.drawn = String(layers.drawings && picture.drawings ? Object.values(picture.drawings).reduce((n, shapes) => n + shapes.length, 0) : 0);
+      element.dataset.draws = String(++draws);
     };
 
     const observer = new ResizeObserver(sizeCanvas);
@@ -348,6 +389,7 @@ export function FieldView(props: FieldViewProps) {
         <button type="button" className="ghost small" onClick={savePicture} title="Save the field as it is now, as a PNG picture">
           Save picture
         </button>
+        {props.tools}
       </div>
       <div className="cursor" ref={cursor} aria-hidden="true" />
       {note && (
@@ -395,8 +437,9 @@ export interface KeyedRun {
 }
 
 /** What the marks on the field mean, with switches for the ones that can be hidden, and the
- * runs drawn over this one. It sits in the field's corner, beside the field itself when the
- * view is wider than tall. */
+ * runs drawn over this one. A button in the field's corner opens it over the field, and it
+ * stays open until closed (the choice is kept), so it's never in the way unasked. The runs
+ * compared with are named beside the button all the while: their dashes need telling apart. */
 export function FieldKey(props: {
   layers: Layers;
   onLayers: (layers: Layers) => void;
@@ -407,7 +450,7 @@ export function FieldKey(props: {
   onUncompare: (key: string) => void;
 }) {
   const { layers, hidden } = props;
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = usePanel("key", false, false);
   const row = (swatch: string, text: string, layer?: keyof Layers, title?: string) =>
     layer ? (
       <label className="keyrow" title={title}>
@@ -424,7 +467,7 @@ export function FieldKey(props: {
     );
   return (
     <div className="fieldkey" role="group" aria-label="Key">
-      <button type="button" className="keyhead" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button type="button" className="keyhead" aria-expanded={open} onClick={() => setOpen(!open)} title="What the marks on the field mean, and which to show" data-testid="key-toggle">
         Key <span aria-hidden="true">{open ? "▾" : "▸"}</span>
       </button>
       {open && (
@@ -448,20 +491,20 @@ export function FieldKey(props: {
                 <span className="keyname">{name}</span>
               </label>
             ))}
-          {props.compared.length > 0 && <div className="keysub">Compared with</div>}
-          {props.compared.map((run) => (
-            <div className="keyrow" key={run.key} data-testid="compared-key">
-              <button type="button" className="unkey" onClick={() => props.onUncompare(run.key)} title={`Stop drawing ${run.name}`} aria-label={`Stop comparing with ${run.name}`}>
-                ×
-              </button>
-              <DashSwatch dash={run.dash} />
-              <span className="keyname" title={run.name}>
-                {run.name}
-              </span>
-            </div>
-          ))}
         </>
       )}
+      {props.compared.length > 0 && <div className="keysub">Compared with</div>}
+      {props.compared.map((run) => (
+        <div className="keyrow" key={run.key} data-testid="compared-key">
+          <button type="button" className="unkey" onClick={() => props.onUncompare(run.key)} title={`Stop drawing ${run.name}`} aria-label={`Stop comparing with ${run.name}`}>
+            ×
+          </button>
+          <DashSwatch dash={run.dash} />
+          <span className="keyname" title={run.name}>
+            {run.name}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

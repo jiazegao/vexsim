@@ -18,11 +18,14 @@ async function onDiagram(page: Page, x: number, y: number): Promise<[number, num
   return [box.x + box.width / 2 + (x - cx) * scale, box.y + box.height / 2 - (y - cy) * scale];
 }
 
-/** Open a config's editor from its menu. */
+/** Open a config's editor from its menu, and wait for its file: a key pressed on a diagram
+ * that has nothing drawn yet does nothing. */
 async function edit(page: Page, path: string): Promise<void> {
   await page.getByTestId(`item-${path}`).click({ button: "right" });
   await page.getByTestId(`edit-${path}`).click();
-  await expect(page.locator('[data-testid="config-editor"]:not([hidden])')).toHaveAttribute("data-path", path);
+  const editor = page.locator('[data-testid="config-editor"]:not([hidden])');
+  await expect(editor).toHaveAttribute("data-path", path);
+  await expect(editor.getByTestId("config-state")).not.toContainText("checking");
 }
 
 let problems: string[] = []; // the page's errors, which fail the test

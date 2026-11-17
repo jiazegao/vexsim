@@ -22,6 +22,8 @@ export function RunBar(props: {
   onSave: (name: string) => Promise<string | null>; // an error, or null when saved
   onDelete: (name: string) => Promise<string | null>;
   onNewRobot: () => void; // "New robot…" picked from the robots
+  folded?: boolean; // a short window with a run on show: one line saying what's set up
+  onFold?: (folded: boolean) => void; // given while the bar may fold: Edit and Fold
 }) {
   const { workspace, form, onChange, configurations } = props;
   const items = workspace?.items ?? [];
@@ -55,6 +57,41 @@ export function RunBar(props: {
     setMessage(error);
     return error;
   };
+
+  if (props.folded) {
+    const named = (path: string) => items.find((item) => item.path === path)?.name ?? path.split("/").at(-1) ?? path;
+    const route = form.route ? named(form.route) : "";
+    const what = [
+      form.program ? named(form.program) : "driven by hand",
+      form.routine || route,
+      form.mode,
+      `from ${form.x || 0}, ${form.y || 0} at ${form.heading || 0}°`,
+    ].filter(Boolean);
+    return (
+      <form
+        className="runbar folded"
+        onSubmit={(event) => {
+          event.preventDefault();
+          props.onRun();
+        }}
+        data-testid="runbar-folded"
+      >
+        <div className="row">
+          <span className="run-summary" title="The run as it's set up: Edit to change it">
+            <b>{chosen && !changed ? chosen.name : form.robot ? named(form.robot) : "No robot picked"}</b>
+            <span className="muted"> {chosen && !changed ? "" : "· "}{what.join(" · ")}</span>
+          </span>
+          <span className="spacer" />
+          <button type="button" className="ghost small" onClick={() => props.onFold?.(false)} title="Change the robot, the program, the start and the rest" data-testid="runbar-edit">
+            Edit
+          </button>
+          <button type="submit" className="primary" disabled={!form.robot || props.starting} data-testid="run">
+            {props.starting ? "Starting…" : "Run"}
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <form
@@ -348,6 +385,11 @@ export function RunBar(props: {
                 Delete
               </button>
             </>
+          )}
+          {props.onFold && (
+            <button type="button" className="ghost small" onClick={() => props.onFold?.(true)} title="Fold these settings to one line, for more room for the field" data-testid="runbar-fold">
+              Fold
+            </button>
           )}
         </div>
       </div>

@@ -36,6 +36,7 @@ test("draws what the robot code draws, live and recorded, a layer at a time", as
   await expect(page.getByTestId("shown-run")).toHaveText("Tour (Python)", { timeout: 60_000 });
   // the tour numbers its five stops: a dot and a number each
   await expect.poll(() => drawn(page)).toBe(10);
+  await page.getByTestId("key-toggle").click(); // the key is a pop-up, closed until asked for
   const layer = page.getByTestId("drawn-layer");
   await expect(layer).toHaveText("stops");
   await layer.getByRole("checkbox").uncheck();

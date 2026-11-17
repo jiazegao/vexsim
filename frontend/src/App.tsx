@@ -19,6 +19,7 @@ import type { ControllerInput } from "./controller";
 import { NEUTRAL } from "./controller";
 import type { Layers } from "./draw";
 import { hostTheme, onHostTheme } from "./host";
+import { NARROW, SHORT, useMedia, usePanel } from "./layout";
 import type { LogTape } from "./mcllog";
 import type { CalibrateTab } from "./pages/CalibratePage";
 import { isRobotLog, LogPlayback, logSummary } from "./mcllog";
@@ -132,6 +133,13 @@ export function App() {
   const [overrideRequests, setOverrideRequests] = useState<Record<string, ConfigRequest>>({});
   const [unsaved, setUnsaved] = useState<Record<string, boolean>>({});
   const [closing, setClosing] = useState<string | null>(null); // asking before closing it
+  // the shell fits its window (layout.ts): what's folded away in a short or a narrow one
+  const short = useMedia(SHORT);
+  const narrow = useMedia(NARROW);
+  const [sidebarOpen, setSidebarOpen] = usePanel("sidebar", narrow);
+  const [readoutOpen, setReadoutOpen] = usePanel("readout", narrow);
+  const [bottomOpen, setBottomOpen] = usePanel("bottom", short);
+  const [runbarOpen, setRunbarOpen] = useState<boolean | null>(null); // by hand; null: as the window asks
   const playhead = useMemo(() => new Playhead(), []);
   usePlayheadClock(playhead);
   useStore(store);
@@ -314,6 +322,9 @@ export function App() {
   else if (shown && formNames(shown.robot, shown.field)) source = { kind: "recording", playback: shown.playback, playhead };
   else if (store && !closedRun && spec && formNames(spec.robot, spec.field ?? "")) source = { kind: "live", store };
   const recording = source.kind === "recording" ? shown : null;
+  // in a short window the run bar is one line once a run is on show (Edit unfolds it)
+  const onShow = source.kind !== "preview" || realLog !== null;
+  const runbarFolded = !(runbarOpen ?? !(short && onShow));
   const recordedLayers = useMemo(() => recording?.playback.drawnLayers() ?? [], [recording]);
   const runLayers = source.kind === "live" ? Object.keys(source.store.drawings) : recordedLayers;
   const drawnLayers = realLog ? [...new Set([...realLog.layers(), ...runLayers])] : runLayers;
@@ -383,9 +394,11 @@ export function App() {
   const run = useCallback(async () => {
     const result = formToSpec(form);
     if ("error" in result) {
+      setRunbarOpen(true); // what's wrong is in the bar
       setProblem({ error: result.error, issues: [] });
       return;
     }
+    setRunbarOpen(null); // set up and run: the bar folds again where there's little room
     const chosen = configurations.find((c) => c.name === form.config);
     const name = chosen && sameRun(form, chosen) ? chosen.name : null; // as saved: its name
     await startRun(result.spec, name);
@@ -755,6 +768,7 @@ export function App() {
   /** A workspace item clicked in the sidebar: for the page on show where it's of use there,
    * else for a run on the Simulate page. */
   const pick = (item: WorkspaceItem) => {
+    if (narrow) setSidebarOpen(false); // the list was over the page: show what was picked
     if (item.kind === "invalid") {
       openConfig(item.path); // to fix it
       return;
@@ -854,6 +868,7 @@ export function App() {
       const typing = target?.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(tag);
       const pressingButton = tag === "BUTTON" && (event.key === " " || event.key === "Enter");
       if (event.key === "Escape" && help) setHelp(false);
+      else if (event.key === "Escape" && narrow && sidebarOpen) setSidebarOpen(false); // the list, over the page
       if (event.ctrlKey || event.metaKey || event.altKey || typing || pressingButton) return;
       if (page !== "simulate" && event.key !== "?") return; // an editor's diagram has its own keys
       const index = SPEEDS.indexOf(speed);
@@ -923,19 +938,54 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [changeSpeed, driving, help, page, playhead, scrubbing, speed, state, store]);
+  }, [changeSpeed, driving, help, narrow, page, playhead, scrubbing, setSidebarOpen, sidebarOpen, speed, state, store]);
 
   return (
     <div className="app">
       <header className="topbar">
+        <button
+          type="button"
+          className={`ghost small sidebar-toggle${sidebarOpen ? " on" : ""}`}
+          aria-expanded={sidebarOpen}
+          aria-controls="sidebar"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          title={sidebarOpen ? "Fold the workspace list away" : "The workspace list: robots, fields, programs, logs, and the runs"}
+          aria-label="Workspace list"
+          data-testid="sidebar-toggle"
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
         <span className="wordmark">vexsim</span>
         {info && (
           <span className="where" title={info.workspace}>
             {info.workspace_name}
           </span>
         )}
-        <span className="spacer" />
-        {info && <span className="muted small">v{info.version}</span>}
+        <div className="pagetabs" role="tablist" aria-label="Pages">
+          {PAGES.map(([id, label, hint]) => (
+            <button key={id} role="tab" aria-selected={page === id} className={`pagetab${page === id ? " on" : ""}`} onClick={() => setPage(id)} title={hint} data-testid={`page-${id}`}>
+              {label}
+            </button>
+          ))}
+          {openConfigs.length > 0 && <span className="pagetabs-gap" aria-hidden="true" />}
+          {openConfigs.map((path) => (
+            <span key={path} className={`pagetab config${page === path ? " on" : ""}`}>
+              <button role="tab" aria-selected={page === path} onClick={() => setPage(path)} title={path} data-testid={`page-${path}`}>
+                {fileName(path)}
+                {unsaved[path] && (
+                  <span className="unsaved" title="Unsaved changes" aria-label="unsaved changes">
+                    {" "}
+                    ●
+                  </span>
+                )}
+              </button>
+              <button type="button" className="close" onClick={() => askToClose(path)} aria-label={`Close ${path}`} title="Close">
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        {info && <span className="muted small version">v{info.version}</span>}
         <button className="ghost small" onClick={() => setHelp(true)} title="Every key, for running and driving (?)" data-testid="keys">
           Keys
         </button>
@@ -948,8 +998,10 @@ export function App() {
           <span aria-hidden="true">⚠</span> Can't reach vexsim: {loadError}. Is <code>vexsim ui</code> still running? Open the link it printed.
         </div>
       )}
-      <div className="workarea">
+      <div className={`workarea${sidebarOpen ? "" : " no-sidebar"}`}>
+        {sidebarOpen && narrow && <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
         <Sidebar
+          hidden={!sidebarOpen}
           workspace={workspace}
           form={form}
           page={page}
@@ -984,30 +1036,6 @@ export function App() {
           }
         />
         <main className="main">
-          <div className="pagetabs" role="tablist" aria-label="Pages">
-            {PAGES.map(([id, label, hint]) => (
-              <button key={id} role="tab" aria-selected={page === id} className={`pagetab${page === id ? " on" : ""}`} onClick={() => setPage(id)} title={hint} data-testid={`page-${id}`}>
-                {label}
-              </button>
-            ))}
-            {openConfigs.length > 0 && <span className="pagetabs-gap" aria-hidden="true" />}
-            {openConfigs.map((path) => (
-              <span key={path} className={`pagetab config${page === path ? " on" : ""}`}>
-                <button role="tab" aria-selected={page === path} onClick={() => setPage(path)} title={path} data-testid={`page-${path}`}>
-                  {fileName(path)}
-                  {unsaved[path] && (
-                    <span className="unsaved" title="Unsaved changes" aria-label="unsaved changes">
-                      {" "}
-                      ●
-                    </span>
-                  )}
-                </button>
-                <button type="button" className="close" onClick={() => askToClose(path)} aria-label={`Close ${path}`} title="Close">
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
           <div className="simulate" hidden={page !== "simulate"}>
             <RunBar
               workspace={workspace}
@@ -1023,6 +1051,8 @@ export function App() {
               onSave={saveConfiguration}
               onDelete={deleteConfiguration}
               onNewRobot={() => setNewRobot(true)}
+              folded={runbarFolded}
+              onFold={short && onShow ? (folded) => setRunbarOpen(!folded) : undefined}
             />
             <Controls
               store={store}
@@ -1094,7 +1124,7 @@ export function App() {
                 </div>
               </div>
             )}
-            <div className={`stage${realLog ? " paired" : ""}`}>
+            <div className={`stage${realLog ? " paired" : ""}${readoutOpen ? "" : " no-readout"}`}>
               <div className={`fieldcol${realLog ? " paired" : ""}`}>
                 <div className={realLog ? "fieldpair" : "fieldsingle"}>
                   {realLog && (
@@ -1137,6 +1167,18 @@ export function App() {
                       follow={follow}
                       onFollow={setFollow}
                       stamp={video && recording ? recording.name : null}
+                      tools={
+                        <button
+                          type="button"
+                          className={`ghost small${readoutOpen ? " on" : ""}`}
+                          aria-pressed={readoutOpen}
+                          onClick={() => setReadoutOpen(!readoutOpen)}
+                          title="The readings beside the field: the poses, the motors, the sensors, the controller"
+                          data-testid="readout-toggle"
+                        >
+                          Readings
+                        </button>
+                      }
                     />
                   </div>
                 </div>
@@ -1176,7 +1218,9 @@ export function App() {
                   />
                 )}
               </div>
-              <Readout source={source} driving={driving} scripted={scripted} gamepad={gamepad} onScreen={onScreen} onInput={setOnScreen} />
+              <div className="readout-slot" hidden={!readoutOpen}>
+                <Readout source={source} driving={driving} scripted={scripted} gamepad={gamepad} onScreen={onScreen} onInput={setOnScreen} />
+              </div>
             </div>
             <ConsolePanel
               store={store}
@@ -1186,6 +1230,8 @@ export function App() {
               root={root}
               editor={editor}
               onEditor={setEditor}
+              open={bottomOpen}
+              onOpen={setBottomOpen}
             />
           </div>
           <Suspense fallback={<p className="muted pad">Opening the editor…</p>}>

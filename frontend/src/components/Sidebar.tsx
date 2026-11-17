@@ -111,6 +111,7 @@ export function Sidebar(props: {
   onNewRoute: () => void;
   onRefresh: () => void;
   loading: boolean;
+  hidden?: boolean; // folded away (the page keeps what it has loaded)
   shownLog: string | null; // the telemetry log being played back
   realLog: string | null; // the real robot's log open beside the simulator (MCL or vexsim's)
   runs: ReactNode; // the Runs tab
@@ -146,7 +147,7 @@ export function Sidebar(props: {
     if (next === "runs") props.onRunsTab();
   };
   return (
-    <nav className="sidebar" aria-label="Workspace and runs" data-testid="workspace">
+    <nav className="sidebar" id="sidebar" aria-label="Workspace and runs" data-testid="workspace" hidden={props.hidden}>
       <div className="sidebar-head" role="tablist">
         <button role="tab" aria-selected={tab === "workspace"} className={tab === "workspace" ? "on" : ""} onClick={() => choose("workspace")} data-testid="tab-workspace">
           Workspace
