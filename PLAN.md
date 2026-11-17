@@ -332,6 +332,14 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 14.5 | **[done]** The autonomous check: the real routine against the simulated one | 1239E's Left 40 on a simulated "real" robot passes with the calibrated config and fails with the default one, at pass marks the team sets |
 | 14.6 | **[done]** The calibration guide, for students | `docs/calibration_guide.md` takes a student from an uncalibrated robot to a checked autonomous, every command written out, its pictures made from 1239E's robot and field |
 | 14.7 | **[done]** The Calibrate page | A whole session runs in the app, and a robot log plays on the field beside its simulated run |
+| 15.1 | The simulator's quick wins: no drawings where nobody watches, no collision checks while nothing is in reach, smooth pacing at speeds the computer can't reach | A headless 1239E Left 40 runs at least 15% faster, its results the same to the last digit; asked for 8×, the app still shows 50 frames a second or more |
+| 15.2 | The field gets the screen: one header row, a run bar that folds to a line, panels that fold away, the key as a pop-up, layouts for short and narrow windows; the field drawn only when it changes | At 1366 × 768 the field is at least 500 px square during a run and 450 after it (330 and 250 before); at 1024 × 700 nothing overlaps or is cut off; an idle page draws nothing |
+| 15.3 | Nothing stale: Restart runs the code as it is now, the workspace list follows the disk, run-on-save, and the address keeps your place | After an edit, Restart runs the new code; a new file is listed without *Refresh*; with run-on-save, a save reruns within about 5 s; reload, Back and Forward return to the same page, session and run |
+| 15.4 | A way in: a first-run panel in an empty folder, a starter program, the guides in the app, the Calibrate session's steps with their state | From an empty folder a student makes a robot, drives it and runs a first program without leaving the app; each Calibrate step says done, next or to do, and links to its section of the guide |
+| 15.5 | Accessibility: readable grey text, a keyboard path, the right roles, an audit in the browser tests | No serious or critical axe finding on any page, light or dark; *Run* is two key presses from the top with the skip link, and at most 12 Tab presses without it (83 before) |
+| 15.6 | What the server sends, checked; drawings packed; a reload mid-run keeps the code's drawings | Every endpoint's response is checked against its protocol model in the tests; a run whose code draws MCL's particles records at least 40% fewer bytes a second; a page reloaded mid-run shows the drawings |
+| 15.7 | The big files split by feature: `App.tsx`, `server.py`, `protocol.py`, `cli.py` | None of the four is over about 600 lines; every test passes unchanged; the generated `protocol.ts` is the same, byte for byte |
+| 16 | *(planned, not started)* The physics step, compiled | Decided with numbers after 15.1: see [section 18](#18-the-physics-step-compiled-phase-16-planned) |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |
@@ -619,3 +627,87 @@ A team calibrates vexsim to its own robot without help. A program on the robot r
     Not done: a real robot's session in the app.
 - **Testing without the robot:** "real" robots in the simulator, each a config with hidden changes: wheels 3.20 in, an IMU 0.25% off, omni friction 0.75, voltage mode capped at rated speed, the real distance sensors' noise, a motor reversed in the config, two distance sensors swapped. Each runs the generated program in vexsim, by scripted controller presses, with `--sd`; the session tools have to recover each value and catch each mistake. The same for `full_omni_6m`, with its two tracking wheels. The first session on the real robot is the real test; its logs tune the warnings and thresholds.
 - **Risks:** an open-loop test can hit an element, so the plan covers the parameter spread with a margin, leaving the plan's envelope stops the robot, and any button does. The shim's headers can differ from PROS's, so the program uses only PROS 4 C API calls, each checked against PROS 4's own headers, and a CI job builds it with the real PROS kernel and ARM toolchain if the network allows. PROS may not make folders on the card, so logs go to its root, numbered by a counter file, as 1239E's MCL logs were. A fit can trade one parameter for another (a lighter robot, or more grip), so each test measures only a few, in an order where each fit builds on measured values, and the report says which values the logs pin down.
+
+## 17. Faster, roomier, harder to trip over (phase 15)
+A review of the whole project (2026-11-17), by measuring it: the simulator's speed and where its time goes, the server's endpoints and its live stream, the page in Chromium (load, CPU, memory), every page at a laptop's size, an accessibility audit, and the code's shape. The server, the page's weight and the build loop are fine. The gains are in the simulator's own speed, the Simulate page's layout on a laptop, and a handful of traps in the everyday flow.
+
+**What was measured** (this repository, a 4-core Linux container, headless Chromium):
+
+| What | Result |
+|---|---|
+| Simulator, a robot sitting still, no field | 12 to 14× real time (73 to 93 µs for each 1 ms step) |
+| Simulator, 1239E Left 40 (C++, LemLib, MCL) | 4× real time: 15 s of autonomous in 3.7 s. 74% of it is vexsim's own Python, 26% waiting on the robot code (182 exchanges a simulated second, 360 µs each) |
+| Parsing the robot code's drawings, headless | 10% of that run (2.76 s of Python CPU with, 2.48 s without) |
+| Collision checks with nothing within 29 in | 19% of a step (123 µs against 104 µs with them off) |
+| The app asked for 8× | delivers 4×, at 17 frames a second (each frame simulates up to 0.25 s) |
+| Page load | usable in 0.9 s; 151 KB over the wire |
+| Page, nothing running | 4.5% of a core; 9.5% with a finished run on show (the field redrawn 60 times a second) |
+| Page, a live 1239E run | 18% of a core, 60 frames a second; heap 5 to 20 MB, flat over a minute |
+| Server during a live run | 4 to 6% of a core; every endpoint under 230 ms (the workspace scan 190 ms) |
+| The live stream | 200 KB/s, 74% of it the code's drawings; a recording is 107 KB per simulated second, 92% of its drawings the 128 MCL particles, written one by one |
+| Rebuild after editing one file of 1239E's project | 2.4 to 2.9 s (first build 11.6 s, nothing changed 0.05 s) |
+| Field at 1366 × 768 | about 330 px square (10% of the screen): 254 px of controls above it; 250 px after a run. At 1024 px wide the run bar wraps to four rows and the key covers half the field |
+| Grey text | 3.5:1 against its background on 42 to 48 elements a page (4.5:1 is the mark) |
+| Keyboard | 83 Tab presses from the top of the page to *Run* |
+| Code | `App.tsx` 1,294 lines with 46 state variables, re-rendered 10 times a second in a run; `server.py` 1,755, `protocol.py` 1,950, `cli.py` 1,686; 12 of 59 endpoints declare what they return |
+| CI | 6.5 to 16 min a Python job, 14.5 min the sessions, 10 min the browser tests |
+
+**Decisions** (2026-11-17):
+- The compiled physics step is a phase of its own, later (phase 16): it means keeping a second copy of the physics in step with the Python one. Measured again, it's worth about 1.7× on a C++ project and 3× on a Python program, not the 3 to 4× first estimated.
+- The built page stays committed: the team installs from a clone, with no Node.js, and the app works offline. The repository grows about 330 KB for each change to the page.
+- Nothing in this phase changes the simulation's numbers: the speed-ups only skip work that can't matter. Every existing test passes unchanged, but for the browser tests that open the key, which now starts closed.
+- Running the Python tests in parallel wasn't tried (the session's permissions refused it), so it isn't in this phase.
+
+**15.1 The simulator's quick wins**
+- *No drawings where nobody watches.* `Simulation(drawings=False)` drops what the robot code draws: a Python program's `bot.draw` does nothing, and a C++ program is told so (`VEXSIM_DRAWINGS=0` to the robot host), so `vexsim::draw_*` returns before it formats a line. Off where nothing shows them: sweep trials, benchmark trials, the calibration's replays and the autonomous check's runs, practice sessions, route runs, and `vexsim run --headless` without `--screenshot`. On for the app's live runs (they're recorded) and the viewer.
+- *No collision checks while nothing is in reach.* The arena already skips each element that's too far to touch, one by one, every millisecond. Instead it remembers how much room the robot had at its last full check, and skips the fixed elements altogether until the robot has moved that far. The skip is exact: within that distance the full check would have found nothing.
+- *Smooth pacing.* The app's worker simulates what real time owes, but only for most of a frame's time (as "as fast as possible" already does), so a speed the computer can't reach gives the fastest it can at 60 frames a second, not a quarter second of simulation a frame. The run bar says the speed reached beside the one asked for.
+
+**15.2 The field gets the screen**
+- *One header row:* the name, the pages' tabs, then *Keys* and the theme, in one row.
+- *The run bar folds to a line* in a short window (under 800 px high) once a run is on show: the saved run's name (or the robot and program), the routine, the mode, the start, with *Edit* to unfold it and *Run* still there. It's unfolded when nothing is running. A switch pins it either way.
+- *The bottom panel* (console, build, problems, plots) folds to its row of tabs in a short window; a tab opens it, and its height drags.
+- *The key is a pop-up* that starts closed (a *Key* button on the field), so it never covers the field or the hint in an empty folder. It stays open once opened, until closed.
+- *The sidebar and the readout fold away* (a button each, remembered). Under 1100 px wide they start folded and open over the page.
+- *The timeline* is one row.
+- *Drawn only when it changes:* the field view keeps its animation loop but skips drawing when nothing it draws from has changed (the frame, the time shown, the view, the layers, the theme, the size), and while its page is hidden. `data-draws` on the canvas counts the draws, for the tests.
+- *The README's pictures of the app* are made by a script (`frontend/scripts/pictures.mjs`), as the guide's are, so a layout change doesn't leave them stale.
+
+**15.3 Nothing stale**
+- *Restart runs the code as it is now:* for a PROS project the build runs first (0.05 s when nothing changed; errors are shown and the old run stays), and a Python program is loaded again.
+- *The list follows the disk:* the page asks for the workspace again when its window gets the focus back, and the server answers from a cheap stamp of the folder (names, sizes, times) when nothing changed. *Refresh* stays.
+- *Run on save:* a switch in the run bar. While it's on, the server watches the run's own files (the program or the project's `src/` and `include/`, the robot, the field, the route) once a second, and a change starts the run again. Off, a changed file shows as "code changed" beside *Run*.
+- *The address keeps your place:* the page, the Calibrate tab and session, the open config and the run on show are in the address (`#/calibrate/session?session=calibration/2026-11-07`), so reload returns there, and Back and Forward move between pages.
+
+**15.4 A way in**
+- *First run:* in a folder with no robot, the Simulate page shows where to start instead of an empty field: make a robot (*New robot…*), drive it (no program needed), add a starter program, use your PROS project, read the guide.
+- *A starter program:* `programs/first_program.py`, written into the folder: a short autonomous and a tank drive, commented.
+- *The guides in the app:* a *Guide* page shows the README and the documents in `docs/` (their text, tables, code and pictures), each heading with its own address, from the files beside the package; where they aren't installed, the links go to the repository's pages.
+- *Calibrate's steps with their state:* the Session tab opens with its five steps in a row, each done, next or to do (from the program's folder, the session's runs and its report), a click going to the step; each step links to its section of the guide.
+
+**15.5 Accessibility**
+- *Grey text* at 4.5:1 or better against every surface it sits on, in both themes; a test computes it from the stylesheet's tokens.
+- *A keyboard path:* a skip link to *Run*; the workspace list is one tab stop, with the arrow keys moving within it, Enter picking and the menu key opening an item's menu; the page tabs likewise.
+- *Roles:* *Refresh* out of the tab list; a heading on the Simulate page.
+- *An audit in the browser tests* (axe-core): every page, light and dark, with no serious or critical finding.
+
+**15.6 What the server sends, checked**
+- *One table* (`protocol.RESPONSES`) says what each endpoint returns: a model, or nothing checked for files and pages. The tests' client checks every response against it, and a test fails for an endpoint the table doesn't have. The server doesn't check at run time: a recording is megabytes.
+- *Drawings packed.* Measured, every layer changes on every MCL update, so sending only what changed would save nothing; the bytes are the particles. Runs of points of one color and size travel as one shape (`["points", color, size, [x, y, x, y, ...]]`) in the live stream and in recordings; `sim.drawings` and the drawing API are as they were, and old recordings still play.
+- *A reload mid-run* gets what the code has drawn and the mark where a replay began: the session's catch-up left them out.
+
+**15.7 The big files split by feature,** one at a time, nothing else changed:
+- `App.tsx`: the shell, with the Simulate page, the log bar, and the state each feature keeps (workspace, runs, the real robot's log, the config editors, the address) in files of their own.
+- `server.py`: the server, the guard and the hub, with a router a feature (workspace and files, configs, routes, runs, sessions, jobs and results, calibration).
+- `protocol.py`: a package, a module a feature, the generated TypeScript unchanged.
+- `cli.py`: a package, a module a command group; `vexsim.cli:main` and `build_parser` where they were.
+
+## 18. The physics step, compiled (phase 16, planned)
+Not started. The simulator steps every millisecond in Python and NumPy, 73 to 123 µs a step; on 1239E's C++ code that's about half of a run's time, the rest being the sensors, the events and the wait on the robot code. Compiling the step (the motors, the wheels' contact, the solve, the walls) with the C++ toolchain vexsim already finds would make a C++ project's runs about 1.7× faster, and a Python program's about 3×.
+
+Its cost is a second copy of the physics: every model change made twice, and the two checked against each other for as long as both exist. So it waits for phase 15.1's numbers, and would be:
+- optional: used when the toolchain is there and its own check passes, else the Python step;
+- checked: the tests run both steps on the same scenarios and compare the paths within a tolerance;
+- the only change to the simulation's numbers in the project, so its tolerance is decided first.
+
+Other ways to the same end, to weigh then: stepping the mechanisms and the thermal model less often, and resting a robot that isn't moving or commanded.
