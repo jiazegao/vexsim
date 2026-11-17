@@ -15,6 +15,8 @@ dicts with a ``type``:
 - ``error``: ``message``, config ``issues``, ``traceback``
 - ``recorded``: a run ended and was written to the workspace's .vexsim/runs (``run``, its
   ``RunRecord``); every (re)start begins a new one (see ``vexsim.app.runs``)
+- ``sources``: the Python ``files`` in the workspace that the program imported, for the
+  session to watch with the run's other files (``vexsim.app.runfiles``)
 
 Commands in are dicts with a ``cmd``: pause, resume, step (``ms``), speed (``value``; 0
 or less = as fast as possible), restart, input (``analog``, ``digital``), stop.
@@ -158,10 +160,14 @@ class Worker:
         )
         from vexsim.runtime.simulation import ScriptedInput
 
+        loaded = set(sys.modules)
         try:
             spec = RunSpec.model_validate(self.spec_data)
             prepared = check(spec, self.base)
-            make_program, self.mode = program_factory(prepared, self.executable)
+            try:
+                make_program, self.mode = program_factory(prepared, self.executable)
+            finally:
+                self.send_sources(loaded)  # a program that failed to import is watched too
             if prepared.spec.input:
                 self.input = ScriptedInput.from_csv(prepared.spec.input)
             else:
@@ -180,6 +186,16 @@ class Worker:
             f"warning: {w.message}" for w in prepared.warnings if w.location == "start"
         ]
         return True
+
+    def send_sources(self, before: set[str]) -> None:
+        """Tell the session which of the workspace's Python files the program imported:
+        a change to one of them is a change to the run."""
+        from vexsim.app.runfiles import imported_from
+
+        if self.base:
+            files = imported_from(self.base, before)
+            if files:
+                self.send({"type": "sources", "files": files})
 
     def create(self) -> bool:
         """A fresh simulation from the start; False if it failed (reported)."""

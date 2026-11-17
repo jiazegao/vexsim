@@ -25,13 +25,15 @@ export function Controls(props: {
   speed: number;
   onSpeed: (speed: number) => void;
   onStop: () => void;
+  onRestart: () => void;
   command: string | null;
 }) {
   const { store } = props;
   const state = store?.state ?? null;
   const live = state !== null && isLive(state);
   const paused = state === "paused";
-  const canRestart = state !== null && state !== "building" && state !== "stopped" && store?.scene !== null;
+  // a run that stopped, or never started (its build failed), starts again too: with its code as it is now
+  const canRestart = state !== null && state !== "building" && state !== "starting";
   const frame = store?.frame ?? null;
 
   return (
@@ -48,7 +50,7 @@ export function Controls(props: {
         <button onClick={() => store?.send({ cmd: "step", ms: 10 })} disabled={!paused} title="Advance 10 ms (.)">
           Step
         </button>
-        <button onClick={() => store?.send({ cmd: "restart" })} disabled={!canRestart} title="From the start again, same seed (R)">
+        <button onClick={props.onRestart} disabled={!canRestart} data-testid="restart" title="From the start again, same seed, with the code as it is now: built again if it changed (R)">
           Restart
         </button>
         <button onClick={props.onStop} disabled={!store || state === "stopped"} data-testid="stop" title="Stop the run and its program">

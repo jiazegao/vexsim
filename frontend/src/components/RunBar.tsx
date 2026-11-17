@@ -24,6 +24,8 @@ export function RunBar(props: {
   onNewRobot: () => void; // "New robot…" picked from the robots
   folded?: boolean; // a short window with a run on show: one line saying what's set up
   onFold?: (folded: boolean) => void; // given while the bar may fold: Edit and Fold
+  runOnSave: boolean; // a save of the run's code or configs runs it again
+  onRunOnSave: (on: boolean) => void;
 }) {
   const { workspace, form, onChange, configurations } = props;
   const items = workspace?.items ?? [];
@@ -82,6 +84,7 @@ export function RunBar(props: {
             <span className="muted"> {chosen && !changed ? "" : "· "}{what.join(" · ")}</span>
           </span>
           <span className="spacer" />
+          <OnSave runOnSave={props.runOnSave} onRunOnSave={props.onRunOnSave} />
           <button type="button" className="ghost small" onClick={() => props.onFold?.(false)} title="Change the robot, the program, the start and the rest" data-testid="runbar-edit">
             Edit
           </button>
@@ -304,6 +307,7 @@ export function RunBar(props: {
             </label>
           </div>
         </details>
+        <OnSave runOnSave={props.runOnSave} onRunOnSave={props.onRunOnSave} />
         <span className="spacer" />
         <div className="configs" aria-label="Saved runs">
           {naming !== null ? (
@@ -406,4 +410,15 @@ export function RunBar(props: {
 function folderOf(path: string): string {
   const at = path.lastIndexOf("/");
   return at < 0 ? "." : path.slice(0, at);
+}
+
+/** Run on save: with it on, the run on show runs again whenever a file it's made from is saved
+ * (its program or project, its robot, field or route). */
+function OnSave(props: { runOnSave: boolean; onRunOnSave: (on: boolean) => void }) {
+  return (
+    <label className="onsave" title="Run again whenever a file this run is made from is saved: its program or project, its robot, field or route">
+      <input type="checkbox" checked={props.runOnSave} onChange={(event) => props.onRunOnSave(event.target.checked)} data-testid="run-on-save" />
+      Run on save
+    </label>
+  );
 }

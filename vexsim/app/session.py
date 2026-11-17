@@ -5,6 +5,11 @@ then starts a worker process (``vexsim.app.worker``) and relays everything the w
 says to ``listener(session, message)``. It also keeps what a viewer that connects late
 needs: the latest scene, overlay, frame and status, the build log and the console's last
 lines (``catch_up``).
+
+A session knows the files its run was made from (``watch``, ``vexsim.app.runfiles``) and
+what they were when it started (``stamp``). ``look``, called now and then while someone is
+watching, says when they've changed since (a ``changed`` message), and ``fresh`` says
+whether the worker's run is still the code on disk.
 """
 
 from __future__ import annotations
@@ -15,9 +20,12 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+from vexsim.app.runfiles import RunFiles, Stamp, changed
 from vexsim.app.runspec import RunSpec
 
 CONSOLE_LINES = 2000
+# a worker in one of these states starts its run again by itself ("restart")
+RESTARTABLE = ("running", "paused", "finished")
 
 # listener(session, seq, message): every message, numbered in order (see ``catch_up``)
 Listener = Callable[["Session", int, dict], None]
@@ -51,6 +59,11 @@ class Session:
         self.child = None
         self.run_id: str | None = None  # where its current (or last) run is recorded
         self.seq = 0  # number of the last message published
+        self.watch: RunFiles | None = None  # the files its run was made from
+        self.stamp: Stamp = {}  # what they were when it started
+        self.changed: list[str] = []  # the ones that have changed since, as last told
+        self._looked: Stamp = {}  # what they were at the last look
+        self._told: Stamp = {}  # what they were when viewers were last told
         self._lock = threading.RLock()
         self._stopped = False
 
@@ -85,6 +98,8 @@ class Session:
                 messages.append(self.error)
             if self.frame is not None:
                 messages.append(self.frame)
+            if self.changed:
+                messages.append({"type": "changed", "files": list(self.changed)})
             messages.append(
                 {"type": "status", "state": self.state, "message": self.message, "mode": self.mode}
             )
@@ -104,6 +119,64 @@ class Session:
         with self._lock:
             self.state, self.message = state, message
             self._publish({"type": "status", "state": state, "message": message, "mode": self.mode})
+
+    # --- its files -------------------------------------------------------------------------
+
+    def watching(self, files: RunFiles) -> None:
+        """The files this run is made from, as they are now (before any of them is read)."""
+        with self._lock:
+            self.watch = files
+            self.stamp = files.stamp()
+            self._looked = self._told = self.stamp
+
+    def fresh(self) -> bool:
+        """Whether the run in the worker is still the one on disk, and the worker can start
+        it again by itself: none of its files has changed since it started."""
+        with self._lock:
+            if self._stopped or self.child is None or self.state not in RESTARTABLE:
+                return False
+            watch, stamp = self.watch, self.stamp
+        return watch is not None and watch.stamp() == stamp
+
+    def look(self) -> None:
+        """Tell the viewers when the run's files have changed since it started (``changed``:
+        the files, as the workspace names them), once they've stopped changing: an editor
+        saves in steps, and a file half written isn't one to build."""
+        with self._lock:
+            watch = self.watch
+        if watch is None:
+            return
+        now = watch.stamp()
+        with self._lock:
+            if now != self._looked:  # still being written
+                self._looked = now
+                return
+            if now == self._told:
+                return
+            self._told = now
+            self.changed = [self._name(path) for path in changed(self.stamp, now)]
+            self._publish({"type": "changed", "files": list(self.changed)})
+
+    def _name(self, path: str) -> str:
+        """A file as the workspace names it (relative, with /), or as it is outside it."""
+        if self.base is not None:
+            try:
+                return Path(path).relative_to(self.base).as_posix()
+            except ValueError:
+                pass
+        return path
+
+    def _sources(self, files: list[str]) -> None:
+        """Python files the worker's program imported: they're the run's too."""
+        with self._lock:
+            if self.watch is None:
+                return
+            new = self.watch.add(files)
+            marks = RunFiles(new).stamp()
+            # as they are now: the worker read them a moment ago
+            self.stamp = {**self.stamp, **marks}
+            self._looked = {**self._looked, **marks}
+            self._told = {**self._told, **marks}
 
     # --- building --------------------------------------------------------------------------
 
@@ -177,6 +250,9 @@ class Session:
 
     def _receive(self, message: dict) -> None:
         kind = message.get("type")
+        if kind == "sources":  # for the session, not its viewers
+            self._sources(message.get("files", []))
+            return
         with self._lock:
             if kind == "status":
                 self.state, self.message = message["state"], message.get("message")

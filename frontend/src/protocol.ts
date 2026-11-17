@@ -9,7 +9,7 @@ export type ResultKind = "bench" | "sweeps" | "calibrations" | "checks";
 export type DrawColor = "violet" | "blue" | "orange" | "aqua" | "yellow" | "magenta" | "green" | "red" | "ink" | "muted";
 export type Shape = ["point", number, number, DrawColor, number] | ["line", number, number, number, number, DrawColor] | ["circle", number, number, number, DrawColor] | ["ellipse", number, number, number, number, number, DrawColor] | ["pose", number, number, number, DrawColor] | ["text", number, number, string, DrawColor];
 export type StartJob = BuildJob | DoctorJob | MotorCurvesJob | DriftJob | OdometryJob | BenchJob | CalibrateJob | SweepJob | RouteJob | CalibrationProgramJob | CalibrationPracticeJob | CalibrationUsbJob | CalibrationFitJob | CalibrationCheckJob;
-export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | DrawingsMessage | FollowingMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage;
+export type ServerMessage = SessionMessage | StatusMessage | SceneMessage | FrameMessage | OverlayMessage | DrawingsMessage | FollowingMessage | ConsoleMessage | BuildMessage | ErrorMessage | RecordedMessage | ChangedMessage;
 export type ClientCommand = SimpleCommand | StepCommand | SpeedCommand | InputCommand;
 
 /** A virtual driver that drives the robot along a log's path (`vexsim.runtime.follow`): the program's driver control, through its own sticks and drive curve. */
@@ -64,6 +64,13 @@ export interface WorkspaceInfo {
   root: string;
   name: string;
   items: WorkspaceItem[];
+  stamp?: string;
+}
+
+/** `GET /api/workspace?unless=stamp`: the folder is as it was when that stamp was given, so the answer the page has still stands (nothing was read to say so). */
+export interface WorkspaceUnchanged {
+  unchanged?: true;
+  stamp: string;
 }
 
 export interface SessionInfo {
@@ -696,6 +703,12 @@ export interface RunRecord {
 export interface RecordedMessage {
   type: "recorded";
   run: RunRecord;
+}
+
+/** Files this run was made from (its program or project, its robot, field, route) have changed since it started: `files`, as the workspace names them. What's on the field is the code as it was; Restart runs it as it is now. Sent again when more change. */
+export interface ChangedMessage {
+  type: "changed";
+  files: string[];
 }
 
 /** When what changes seldom changed: [time, the new value]. */

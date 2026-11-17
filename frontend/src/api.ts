@@ -53,6 +53,7 @@ import type {
   Telemetry,
   WorkspaceFile,
   WorkspaceInfo,
+  WorkspaceUnchanged,
 } from "./protocol";
 
 const TOKEN_KEY = "vexsim.token";
@@ -142,7 +143,14 @@ const path = (...parts: string[]) => parts.map(encodeURIComponent).join("/");
 
 export const api = {
   info: () => request<AppInfo>("/api/info"),
-  workspace: () => request<WorkspaceInfo>("/api/workspace"),
+  /** What's in the folder. `unless`: the stamp of the answer the page has; null if the folder
+   * is as it was then (nothing was read to say so). `fresh`: read everything, whatever the
+   * stamps say (Refresh). */
+  async workspace(unless: string | null = null, fresh = false): Promise<WorkspaceInfo | null> {
+    const query = fresh ? "?fresh=true" : unless ? `?unless=${encodeURIComponent(unless)}` : "";
+    const found = await request<WorkspaceInfo | WorkspaceUnchanged>(`/api/workspace${query}`);
+    return "items" in found ? found : null;
+  },
   sessions: () => request<SessionInfo[]>("/api/sessions"),
   stopSession: (id: string) => request<void>(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
   jobs: () => request<JobInfo[]>("/api/jobs"),
@@ -266,6 +274,19 @@ export const api = {
       headers: headers(),
       body: JSON.stringify({ spec, replace: true, name }),
     });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 422) {
+      if (typeof body.error === "string") return { problem: body as RunProblem };
+      return { problem: { error: describe(body.detail), issues: [] } };
+    }
+    if (!response.ok) throw new ApiError(response.status, describe(body.detail ?? response.statusText));
+    return { session: body as SessionInfo };
+  },
+  /** A session's run again, with its code as it is now: the session that runs it (itself, at
+   * once, if none of its files has changed since it started; else a new one in its place, checked
+   * and built), or why it can't start (the run that's there stays). */
+  async restartSession(id: string): Promise<StartResult> {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/restart`, { method: "POST", credentials: "same-origin", headers: headers() });
     const body = await response.json().catch(() => ({}));
     if (response.status === 422) {
       if (typeof body.error === "string") return { problem: body as RunProblem };

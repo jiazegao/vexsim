@@ -72,6 +72,7 @@ test.describe("on a laptop (1366 x 768)", () => {
     await page.getByTestId("runbar-edit").click();
     await page.getByTestId("run").click();
     await expect(page.getByTestId("runbar-folded")).toBeVisible();
+    await expect(page.getByTestId("status")).toHaveText("Running"); // this run, not the one before it
     await expect(page.getByTestId("status")).toHaveText("Finished", { timeout: 60_000 });
     expect((await box(page, "field")).height).toBeGreaterThanOrEqual(450);
 

@@ -56,6 +56,7 @@ export interface FieldViewProps {
   stamp?: string | null; // written in the corner with the time, as when exporting a video
   name?: string; // tells two field views apart: their canvas is "<name>-canvas" ("field-canvas")
   tools?: ReactNode; // more buttons for the field's own row of them
+  notice?: ReactNode; // something to say about what's on the field, over its foot
 }
 
 /** The robot code's drawings without the hidden layers. */
@@ -392,6 +393,7 @@ export function FieldView(props: FieldViewProps) {
         {props.tools}
       </div>
       <div className="cursor" ref={cursor} aria-hidden="true" />
+      {props.notice && <div className="fieldnotice">{props.notice}</div>}
       {note && (
         <div className="empty">
           <span>{note}</span>

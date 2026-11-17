@@ -95,6 +95,17 @@ class WorkspaceInfo(_Message):
     root: str
     name: str
     items: list[WorkspaceItem]
+    # a mark of the folder as this answer found it, to ask again with (``?unless=``); empty
+    # while a file in it is being written
+    stamp: str = ""
+
+
+class WorkspaceUnchanged(_Message):
+    """``GET /api/workspace?unless=stamp``: the folder is as it was when that stamp was
+    given, so the answer the page has still stands (nothing was read to say so)."""
+
+    unchanged: Literal[True] = True
+    stamp: str
 
 
 class SessionInfo(_Message):
@@ -534,6 +545,15 @@ class RecordedMessage(_Message):
 
     type: Literal["recorded"]
     run: RunRecord
+
+
+class ChangedMessage(_Message):
+    """Files this run was made from (its program or project, its robot, field, route) have
+    changed since it started: ``files``, as the workspace names them. What's on the field is
+    the code as it was; Restart runs it as it is now. Sent again when more change."""
+
+    type: Literal["changed"]
+    files: list[str]
 
 
 # --- recorded runs -----------------------------------------------------------------------------
@@ -1640,6 +1660,7 @@ ServerMessage = Annotated[
         BuildMessage,
         ErrorMessage,
         RecordedMessage,
+        ChangedMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -1685,6 +1706,7 @@ MODELS: list[type[BaseModel]] = [
     AppInfo,
     WorkspaceItem,
     WorkspaceInfo,
+    WorkspaceUnchanged,
     SessionInfo,
     JobInfo,
     StartSession,
@@ -1754,6 +1776,7 @@ MODELS: list[type[BaseModel]] = [
     PoseErrorSummary,
     RunRecord,
     RecordedMessage,
+    ChangedMessage,
     TapeEvents,
     Tape,
     Telemetry,

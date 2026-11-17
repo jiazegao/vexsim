@@ -138,6 +138,21 @@ describe("a session store", () => {
     expect(store.problems).toHaveLength(2);
   });
 
+  it("keeps which of the run's files have changed since it started, and counts each time it's told", () => {
+    const store = new SessionStore("s1");
+    store.apply({ type: "session", session: INFO });
+    store.apply(SCENE);
+    expect([store.changed, store.changes]).toEqual([[], 0]);
+    store.apply({ type: "changed", files: ["src/main.cpp"] });
+    expect([store.changed, store.changes]).toEqual([["src/main.cpp"], 1]);
+    store.apply({ type: "changed", files: ["robot.yaml", "src/main.cpp"] }); // another save
+    expect([store.changed, store.changes]).toEqual([["robot.yaml", "src/main.cpp"], 2]);
+    store.apply({ type: "changed", files: ["robot.yaml", "src/main.cpp"] }); // the same files, saved again
+    expect(store.changes).toBe(3);
+    store.apply(SCENE); // started again in its own worker: only when none had changed, so they stay as told
+    expect(store.changed).toEqual(["robot.yaml", "src/main.cpp"]);
+  });
+
   it("keeps at most MAX_LINES lines, the newest", () => {
     const store = new SessionStore("s1");
     const lines = Array.from({ length: MAX_LINES + 10 }, (_, i) => `line ${i}`);

@@ -3,9 +3,11 @@
 ``vexsim ui [folder]`` runs ``serve``: a FastAPI app on 127.0.0.1 that serves the browser
 app from ``static/`` and an API under ``/api``:
 
-- ``GET /api/info``, ``GET /api/workspace``: about the server and what's in the folder
+- ``GET /api/info``, ``GET /api/workspace[?unless=stamp]``: about the server and what's in
+  the folder (nothing is read again while the folder is as it was)
 - ``POST /api/sessions`` (``StartSession``): start a run; 422 with a ``RunProblem`` if it
-  can't. ``GET /api/sessions[/{id}]``, ``DELETE /api/sessions/{id}`` (stop)
+  can't. ``GET /api/sessions[/{id}]``, ``DELETE /api/sessions/{id}`` (stop),
+  ``POST /api/sessions/{id}/restart``: its run again, with its code as it is now
 - ``WS /api/sessions/{id}/ws``: the session's messages (``ServerMessage``) out, commands
   (``ClientCommand``) in
 - ``POST /api/jobs`` (``StartJob``: a build, a benchmark, a sweep, ...),
@@ -67,10 +69,11 @@ from vexsim.app.launch import (
     read_configurations,
     write_configurations,
 )
+from vexsim.app.runfiles import run_files
 from vexsim.app.runspec import RunError, RunSpec, check
 from vexsim.app.session import Session
 from vexsim.app.sweeps import SWEEPS_FILE, SweepError, expand, read_sweeps, write_sweeps
-from vexsim.app.workspace import Workspace
+from vexsim.app.workspace import RACY_S, Workspace
 from vexsim.config.field import FieldConfig
 from vexsim.config.robot import RobotConfig
 from vexsim.ui.protocol import (
@@ -147,6 +150,7 @@ from vexsim.ui.protocol import (
     TextSpan,
     WorkspaceFile,
     WorkspaceInfo,
+    WorkspaceUnchanged,
 )
 
 STATIC = Path(__file__).parent / "static"
@@ -159,6 +163,7 @@ FILE_TYPES = {
     ".json": JSON,
 }
 DEFAULT_PORT = 8642
+WATCH_S = 0.5  # how often a run's files are looked at, while a page shows it
 DEV_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")  # Vite's dev server
 _COMMANDS = TypeAdapter(ClientCommand)
 _JOBS = TypeAdapter(StartJob)
@@ -220,6 +225,10 @@ class Hub:
     def unsubscribe(self, channel: str, subscriber: Subscriber) -> None:
         self.channels.get(channel, set()).discard(subscriber)
 
+    def listening(self, channel: str) -> bool:
+        """Whether anyone is subscribed to the channel."""
+        return bool(self.channels.get(channel))
+
 
 # --- the server's state -----------------------------------------------------------------------
 
@@ -262,6 +271,8 @@ class UIServer:
         self._waiting: dict[str, list[Session]] = {}  # build job id -> sessions
         self._ids = itertools.count(1)
         self._lock = threading.RLock()
+        self._closing = threading.Event()
+        self._watcher: threading.Thread | None = None  # looks at watched runs' files
         self.saving = threading.Lock()  # one config save at a time
         self.jobs.add_listener(self._on_job)
 
@@ -303,8 +314,10 @@ class UIServer:
             listener=self._publish,
             name=request.name,
         )
+        session.watching(run_files(prepared))  # as they are before the program is read
         with self._lock:
             self.sessions[session.id] = session
+        self._watch()
         if prepared.project is None:
             threading.Thread(target=session.start, daemon=True).start()
             return session
@@ -319,6 +332,34 @@ class UIServer:
         if finished:
             self._job_done(job)
         return session
+
+    def restart_session(self, session: Session) -> Session:
+        """The session's run from the start, with its code as it is now; the session that
+        runs it. If none of its files has changed since it started, that's the session
+        itself, at once, in its own worker. Otherwise the run is checked, built and started
+        afresh, as a new session in its place (raises RunError if it can't be: the old one
+        stays as it is)."""
+        if session.state in ("building", "starting") and not session.stopped:
+            return session  # on its way already
+        if session.fresh() and session.command({"cmd": "restart"}):
+            return session
+        return self.start_session(StartSession(spec=session.spec, name=session.name))
+
+    def _watch(self) -> None:
+        """Start looking at the files of the runs on show, now and then (once)."""
+        with self._lock:
+            if self._watcher is None:
+                self._watcher = threading.Thread(
+                    target=self._look, name="vexsim-watch", daemon=True
+                )
+                self._watcher.start()
+
+    def _look(self) -> None:
+        while not self._closing.wait(WATCH_S):
+            for session in list(self.sessions.values()):
+                if self.hub.listening(f"session:{session.id}"):  # a page shows it
+                    with contextlib.suppress(Exception):
+                        session.look()
 
     def submit_build(self, project: Path, debug: bool = False, route: list[str] | None = None):
         """Build a PROS project (or join its build already running); ``route``: a route
@@ -487,6 +528,7 @@ class UIServer:
         session.stop()
 
     def shutdown(self) -> None:
+        self._closing.set()
         for session in list(self.sessions.values()):
             session.stop()
         self.jobs.shutdown()
@@ -608,6 +650,16 @@ def _checked(checked: configs.CheckedConfig) -> ConfigCheck:
         summary=checked.summary,
         places={item: span(place) for item, place in checked.places.items()},
     )
+
+
+def _file_mark(path: Path) -> tuple[str, bool]:
+    """A file's size and time, in brief, and whether it's been left alone long enough for
+    those to stand for what's in it (see ``vexsim.app.workspace.RACY_S``)."""
+    try:
+        st = path.stat()
+    except OSError:
+        return "-", True
+    return f"{st.st_size}-{st.st_mtime_ns}", st.st_mtime_ns <= time.time_ns() - int(RACY_S * 1e9)
 
 
 def _span(place: configs.Span | None) -> TextSpan | None:
@@ -768,10 +820,20 @@ def create_app(
         return server.info()
 
     @app.get("/api/workspace")
-    def workspace_items() -> WorkspaceInfo:
+    def workspace_items(
+        unless: str | None = None, fresh: bool = False
+    ) -> WorkspaceInfo | WorkspaceUnchanged:
+        """What's in the folder. ``unless``: the stamp of the answer the page has; while the
+        folder (and its saved runs' file) is as it was then, nothing is read again and the
+        answer says so. ``fresh``: read everything, whatever the stamps say."""
         ws = server.workspace
-        items = [item.to_dict() for item in ws.scan()]
-        return WorkspaceInfo(root=str(ws.root), name=ws.name, items=items)
+        mark = ws.stamp()
+        launch, settled = _file_mark(ws.root / LAUNCH_FILE)
+        stamp = f"{mark.digest}.{launch}" if mark.settled and settled else ""
+        if stamp and unless == stamp and not fresh:
+            return WorkspaceUnchanged(stamp=stamp)
+        items = [item.to_dict() for item in ws.scan(fresh)]
+        return WorkspaceInfo(root=str(ws.root), name=ws.name, items=items, stamp=stamp)
 
     def _listed(relative: str) -> tuple[Path, str]:
         """A file the workspace lists (its path and kind), to copy or delete: no other file,
@@ -1258,6 +1320,19 @@ def create_app(
     def start_session(request: StartSession):
         try:
             session = server.start_session(request)
+        except RunError as exc:
+            return _problem(exc)
+        return SessionInfo.model_validate(session.info())
+
+    @app.post("/api/sessions/{session_id}/restart", responses={422: {"model": RunProblem}})
+    def restart_session(session_id: str):
+        """The session's run again, with its code as it is now: the session that runs it
+        (itself, if none of its files has changed since it started)."""
+        session = server.sessions.get(session_id)
+        if session is None:
+            return JSONResponse({"detail": f"no session {session_id}"}, status_code=404)
+        try:
+            session = server.restart_session(session)
         except RunError as exc:
             return _problem(exc)
         return SessionInfo.model_validate(session.info())

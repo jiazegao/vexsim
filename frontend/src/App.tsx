@@ -1,4 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Place } from "./address";
+import { formatPlace, HOME, isStep, parsePlace } from "./address";
 import { api } from "./api";
 import { ConsolePanel } from "./components/ConsolePanel";
 import { Controls, SPEEDS } from "./components/Controls";
@@ -62,6 +64,9 @@ const PAGE_IDS: readonly string[] = PAGES.map(([id]) => id);
 
 const THEME_LABEL: Record<Theme, string> = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
 const EDITOR_KEY = "vexsim.editor";
+const ON_SAVE_KEY = "vexsim.runOnSave";
+const STARTABLE: readonly string[] = ["running", "paused", "finished", "error", "stopped"]; // Restart can start it again
+const EDITED: readonly string[] = ["robot", "field", "invalid"]; // what opens in the config editor
 const BUSY: readonly string[] = ["building", "starting", "running", "paused"]; // the run is on the field
 const SEEK_S = 0.5; // the arrow keys move a recorded run this far (Shift: ten times)
 
@@ -75,6 +80,14 @@ function loadEditor(): Editor {
   return "vscode";
 }
 
+function loadRunOnSave(): boolean {
+  try {
+    return localStorage.getItem(ON_SAVE_KEY) === "on";
+  } catch {
+    return false; // storage off: not remembered
+  }
+}
+
 /** The form's start pose, when it's three numbers. */
 function startOf(form: RunForm): Pose | null {
   const pose = [form.x, form.y, form.heading].map((text) => (text.trim() === "" ? NaN : Number(text)));
@@ -82,6 +95,11 @@ function startOf(form: RunForm): Pose | null {
 }
 
 export function App() {
+  // where the address says to be (address.ts): the page and Calibrate's tab at once, the
+  // editor and the run once the folder is listed
+  const [arrival] = useState<Place>(() => parsePlace(location.hash) ?? HOME);
+  const [arrived, setArrived] = useState(false); // it's been gone to: the address follows the app from here
+  const [restoring, setRestoring] = useState(false); // the run the address names is being fetched
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -118,7 +136,7 @@ export function App() {
   const [designing, setDesigning] = useState<string[]>([]); // opened in their Design view
   const [newRobot, setNewRobot] = useState(false); // the "New robot…" dialog is open
   const [newRoute, setNewRoute] = useState(false); // the "New route…" dialog is open
-  const [page, setPage] = useState<string>("simulate"); // a PageId, or an open config's path
+  const [page, setPage] = useState<string>(arrival.page === "edit" ? "simulate" : arrival.page); // a PageId, or an open config's path
   const [visited, setVisited] = useState<string[]>(["simulate"]); // pages made so far (they stay)
   const [analyzeRobot, setAnalyzeRobot] = useState("");
   const [benchScenario, setBenchScenario] = useState("");
@@ -126,8 +144,8 @@ export function App() {
     robot: "",
     log: "",
     project: "",
-    session: "",
-    tab: "session",
+    session: arrival.session ?? "",
+    tab: arrival.tab ?? "session",
   });
   const [buildProject, setBuildProject] = useState<string | null>(null);
   const [overrideRequests, setOverrideRequests] = useState<Record<string, ConfigRequest>>({});
@@ -140,6 +158,7 @@ export function App() {
   const [readoutOpen, setReadoutOpen] = usePanel("readout", narrow);
   const [bottomOpen, setBottomOpen] = usePanel("bottom", short);
   const [runbarOpen, setRunbarOpen] = useState<boolean | null>(null); // by hand; null: as the window asks
+  const [runOnSave, setRunOnSave] = useState(loadRunOnSave); // a save of the run's code runs it again
   const playhead = useMemo(() => new Playhead(), []);
   usePlayheadClock(playhead);
   useStore(store);
@@ -198,21 +217,45 @@ export function App() {
     }
   }, []);
 
+  /** List the workspace again. "changed": only if the folder isn't as it was at the last
+   * listing (the server tells by its stamp, reading nothing); "fresh": read every file whatever
+   * the stamps say (Refresh). The list, or null if it's as it was. */
+  const stamp = useRef(""); // the folder's mark at the last listing
   const scan = useCallback(
-    async (infoNow: AppInfo, restore: boolean) => {
-      setScanning(true);
+    async (infoNow: AppInfo, restore: boolean, how: "list" | "changed" | "fresh" = "list"): Promise<WorkspaceInfo | null> => {
+      if (how !== "changed") setScanning(true);
       try {
-        const found = await api.workspace();
+        const found = await api.workspace(how === "changed" ? stamp.current : null, how === "fresh");
+        if (!found) return null;
+        stamp.current = found.stamp ?? "";
         setWorkspace(found);
         setForm((current) => reconcile(restore ? (loadForm(infoNow.workspace) ?? current) : current, found.items));
         setRescans((n) => n + 1);
         await loadConfigurations();
+        return found;
       } finally {
-        setScanning(false);
+        if (how !== "changed") setScanning(false);
       }
     },
     [loadConfigurations],
   );
+  // The list follows the disk: looked at again whenever the window gets the focus back (a file
+  // made in your editor is there when you come back to pick it).
+  useEffect(() => {
+    if (!info) return;
+    let last = -Infinity;
+    const look = () => {
+      if (document.visibilityState !== "visible" || performance.now() - last < 1000) return;
+      last = performance.now();
+      scan(info, false, "changed").catch(() => {}); // the list stays as it was
+    };
+    window.addEventListener("focus", look);
+    document.addEventListener("visibilitychange", look);
+    return () => {
+      window.removeEventListener("focus", look);
+      document.removeEventListener("visibilitychange", look);
+    };
+  }, [info, scan]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -226,6 +269,13 @@ export function App() {
       // storage off: not remembered
     }
   }, [editor]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(ON_SAVE_KEY, runOnSave ? "on" : "off");
+    } catch {
+      // storage off: not remembered
+    }
+  }, [runOnSave]);
 
   useEffect(() => {
     (async () => {
@@ -233,21 +283,32 @@ export function App() {
         const about = await api.info();
         setInfo(about);
         document.title = `vexsim · ${about.workspace_name}`;
-        await scan(about, true);
+        const found = await scan(about, true);
         loadRuns();
         const running = (await api.sessions())
           .filter((s) => s.state !== "stopped")
           .sort((a, b) => b.created - a.created)[0];
         if (running) attach(running.id, 1);
+        // where the address says: its editor, or its run unless one is going (the field is its).
+        // Unless it has moved on meanwhile (Back, pressed before the folder was listed).
+        const going = !!running && BUSY.includes(running.state);
+        if (formatPlace(parsePlace(location.hash) ?? HOME) === formatPlace(arrival)) {
+          if (arrival.page === "edit") goRef.current(arrival, found?.items ?? []);
+          else if (arrival.run && !going) await restoreRef.current(arrival.run, running?.run_id === arrival.run, false);
+        }
       } catch (error) {
         setLoadError((error as Error).message);
+      } finally {
+        setArrived(true);
       }
     })();
-  }, [attach, scan, loadRuns]);
+  }, [arrival, attach, scan, loadRuns]);
 
+  // The run form is kept for the next visit, once it's been brought back from the last one (the
+  // list arrives with it): saved any sooner, the empty form it starts as would replace what was kept.
   useEffect(() => {
-    if (info) saveForm(info.workspace, form);
-  }, [form, info]);
+    if (info && workspace) saveForm(info.workspace, form);
+  }, [form, info, workspace]);
 
   // A PROS project's routines (include/custom/auton.hpp), to pick one in the run bar.
   const isProject = !!workspace?.items.some((item) => item.kind === "project" && item.path === form.program);
@@ -390,6 +451,33 @@ export function App() {
     },
     [attach, speed, video],
   );
+
+  /** The run from its start, with its code as it is now. None of its files changed since it
+   * started: its own session starts it again at once. Otherwise it's checked, built and started
+   * afresh, as Run would (a new session in its place); if it can't be, the run that's there stays. */
+  const restarting = useRef(false);
+  const restart = useCallback(async () => {
+    const live = storeRef.current;
+    if (!live || restarting.current || !STARTABLE.includes(live.state)) return;
+    restarting.current = true;
+    setProblem(null);
+    video?.cancel();
+    try {
+      const again = await api.restartSession(live.id);
+      if ("problem" in again) setProblem(again.problem);
+      else if (again.session.id !== live.id) attach(again.session.id, speed);
+    } catch (error) {
+      setProblem({ error: (error as Error).message, issues: [] });
+    } finally {
+      restarting.current = false;
+    }
+  }, [attach, speed, video]);
+  // Run on save: the run's files changed (its session says so, each time they do) and the
+  // switch is on, so it runs again; with the switch off, the field says "Code changed".
+  const changes = store?.changes ?? 0;
+  useEffect(() => {
+    if (runOnSave && changes > 0) void restart();
+  }, [runOnSave, changes]); // eslint-disable-line react-hooks/exhaustive-deps -- only when a save lands, or the switch goes on
 
   const run = useCallback(async () => {
     const result = formToSpec(form);
@@ -857,6 +945,112 @@ export function App() {
     return error;
   };
 
+  // --- the address keeps your place (address.ts) -------------------------------------------
+
+  /** The address named what isn't there (a file since deleted, a run since pruned, a typo): put
+   * where the app is in its place, without a step for Back to return to. */
+  const correctAddress = () => {
+    try {
+      history.replaceState(history.state, "", location.pathname + location.search + formatPlace(placeRef.current));
+    } catch {
+      // an address that can't be written (a page inside another app's frame): it stays
+    }
+  };
+  /** The recorded run the address names, on the field again: beside the session that made it,
+   * if that's still there (`own`: its console is on screen already), else as it opens from the
+   * run history, its setup in the form. Not while a run is `going`: the field is its. Whether
+   * it's there to show. */
+  const restoreRun = async (id: string, own: boolean, going: boolean): Promise<boolean> => {
+    if (going) return true;
+    setRestoring(true);
+    try {
+      const next = await openRun(id, own);
+      const record = next.run;
+      if (!own && record) {
+        if (await leaveSession()) loadRuns();
+        const saved = configurations.find((c) => c.name === record.name && sameRun(specToForm(record.spec), c));
+        setForm(specToForm(record.spec, saved?.name ?? ""));
+      }
+      show(next);
+      return true;
+    } catch {
+      correctAddress(); // gone from the history: the address says what's on show instead
+      return false;
+    } finally {
+      setRestoring(false);
+    }
+  };
+  /** Go where an address says (on arrival, and on Back and Forward); false if it names a file
+   * that isn't there. `items`: the workspace's, if they were only just listed. */
+  const go = (next: Place, items: WorkspaceItem[] | null): boolean => {
+    if (next.page === "edit") {
+      const item = (items ?? workspace?.items ?? []).find((i) => i.path === next.file);
+      if (item?.kind === "route") openRoute(item.path);
+      else if (item && EDITED.includes(item.kind)) openConfig(item.path);
+      else {
+        correctAddress(); // not there any more: the address says where the app is instead
+        return false;
+      }
+      return true;
+    }
+    setPage(next.page);
+    if (next.page === "calibrate") setCalibration((c) => ({ ...c, tab: next.tab ?? c.tab, session: next.session ?? c.session }));
+    if (next.page === "simulate" && next.run && next.run !== recording?.run?.id) void restoreRun(next.run, false, busy);
+    return true;
+  };
+  const goRef = useRef(go);
+  goRef.current = go;
+  const restoreRef = useRef(restoreRun);
+  restoreRef.current = restoreRun;
+
+  const shownRun = recording?.run?.id ?? null;
+  const place: Place = useMemo(() => {
+    if (!PAGE_IDS.includes(page)) return { page: "edit", file: page };
+    if (page === "calibrate") return calibration.session ? { page, tab: calibration.tab, session: calibration.session } : { page, tab: calibration.tab };
+    if (page === "simulate" && shownRun) return { page, run: shownRun };
+    return { page: page as PageId };
+  }, [page, calibration.tab, calibration.session, shownRun]);
+  const placeRef = useRef(place);
+  placeRef.current = place;
+  // The app moved: the address follows. From where the address is now, a new page, editor or
+  // Calibrate tab is a step Back undoes; a run or a session on the same page just changes the
+  // address where it is. Nothing is written when the address is there already: it moved first
+  // (Back, Forward), and the app followed. (Written as the page is, not a moment after: by then
+  // Back may have moved the address, and writing where the app was would undo it.)
+  useLayoutEffect(() => {
+    if (!arrived || restoring) return;
+    const hash = formatPlace(place);
+    if (hash === location.hash) return;
+    const step = isStep(parsePlace(location.hash) ?? HOME, place);
+    try {
+      history[step ? "pushState" : "replaceState"](history.state, "", location.pathname + location.search + hash);
+    } catch {
+      // an address that can't be written (a page inside another app's frame): it stays
+    }
+  }, [arrived, restoring, place]);
+  // The address moved (Back, Forward, or typed): the app follows.
+  useEffect(() => {
+    let last: string | null = null;
+    let at = 0;
+    const follow = (event: Event) => {
+      // where this move went: a hashchange says so itself (the address may have moved on since)
+      const hash = "newURL" in event ? new URL((event as HashChangeEvent).newURL).hash : location.hash;
+      const now = performance.now();
+      if (hash === last && now - at < 500) return; // popstate and hashchange, for one move
+      last = hash;
+      at = now;
+      const next = parsePlace(hash) ?? HOME;
+      if (formatPlace(next) !== formatPlace(placeRef.current)) goRef.current(next, null);
+      else if (formatPlace(next) !== location.hash) correctAddress(); // it named nothing, or the same place another way
+    };
+    window.addEventListener("popstate", follow);
+    window.addEventListener("hashchange", follow);
+    return () => {
+      window.removeEventListener("popstate", follow);
+      window.removeEventListener("hashchange", follow);
+    };
+  }, []);
+
   // Keys, as in the pygame viewer: Space pause, . step, R restart, +/- speed; 1-5 what the
   // field shows; ? the list of keys. Driving keys are useController's. A recorded run: Space
   // play, arrows (Shift: farther), Home/End and , . move through it.
@@ -906,7 +1100,7 @@ export function App() {
           break;
         case "r":
         case "R":
-          if (store?.scene && state !== "stopped") store.send({ cmd: "restart" });
+          void restart();
           break;
         case "+":
         case "=":
@@ -938,7 +1132,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [changeSpeed, driving, help, narrow, page, playhead, scrubbing, setSidebarOpen, sidebarOpen, speed, state, store]);
+  }, [changeSpeed, driving, help, narrow, page, playhead, restart, scrubbing, setSidebarOpen, sidebarOpen, speed, state, store]);
 
   return (
     <div className="app">
@@ -1015,7 +1209,7 @@ export function App() {
           onNewRobot={() => setNewRobot(true)}
           onNewRoute={() => setNewRoute(true)}
           loading={scanning}
-          onRefresh={() => info && scan(info, false)}
+          onRefresh={() => info && scan(info, false, "fresh")}
           shownLog={recording?.key.startsWith("log:") ? recording.key.slice(4) : null}
           realLog={realLog?.tape.path ?? null}
           runCount={runs.length}
@@ -1053,12 +1247,15 @@ export function App() {
               onNewRobot={() => setNewRobot(true)}
               folded={runbarFolded}
               onFold={short && onShow ? (folded) => setRunbarOpen(!folded) : undefined}
+              runOnSave={runOnSave}
+              onRunOnSave={setRunOnSave}
             />
             <Controls
               store={store}
               speed={speed}
               onSpeed={changeSpeed}
               onStop={stop}
+              onRestart={restart}
               command={store?.info?.command ?? store?.scene?.command ?? recording?.run?.command ?? null}
             />
             {realLog && (
@@ -1167,6 +1364,20 @@ export function App() {
                       follow={follow}
                       onFollow={setFollow}
                       stamp={video && recording ? recording.name : null}
+                      notice={
+                        store && store.changed.length > 0 && source.kind !== "preview" ? (
+                          <button
+                            type="button"
+                            className="changed"
+                            onClick={restart}
+                            disabled={!STARTABLE.includes(store.state)}
+                            title={`${store.changed.join(", ")} changed since this run started: what's on the field is the code as it was. Click (or Restart, R) to run it as it is now.`}
+                            data-testid="code-changed"
+                          >
+                            <b>Code changed</b> since this run started · Restart runs it
+                          </button>
+                        ) : null
+                      }
                       tools={
                         <button
                           type="button"

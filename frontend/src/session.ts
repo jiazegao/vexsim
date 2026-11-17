@@ -48,6 +48,8 @@ export class SessionStore {
   estimate = new Trail();
   frames = 0; // frames received, all told
   recorded: RunRecord | null = null; // the last of its runs written to the run history
+  changed: string[] = []; // the files it was made from that have changed since it started
+  changes = 0; // how many times it's said so: each save that lands
   buildProblems: Problem[] = []; // the compiler's errors and warnings
   runProblems: Problem[] = []; // where the program failed
   connected = false;
@@ -124,6 +126,10 @@ export class SessionStore {
         break;
       case "recorded":
         this.recorded = message.run;
+        break;
+      case "changed":
+        this.changed = message.files;
+        this.changes += 1;
         break;
       case "build":
         this.addLines("build", message.lines);

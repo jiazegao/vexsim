@@ -3,13 +3,17 @@ telemetry logs, calibration sessions, robot logs and MCL logs.
 
 The UI works on one folder, its workspace. ``Workspace.scan`` finds what vexsim can use
 in it by reading the files, never running them, and ``Workspace.path`` turns the paths the
-UI sends back into files, refusing anything outside the folder.
+UI sends back into files, refusing anything outside the folder. ``Workspace.stamp`` is a
+cheap mark of what a scan would read (names, sizes and times; nothing is opened), so a scan
+of a folder that hasn't changed is answered from the last one.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
@@ -46,6 +50,10 @@ SKIP_DIRS = {"node_modules", "__pycache__", "build", "dist", "bin", "venv", "env
 MAX_DEPTH = 8
 MAX_FILES = 20_000
 MAX_READ = 512 * 1024  # bytes read to classify a file
+# A file written this lately could be written again with the same size and the same time (a
+# file system's clock ticks every few milliseconds, FAT's every two seconds), so a stamp
+# with one in it doesn't stand for the folder's contents yet
+RACY_S = 2.0
 
 _PROGRAM_FUNCTION = re.compile(r"^def (initialize|autonomous|opcontrol)\b", re.MULTILINE)
 _TELEMETRY_HEADER = "time_s,phase,x_in,y_in,heading_deg"
@@ -78,9 +86,21 @@ class WorkspaceItem:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class WorkspaceStamp:
+    """What a scan would read, in brief: ``digest`` of the name, size and time of every file
+    it looks at. ``settled``: none of them was written in the last RACY_S, so two equal
+    digests mean the same files."""
+
+    digest: str
+    settled: bool
+
+
 class Workspace:
     def __init__(self, root: str | os.PathLike[str]):
         self.root = Path(root).resolve()
+        self._kept: tuple[str, list[WorkspaceItem]] | None = None  # the last scan, by its stamp
+        self.scans = 0  # full scans made (the tests count them)
 
     @property
     def name(self) -> str:
@@ -96,8 +116,85 @@ class Workspace:
     def relative(self, path: str | os.PathLike[str]) -> str:
         return Path(os.path.relpath(Path(path).resolve(), self.root)).as_posix()
 
-    def scan(self) -> list[WorkspaceItem]:
-        """Everything vexsim can use in the workspace, grouped by kind, then by path."""
+    def scan(self, fresh: bool = False) -> list[WorkspaceItem]:
+        """Everything vexsim can use in the workspace, grouped by kind, then by path.
+
+        The last scan answers again while the folder's stamp is what it was then (``fresh``:
+        read everything anyway)."""
+        mark = self.stamp()
+        kept = self._kept
+        if not fresh and kept is not None and mark.settled and kept[0] == mark.digest:
+            return list(kept[1])
+        items = self._scan()
+        self._kept = (mark.digest, items) if mark.settled else None
+        return list(items)
+
+    def stamp(self) -> WorkspaceStamp:
+        """A mark of what ``scan`` would read, from the folders' listings alone: every file
+        a scan looks at, and for a PROS project its routes and the headers they're checked
+        against. It errs on the side of more files: a change that a scan wouldn't see only
+        costs a scan."""
+        from vexsim.app.routes import FOLDER
+        from vexsim.bridge.build import SDK_INCLUDES
+
+        digest = hashlib.sha1()
+        newest = 0
+        seen = 0
+
+        def note(entry: os.DirEntry) -> None:
+            nonlocal newest, seen
+            try:
+                st = entry.stat()
+            except OSError:
+                return
+            seen += 1
+            newest = max(newest, st.st_mtime_ns)
+            digest.update(f"{entry.path}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+
+        def listing(folder: str) -> list[os.DirEntry]:
+            try:
+                return sorted(os.scandir(folder), key=lambda e: e.name)
+            except OSError:
+                return []
+
+        def whole(folder: str, skip=()) -> None:  # every file under a folder
+            for entry in listing(folder):
+                if entry.name in skip:
+                    continue
+                if entry.is_dir():
+                    whole(entry.path)
+                else:
+                    note(entry)
+
+        def walk(folder: str, depth: int) -> None:
+            entries = listing(folder)
+            if any(e.name == "project.pros" and not e.is_dir() for e in entries):
+                for entry in entries:  # a project: its routes, and what they're checked against
+                    if entry.name == "project.pros":
+                        note(entry)
+                    elif entry.name == FOLDER and entry.is_dir():
+                        whole(entry.path)
+                    elif entry.name == "include" and entry.is_dir():
+                        whole(entry.path, SDK_INCLUDES)
+                        lemlib = os.path.isdir(os.path.join(entry.path, "lemlib"))
+                        digest.update(f"{entry.path}\0lemlib={lemlib}\n".encode())
+                return
+            for entry in entries:
+                if not entry.is_dir():
+                    note(entry)
+                elif (
+                    not entry.name.startswith(".")
+                    and entry.name not in SKIP_DIRS
+                    and depth < MAX_DEPTH
+                ):
+                    walk(entry.path, depth + 1)
+
+        walk(str(self.root), 0)
+        settled = seen <= MAX_FILES and newest <= time.time_ns() - int(RACY_S * 1e9)
+        return WorkspaceStamp(digest.hexdigest()[:20], settled)
+
+    def _scan(self) -> list[WorkspaceItem]:
+        self.scans += 1
         items: list[WorkspaceItem] = []
         seen = 0
         for folder, dirs, files in os.walk(self.root):
