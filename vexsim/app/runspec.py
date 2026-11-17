@@ -646,11 +646,13 @@ def simulation_factory(
     input_source=None,
     echo: Callable[[str], None] | None = print,
     on_create: Callable[[Any], None] | None = None,
+    drawings: bool = True,
 ) -> Callable[[], Any]:
     """A function that makes a fresh Simulation of the run, started in ``mode``.
 
     ``on_create(sim)`` runs before the mode starts (e.g. to attach a logger). A run that
     follows a log gets a new ``PathFollower`` each time, as its input, not ``input_source``.
+    ``drawings`` False: a run nobody watches, so what its code draws isn't kept.
     """
     from vexsim.algorithms.localization.base import Pose
     from vexsim.runtime.follow import PathFollower, drive_geometry
@@ -678,6 +680,7 @@ def simulation_factory(
             start=Pose(*spec.start),
             input_source=source,
             echo=echo,
+            drawings=drawings,
         )
         if prepared.follow is not None:
             source.attach(sim)

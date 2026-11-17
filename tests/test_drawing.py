@@ -42,6 +42,19 @@ def test_python_programs_draw_with_a_pen():
         pen.line("plan", 0, 0, float("nan"), 1)
 
 
+def test_nothing_is_kept_where_nobody_watches():
+    """Phase 15.1: Simulation(drawings=False), for a sweep's trials and the like."""
+    off = Drawings(enabled=False)
+    pen = Pen(off)
+    assert not pen.shown and Pen(Drawings()).shown
+    pen.point("stops", 1, 2)
+    pen.clear("stops")
+    off.apply("point mcl 1 2 3 violet")
+    assert off.snapshot() == {} and off.version == 0
+    with pytest.raises(ValueError, match="color"):  # a mistake is one, watched or not
+        pen.point("stops", 1, 2, color="plaid")
+
+
 def test_the_colors_are_the_protocols():
     assert drawing.COLORS == get_args(DrawColor)
 

@@ -417,6 +417,27 @@ def test_robot_code_draws_on_the_field(test_exe):
     }
 
 
+def test_robot_code_draws_nothing_where_nobody_watches(test_exe):
+    """Phase 15.1: with Simulation(drawings=False) the robot code is told so, and its
+    drawing calls return at once; everything else it does is as it was."""
+
+    def run(drawings: bool):
+        program = CppProgram(test_exe, env={"VEXSIM_TEST": "draw"})
+        sim = Simulation(load_robot(ROBOT), program=program, echo=None, drawings=drawings)
+        sim.start("driver")
+        try:
+            sim.run_for(0.05)
+        finally:
+            sim.close()
+        return sim
+
+    watched, unwatched = run(True), run(False)
+    assert watched.drawings.snapshot() and unwatched.drawings.snapshot() == {}
+    assert unwatched.drawings.version == 0
+    assert unwatched.console == watched.console and unwatched.robot.pose == watched.robot.pose
+    assert not any(line.startswith("D ") for line in unwatched.console)
+
+
 def test_example_autonomous_is_deterministic(example_exe, capsys):
     def run():
         start = Pose(0, 0, 90)

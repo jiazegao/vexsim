@@ -250,6 +250,7 @@ def run_trial(
         localizer=localizer,
         record=record,
         echo=None,
+        drawings=False,  # a trial nobody watches
     )
     sim.start("autonomous")
     calibration = max(
@@ -312,6 +313,7 @@ def _run_pros_trial(
         battery_soc=setup.soc,
         record=record,
         echo=None,
+        drawings=False,
     )
     state: dict[str, Any] = {"t0": None, "energy": 0.0, "peak": 0.0, "walls": 0}
     samples: list[tuple] = []

@@ -196,7 +196,10 @@ class Simulation:
         record: bool = True,
         echo: Callable[[str], None] | None = print,
         walls: bool = True,
+        drawings: bool = True,
     ):
+        """``drawings`` False: nothing shows what the robot code draws on the field, so it
+        isn't kept (and C++ code isn't asked for it): for runs nobody watches."""
         self.config = config
         self.field = field or FieldConfig()
         self.world = World(seed=seed)
@@ -234,7 +237,8 @@ class Simulation:
         self.controller_screen: dict[int, str] = {}
         self.reported_pose: Pose | None = None  # the robot code's own estimate, if it reports one
         self._echo = echo
-        self.drawings = Drawings(warn=self.log)  # what the robot code drew on the field
+        # what the robot code drew on the field
+        self.drawings = Drawings(warn=self.log, enabled=drawings)
         self.bot = Bot(self)
         self.phase = "disabled"
         self._phases: list[tuple[str, float | None]] = []

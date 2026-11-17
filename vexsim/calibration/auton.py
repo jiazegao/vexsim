@@ -342,7 +342,7 @@ def _simulate(job: tuple[dict, str, int, str]) -> dict:
     spec = RunSpec.model_validate(data).model_copy(update={"seed": seed, "sd": card})
     prepared = check(spec)
     make, mode = program_factory(prepared, executable)
-    sim = simulation_factory(prepared, make, mode, echo=None)()
+    sim = simulation_factory(prepared, make, mode, echo=None, drawings=False)()
     path: list[tuple[float, float, float, float]] = []
     sim.world.every(10, lambda w: path.append((w.time, *_pose(sim))), name="auton check")
     try:

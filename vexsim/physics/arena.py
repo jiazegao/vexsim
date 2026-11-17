@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 G = 9.81
 PINNED = -0.5  # a fixed contact opposing the robot's push this much (cosine) pins a piece
+ROOM_SLACK_M = 1e-9  # taken off a robot's room, so rounding can't skip a check that'd find one
 
 
 @dataclass
@@ -184,6 +185,9 @@ class Arena:
         self.pieces = pieces or _no_pieces()
         self.robots: list[Robot] = []
         self.piece_contacts: list[tuple[np.ndarray, int]] = []  # (point, piece) this step
+        # each robot's room at its last check that found no obstacle in reach: where its CG
+        # was, and how far it can move before one could be (see _robot_obstacles)
+        self._room: dict[Robot, tuple[float, float, float]] = {}
 
     @classmethod
     def of(cls, field: FieldConfig, spec: FieldSpec | None = None) -> Arena:
@@ -231,12 +235,22 @@ class Arena:
         return contacts
 
     def _robot_obstacles(self, robot: Robot) -> list[WallContact]:
+        # The obstacles stand still, so none can be touched until the robot has moved as far
+        # as it had room at its last check. Within that, the check would find nothing: most
+        # steps of most runs, skipped for the price of one distance.
+        room = self._room.get(robot)
+        if room is not None:
+            cg = robot.cg_position
+            if math.hypot(cg[0] - room[0], cg[1] - room[1]) < room[2]:
+                return []
         if robot.outline is None:
             found = self._footprint_obstacles(robot)
         else:
             found = self._shape_obstacles(robot)
         if not found:
+            self._remember_room(robot)
             return []
+        self._room.pop(robot, None)
         c, s = math.cos(robot.heading), math.sin(robot.heading)
         points = []
         for point, normal, _ in found:
@@ -253,6 +267,21 @@ class Arena:
             WallContact((float(p[0]), float(p[1])), (float(n[0]), float(n[1])), d, float(j))
             for (p, n, d), j in zip(found, impulses, strict=True)
         ]
+
+    def _remember_room(self, robot: Robot) -> None:
+        """How far the robot's CG can move before any obstacle's circle could reach the
+        circle around its body: until then ``_footprint_obstacles`` and ``_shape_obstacles``
+        pass every obstacle by, as too far."""
+        cg = robot.cg_position
+        reach = robot.footprint_radius  # a shape's, about its CG
+        if robot.outline is None:  # a footprint's circle is about its own center
+            footprint = _footprint(robot)
+            reach = footprint.radius + math.dist(footprint.center, cg)
+        room = min(math.dist(s.center, cg) - s.radius for s in self.solid) - reach - ROOM_SLACK_M
+        if room > 0.0:
+            self._room[robot] = (float(cg[0]), float(cg[1]), room)
+        else:
+            self._room.pop(robot, None)
 
     def _footprint_obstacles(self, robot: Robot) -> list[tuple[np.ndarray, np.ndarray, float]]:
         """A footprint rectangle's contacts: (point, normal pushing the robot, depth)."""

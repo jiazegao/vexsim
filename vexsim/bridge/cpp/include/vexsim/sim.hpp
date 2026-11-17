@@ -23,6 +23,7 @@
 
 extern "C" void vexsim_report_pose(double x_in, double y_in, double theta_deg);
 extern "C" void vexsim_draw(const char* command);
+extern "C" int vexsim_drawing(void);
 
 namespace vexsim {
 
@@ -124,8 +125,17 @@ inline void report_pose(double x_in, double y_in, double theta_deg) { vexsim_rep
  *
  * Inches in the field's frame (LemLib's x and y), angles as LemLib's: degrees clockwise
  * from +y. Colors are the field's palette, so drawings show in light and dark themes.
+ *
+ * Where nobody watches (a sweep's trials, a benchmark, a calibration's replays), nothing is
+ * drawn and the calls return at once. vexsim::drawing() says which, for code that would
+ * rather not work out what to draw:
+ *
+ *   if (vexsim::drawing()) drawParticles();
  */
 enum class Color { violet, blue, orange, aqua, yellow, magenta, green, red, ink, muted };
+
+/* Whether this run shows what the code draws. */
+inline bool drawing() { return vexsim_drawing() != 0; }
 
 namespace detail {
 inline const char* color_name(Color color) {
@@ -145,6 +155,7 @@ inline std::string layer_name(const std::string& layer) {
 
 // "<shape> <layer> <numbers...> <color>"
 inline void draw(const char* shape, const std::string& layer, const double* numbers, int n, Color color) {
+	if (!vexsim_drawing()) return;
 	std::string command = std::string(shape) + " " + layer_name(layer);
 	char buf[32];
 	for (int i = 0; i < n; i++) {
@@ -158,7 +169,9 @@ inline void draw(const char* shape, const std::string& layer, const double* numb
 }  // namespace detail
 
 /* Empty a layer, to draw it afresh. */
-inline void draw_clear(const std::string& layer) { vexsim_draw(("clear " + detail::layer_name(layer)).c_str()); }
+inline void draw_clear(const std::string& layer) {
+	if (vexsim_drawing()) vexsim_draw(("clear " + detail::layer_name(layer)).c_str());
+}
 
 /* A dot `size_px` pixels across (it stays that size when the view zooms). */
 inline void draw_point(const std::string& layer, double x, double y, Color color = Color::violet, double size_px = 3) {
@@ -190,6 +203,7 @@ inline void draw_pose(const std::string& layer, double x, double y, double theta
 }
 
 inline void draw_text(const std::string& layer, double x, double y, const std::string& text, Color color = Color::ink) {
+	if (!vexsim_drawing()) return;
 	char buf[80];
 	std::snprintf(buf, sizeof buf, " %.6g %.6g %s ", x, y, detail::color_name(color));
 	std::string line = text.substr(0, 120);

@@ -85,6 +85,12 @@ export function Controls(props: {
             </span>
             <span className="muted" title="Simulated seconds per real second, lately">
               {state === "running" ? `${frame.rate.toFixed(1)}× real time` : ""}
+              {state === "running" && frame.speed !== null && frame.rate < 0.85 * frame.speed && (
+                <span data-testid="speed-short" title={`${frame.speed}× was asked for: this is as fast as this computer runs this code`}>
+                  {" "}
+                  (of {frame.speed}× asked)
+                </span>
+              )}
             </span>
           </>
         )}

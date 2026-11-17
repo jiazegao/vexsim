@@ -381,6 +381,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         mode,
         input_source=inputs,
         on_create=attach_robot_log if args.robot_log else None,
+        drawings=not args.headless or bool(args.screenshot),  # headless: nothing shows them
     )
 
     if args.headless:

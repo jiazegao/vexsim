@@ -816,3 +816,41 @@ def test_vexsim_ui_says_how_to_install_what_it_needs(monkeypatch, capsys):
     assert 'the UI needs fastapi; install it with: pip install -e ".[ui]"' in (
         capsys.readouterr().out
     )
+
+
+def test_a_speed_the_computer_cant_reach_keeps_its_frame_rate():
+    """Phase 15.1: the worker simulates what real time owes for most of a frame's time at
+    most, so 8x asked of a computer that manages 2x shows 2x at a full frame rate (it used
+    to simulate a quarter second at a time: a few frames a second)."""
+    from vexsim.app import worker
+
+    class Nobody:
+        def send(self, message):
+            pass
+
+    run = worker.Worker(Nobody(), {}, None, None)
+    run.state, run.speed = "running", 8.0
+    stepped = []
+
+    def slow(ms):  # this computer runs it at twice real time
+        end = time.perf_counter() + ms / 2000
+        while time.perf_counter() < end:
+            pass
+        stepped.append(ms)
+
+    run.step = slow
+    longest = 0.0
+    for _ in range(20):
+        began = time.perf_counter()
+        run.advance(worker.FRAME_S)
+        longest = max(longest, time.perf_counter() - began)
+    assert longest < 2 * worker.FRAME_S  # not the 125 ms that 0.25 s of simulation takes
+    assert 0 < run.debt <= worker.MAX_LAG_S  # behind, and no further than it may be
+    assert sum(stepped) / 20 >= 10  # and still simulating all a frame has time for
+
+    # a speed it does reach: every millisecond owed is simulated, as before
+    run.speed, run.debt, run.step = 1.0, 0.0, stepped.append
+    stepped.clear()
+    for _ in range(60):
+        run.advance(worker.FRAME_S)
+    assert sum(stepped) == pytest.approx(1000, abs=1) and run.debt < 0.002

@@ -486,7 +486,7 @@ It needs the `ui` extra: `python -m pip install -e ".[ui]"` (the *Calibrate* pag
 4. **Run** checks the files first; if something is wrong, the console says what, with the same messages as `vexsim validate-config`. A PROS project is built first, with the build's output in the *Build* tab. Starting a run stops the one before it.
 
 **While it runs:**
-- **Controls:** pause, step 10 ms, restart from the start with the same seed, stop, and a speed from 0.1× to 8× real time, or *Max*. *Copy command* copies the run as the equivalent `vexsim run` command. In `match` and `skills` modes, the time left in the period counts down beside the clock.
+- **Controls:** pause, step 10 ms, restart from the start with the same seed, stop, and a speed from 0.1× to 8× real time, or *Max*. The speed reached is shown beside the clock: asked for more than this computer manages (a team's C++ code with MCL runs about 4×), the run goes as fast as it can at a full frame rate, and says so (*3.6× real time (of 8× asked)*). *Copy command* copies the run as the equivalent `vexsim run` command. In `match` and `skills` modes, the time left in the period counts down beside the clock.
 - **Driving:** with no program, or in `driver` and `match` modes, you drive: the keyboard as in the pygame viewer (below), any gamepad (its face buttons map to the V5's by position), or the on-screen controller in the readings, whose sticks you can drag and buttons press. The controller there shows what the robot reads, whatever drives it.
 - **The field:** the robot where it really is (front edge thicker; a robot with a `shape` has an arrow to its front), its path, where its code thinks it is (dashed), the active motion's path and target, distance sensor beams, wheels turning red as they reach their grip limit, each wheel's sideways force (orange), mecanum rollers, wall contacts, obstacles and pieces. The key in its corner says what each mark is; its switches hide the paths, the estimate, the beams, the forces and what the robot code draws (each of its layers, too), and *Key* folds it away. The wheel zooms, dragging pans, and a double-click (or *Fit*) shows the whole field again; *Follow* keeps the robot in the middle; *Save picture* saves the field as a PNG. The pointer's field coordinates are shown in the bottom corner.
 - **What the robot code draws:** robot code can draw on the field to show what it's thinking: a localizer's particles, a planned path, a target. C++ code draws with `vexsim::draw_*` ([section 9](#vexsim-extras-for-c-vexsimsimhpp)), Python programs with `bot.draw` ([section 8](#drawing-on-the-field-botdraw)); `tour.py` numbers its stops, and the 1239E port draws its MCL. Each layer of drawings can be shown or hidden in the key, and recorded runs keep them.
@@ -696,6 +696,8 @@ bot.draw.pose("plan", 24, 24, 90, color="blue")  # a dot with a heading tick
 bot.draw.text("plan", 26, 26, "target")
 ```
 Inches and degrees counter-clockwise from +x, as `bot.pose` has them. Colors are the field's palette, by name: `violet` (the default), `blue`, `orange`, `aqua`, `yellow`, `magenta`, `green`, `red`, `ink` and `muted`, so drawings show in light and dark themes alike; text is drawn in ink, with a dot of its color. A layer holds up to 2000 shapes, and a program up to 32 layers.
+
+Where nobody watches (a sweep's trials, a benchmark, `vexsim run --headless`), nothing is kept, and drawing costs the run nothing; `bot.draw.shown` says which, for a program that would rather not work out what to draw.
 
 ### Devices (PROS 4 style)
 The constructors live on `bot`. Names and units follow PROS 4, so a Python prototype maps line for line onto C++. A negative port reverses the device.
@@ -955,6 +957,8 @@ vexsim::draw_text("goal", 26, 26, "goal");
 #endif
 ```
   `draw_point` takes an optional size in pixels after the color. A layer is drawn as it stands whenever simulated time moves on, so clearing and redrawing it without a `pros::delay()` in between never shows it half drawn. The 1239E port draws its MCL this way (`src/custom/MclTracking.cpp`).
+
+  Where nobody watches (a sweep's trials, a benchmark, a calibration's replays, the autonomous check, `vexsim run --headless`), the calls return at once and nothing is sent: on 1239E's code that makes a run about a tenth faster. `vexsim::drawing()` says which, for code that would rather not work out what to draw.
 
 **Environment variables** reach your code through `getenv()`: `vexsim run --env KEY=VALUE`, or `CppProgram(..., env={...})` from Python. Nobody taps the simulated brain screen, so this is how to choose an autonomous routine:
 ```cpp
@@ -1247,7 +1251,7 @@ sim.run_until_finished(30)
 sim.close()  # ends the robot code's process
 print(sim.console[-3:])
 ```
-`Simulation(config, program=None, field=None, seed=0, noise=None, start=Pose(0, 0, 0), believed_start=None, battery_soc=1.0, localizer=None, input_source=None, record=True, echo=print, walls=True)` has `start(mode)`, `run_for(seconds)`, `run_until_finished(max_seconds)` and `close()`, and exposes `robot`, `sensors`, `arena`, `world`, `recorder`, `console`, `lcd`, `reported_pose` and `estimated_pose`.
+`Simulation(config, program=None, field=None, seed=0, noise=None, start=Pose(0, 0, 0), believed_start=None, battery_soc=1.0, localizer=None, input_source=None, record=True, echo=print, walls=True, drawings=True)` has `start(mode)`, `run_for(seconds)`, `run_until_finished(max_seconds)` and `close()`, and exposes `robot`, `sensors`, `arena`, `world`, `recorder`, `console`, `lcd`, `reported_pose` and `estimated_pose`. `drawings=False` is for runs nobody watches: what the robot code draws isn't kept, and C++ code isn't asked for it.
 
 **The world loop and a robot:**
 ```python
@@ -1482,7 +1486,7 @@ vexsim/
 | `logtape.py` | `robot_log_tape`: a robot log of vexsim's logger as a tape to play on the field, its code's first pose (or, for a calibration test, the pose by `odometry` from its spot) with each distance sensor's reading as a ray, the other poses drawn beside it with their paths; a log with no path to play says so (`NothingToPlay`). |
 | `chartdata.py`, `jsonsafe.py` | Series thinned and rounded for the browser's charts; data made JSON-safe (no NaN, no numpy values). |
 | `child.py` | `ChildProcess`: a function run in a new Python process, connected by an authenticated pipe, with its output captured. |
-| `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed and sends the scene, about 60 frames a second, the motion overlay, what the robot code draws, when a replay began following its log, and the console. |
+| `session.py`, `worker.py` | A live run. `Session` (in the server) starts a worker process, sends it commands (pause, step, speed, restart, input, stop) and numbers its messages, so a viewer that connects late catches up exactly. The worker runs the simulation at real time × speed (for most of a frame's time at most, so a speed it can't reach still shows 60 frames a second) and sends the scene, about 60 frames a second, the motion overlay, what the robot code draws, when a replay began following its log, and the console. |
 | `runs.py` | The run history. `TapeRecorder` writes each run's folder when it ends (`run.json`, the tape with the robot code's drawings, the telemetry, the console); `list_runs`, `read_tape`, `telemetry_columns` and the rest read them back for the server; `prune` keeps the newest 50 and the kept ones; `replay_of` turns a telemetry log into a tape, and `mcl_tape` an MCL log into one to play beside a run (`logtape.py` does a robot log). |
 | `yamledit.py` | The Design view's and the autonomous maker's changes to a config's or a route's text: a `Change` sets a value of any kind (a missing key is added), adds a list item, inserts one before another, moves one (with the comments above it), removes an item or a key with its lines, or renames a key, each written in place in its neighbours' style with every comment kept. `apply` makes them, and the diagram's numbers (`configs.Edit`), in order. |
 | `files.py` | The workspace list's *Duplicate*: `duplicate` copies a file beside itself, never over one, a robot's or field's named as a copy in its own text. |

@@ -448,9 +448,20 @@ void vexsim_report_pose(double x_in, double y_in, double theta_deg) {
 	host_emit("P " + fmt(x_in) + " " + fmt(y_in) + " " + fmt(theta_deg));
 }
 
+// Whether anything shows what the robot code draws. The simulator says not ($VEXSIM_DRAWINGS=0)
+// where nobody watches (a sweep's trials, a fit's replays), and drawing then costs nothing.
+int vexsim_drawing(void) {
+	static const int shown = [] {
+		const char* value = std::getenv("VEXSIM_DRAWINGS");
+		return value == nullptr || std::string(value) != "0";
+	}();
+	return shown;
+}
+
 // vexsim::draw_* (sim.hpp): a drawing command, one line, for the simulator's drawing layers.
 // Not a PROS call: drawing never costs the robot code simulated time.
 void vexsim_draw(const char* command) {
+	if (!vexsim_drawing()) return;
 	std::string line(command ? command : "");
 	for (char& c : line)
 		if (c == '\n' || c == '\r') c = ' ';

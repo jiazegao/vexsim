@@ -32,8 +32,11 @@ from collections import deque
 from typing import Any
 
 FRAME_S = 1 / 60
-MAX_LAG_S = 0.25  # simulate at most this much per frame; slower than that, fall behind
+MAX_LAG_S = (
+    0.25  # what a run can owe: slower than asked, it falls behind, and doesn't race to catch up
+)
 MAX_STEP_MS = 60_000
+STEP_MS = 10  # simulated at a time, between looks at the clock
 
 
 class RemoteInput:
@@ -293,8 +296,8 @@ class Worker:
         while not self.stopping:
             if self.state != "running":
                 timeout = 0.5  # idle: wait for a command
-            elif math.isinf(self.speed):
-                timeout = 0.0
+            elif math.isinf(self.speed) or self.debt >= STEP_MS / 1000:
+                timeout = 0.0  # as fast as possible, or behind the speed asked: no waiting
             else:
                 timeout = max(0.0, next_frame - time.perf_counter())
             try:
@@ -319,17 +322,25 @@ class Worker:
         self.status("stopped")
 
     def advance(self, wall_dt: float) -> None:
-        """Simulate the time real time owes (x speed), at most MAX_LAG_S of it."""
+        """Simulate the time real time owes (x speed), for most of a frame's time at most.
+
+        A speed this computer can't reach then runs as fast as it can at a full frame rate
+        (what's still owed, MAX_LAG_S of it at most, waits for the next frame), where
+        simulating all that's owed at once would show a few frames a second."""
+        deadline = time.perf_counter() + FRAME_S * 0.8
         if math.isinf(self.speed):
-            deadline = time.perf_counter() + FRAME_S * 0.8
             while self.state == "running" and time.perf_counter() < deadline:
-                self.step(10)
+                self.step(STEP_MS)
             return
         self.debt = min(self.debt + wall_dt * self.speed, MAX_LAG_S)
-        steps = int(self.debt * 1000)
-        if steps:
-            self.debt -= steps / 1000
-            self.step(steps)
+        owed = int(self.debt * 1000)
+        while owed > 0 and self.state == "running":
+            ms = min(owed, STEP_MS)
+            self.step(ms)
+            owed -= ms
+            self.debt -= ms / 1000
+            if time.perf_counter() >= deadline:
+                break
 
     def step(self, ms: int) -> None:
         """Advance ``ms`` simulated milliseconds, stopping at the end of the program."""

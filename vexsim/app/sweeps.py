@@ -290,7 +290,7 @@ def run_trial(
     try:
         prepared = check(spec, root)
         make_program, mode = program_factory(prepared, executable)
-        sim = simulation_factory(prepared, make_program, mode, echo=None)()
+        sim = simulation_factory(prepared, make_program, mode, echo=None, drawings=False)()
         try:
             finished = sim.run_until_finished(max_seconds)
         finally:

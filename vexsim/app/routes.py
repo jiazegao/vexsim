@@ -910,7 +910,7 @@ def run_route(
     prepared = check(spec, root, route_text=text)
     executable = build(prepared, log=log)
     make_program, mode = program_factory(prepared, executable)
-    sim = simulation_factory(prepared, make_program, mode, echo=None)()
+    sim = simulation_factory(prepared, make_program, mode, echo=None, drawings=False)()
     program = sim.program
     record = program.route_record
     driven: list[list[float]] = []

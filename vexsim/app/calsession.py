@@ -202,6 +202,7 @@ def practice_job(params: dict, report: Report) -> dict:
             input_source=student,
             start=student.start,
             echo=None,
+            drawings=False,
         )
         student.attach(sim)
         report(f"the simulated student runs {len(tests)} tests: {', '.join(tests)}")

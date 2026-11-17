@@ -159,6 +159,8 @@ class CppProgram:
             "VEXSIM_START": f"{start.x:g},{start.y:g},{(90.0 - start.heading) % 360:g}",
             **(self.env or {}),
         }
+        if not sim.drawings.enabled:
+            env["VEXSIM_DRAWINGS"] = "0"  # nobody watches: vexsim::draw_* return at once
         if self.routine:
             env[routines.ENV] = self.routine
         if self.route is not None:

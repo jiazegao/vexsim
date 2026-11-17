@@ -61,15 +61,21 @@ def _color(color: str) -> str:
 
 
 class Drawings:
-    """The layers robot code has drawn. ``version`` changes whenever they do."""
+    """The layers robot code has drawn. ``version`` changes whenever they do.
 
-    def __init__(self, warn: Callable[[str], None] | None = None):
+    ``enabled`` False: nobody watches this run (a sweep's trial, a benchmark's), so nothing
+    is kept, and drawing costs the simulation nothing."""
+
+    def __init__(self, warn: Callable[[str], None] | None = None, *, enabled: bool = True):
         self.layers: dict[str, list[list]] = {}
         self.version = 0
+        self.enabled = enabled
         self._warn = warn
         self._warned: set[str] = set()
 
     def clear(self, layer: str) -> None:
+        if not self.enabled:
+            return
         layer = layer_name(layer)
         if self.layers.get(layer):
             self.layers[layer] = []
@@ -77,6 +83,8 @@ class Drawings:
 
     def add(self, layer: str, shape: list) -> None:
         """Add a shape (already checked) to a layer."""
+        if not self.enabled:
+            return
         layer = layer_name(layer)
         shapes = self.layers.get(layer)
         if shapes is None:
@@ -100,6 +108,8 @@ class Drawings:
 
     def apply(self, command: str) -> None:
         """A drawing command from C++ robot code (``D`` lines; see sim.hpp)."""
+        if not self.enabled:
+            return
         try:
             op, _, rest = command.partition(" ")
             layer, _, args = rest.partition(" ")
@@ -152,6 +162,12 @@ class Pen:
 
     def __init__(self, drawings: Drawings):
         self._drawings = drawings
+
+    @property
+    def shown(self) -> bool:
+        """Whether this run shows what the program draws (not a sweep's trial, say): for a
+        program that would rather not work out what to draw when nobody watches."""
+        return self._drawings.enabled
 
     def clear(self, layer: str = DEFAULT_LAYER) -> None:
         """Empty a layer, to draw it afresh."""

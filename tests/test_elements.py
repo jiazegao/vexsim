@@ -188,6 +188,51 @@ def test_still_field_matches_an_empty_one():
     assert sim_on(None, Pose(0, 0, 0)).arena is None  # an empty field just has walls
 
 
+def test_obstacles_out_of_reach_are_skipped_and_nothing_changes(monkeypatch):
+    """Phase 15.1: the arena checks no obstacle while the robot still has the room it had at
+    its last check. The run is the same, to the last bit, as with every one checked every
+    step: across open floor, into a barrier, along it and away again."""
+    from vexsim.physics.arena import Arena
+
+    barrier = {"type": "obstacle", "shape": "rect", "pos_in": [0, 0], "size_in": [48, 3]}
+    goal = {"type": "obstacle", "shape": "circle", "pos_in": [40, -30], "diameter_in": 10}
+
+    def run(skip: bool):
+        with monkeypatch.context() as patch:
+            if not skip:
+                patch.setattr(Arena, "_remember_room", lambda self, robot: None)
+            sim = sim_on(field(barrier, goal), Pose(-6, -50, 80))
+            states, skipped, touched = [], 0, 0
+            for k in range(500):
+                drive(sim, 0.5, 0.5) if k < 300 else drive(sim, -0.4, -0.6)  # in, then away
+                sim.run_for(0.01)
+                skipped += bool(sim.arena._room)
+                touched += bool(sim.robot.wall_contacts)
+                states.append((*sim.robot.pose, *sim.robot.qdot))
+            return states, skipped, touched
+
+    plain, never, _ = run(skip=False)
+    quick, skipped, touched = run(skip=True)
+    assert quick == plain
+    assert never == 0 and skipped > 100  # the open floor, on the way in and out
+    assert touched > 50  # and it did meet the barrier
+
+
+def test_a_robots_room_ends_at_the_nearest_obstacle():
+    from vexsim.physics.arena import ROOM_SLACK_M
+
+    goal = {"type": "obstacle", "shape": "circle", "pos_in": [40, 0], "diameter_in": 10}
+    sim = sim_on(field(goal), Pose(0, 0, 0))
+    sim.run_for(0.001)
+    x, y, room = sim.arena._room[sim.robot]
+    reach = math.hypot(7.5, 7.5)  # the footprint's corners, from its center (the CG's here)
+    assert m_to_in(room + ROOM_SLACK_M) == pytest.approx(40 - 5 - reach, abs=0.05)
+    assert (m_to_in(x), m_to_in(y)) == pytest.approx((0, 0), abs=0.01)
+    near = sim_on(field(goal), Pose(40 - 5 - reach + 1, 0, 0))  # circles overlap, corners don't
+    near.run_for(0.001)
+    assert not near.arena._room and not near.robot.wall_contacts
+
+
 # --- sensing ---------------------------------------------------------------------------------
 
 
