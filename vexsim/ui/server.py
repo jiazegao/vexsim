@@ -817,7 +817,9 @@ def create_app(
         yield
         await run_in_threadpool(server.shutdown)
 
-    app = FastAPI(title="vexsim", version=__version__, lifespan=lifespan, docs_url=None)
+    # (no pages of generated documentation: what each endpoint answers with is in
+    # protocol.RESPONSES, and every route here is in it)
+    app = FastAPI(title="vexsim", version=__version__, lifespan=lifespan, openapi_url=None)
     app.state.server = server
 
     @app.get("/api/info")

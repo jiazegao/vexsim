@@ -47,12 +47,14 @@ ConfigKind = Literal["robot", "field"]
 ResultKind = Literal["bench", "sweeps", "calibrations", "checks"]
 Workers = Annotated[int, Field(ge=1, le=64)]
 # What robot code draws on the field (vexsim.runtime.drawing), by layer: colors from the
-# field's palette, then shapes in inches and degrees, as lists that start with their kind
+# field's palette, then shapes in inches and degrees, as lists that start with their kind.
+# "points" is a run of points of one color and size, as they travel (drawing.packed).
 DrawColor = Literal[
     "violet", "blue", "orange", "aqua", "yellow", "magenta", "green", "red", "ink", "muted"
 ]
 Shape = Union[  # noqa: UP007 - a named union, for the TypeScript generator
     tuple[Literal["point"], float, float, DrawColor, float],  # x, y, color, size (pixels)
+    tuple[Literal["points"], DrawColor, float, list[float]],  # color, size, each one's x, y
     tuple[Literal["line"], float, float, float, float, DrawColor],  # x1, y1, x2, y2
     tuple[Literal["circle"], float, float, float, DrawColor],  # x, y, radius
     tuple[Literal["ellipse"], float, float, float, float, float, DrawColor],  # x, y, rx, ry, turn
@@ -1921,6 +1923,101 @@ ALIASES: dict[str, Any] = {
     "ServerMessage": ServerMessage,
     "ClientCommand": ClientCommand,
 }
+
+# What each endpoint answers with when it succeeds: its model, or None where there's nothing
+# to check (nothing comes back; a file; the page). The tests' client checks every answer it
+# gets against this (tests/conftest.py), and a test fails for an endpoint that isn't here.
+# The server doesn't check as it runs: a recording is megabytes, sent as it's kept.
+RESPONSES: dict[tuple[str, str], Any] = {
+    ("GET", "/api/info"): AppInfo,
+    ("GET", "/api/workspace"): WorkspaceInfo | WorkspaceUnchanged,
+    ("POST", "/api/files/duplicate"): WorkspaceFile,
+    ("DELETE", "/api/files"): None,
+    ("POST", "/api/preview"): Preview,
+    ("GET", "/api/configurations"): RunConfigurations,
+    ("PUT", "/api/configurations"): RunConfigurations,
+    # configs and routes in their editors
+    ("GET", "/api/config"): ConfigFile,
+    ("PUT", "/api/config"): ConfigSaved,
+    ("POST", "/api/config/check"): ConfigCheck,
+    ("POST", "/api/config/patch"): ConfigPatched,
+    ("POST", "/api/config/overrides"): ConfigPatched,
+    ("POST", "/api/config/drive"): ConfigPatched,
+    ("POST", "/api/config/new"): NewRobot,
+    ("POST", "/api/programs/starter"): WorkspaceFile,
+    ("GET", "/api/route"): RouteFile,
+    ("POST", "/api/route/check"): RouteCheck,
+    ("POST", "/api/route/patch"): RoutePatched,
+    ("POST", "/api/routes/new"): NewRoute,
+    ("POST", "/api/routes/mirror"): MirroredRoute,
+    ("GET", "/api/routes/export"): RoutesExport,
+    ("POST", "/api/routes/export"): RoutesExport,
+    ("GET", "/api/routines"): ProjectRoutines,
+    # recorded runs, and logs played back
+    ("GET", "/api/runs"): list[RunRecord],
+    ("GET", "/api/runs/{run_id}"): RunDetails,
+    ("PATCH", "/api/runs/{run_id}"): RunRecord,
+    ("DELETE", "/api/runs/{run_id}"): None,
+    ("GET", "/api/runs/{run_id}/tape"): Tape,
+    ("GET", "/api/runs/{run_id}/telemetry"): Telemetry,
+    ("GET", "/api/runs/{run_id}/telemetry.csv"): None,  # a file
+    ("POST", "/api/replay"): Replay,
+    ("GET", "/api/mcllog"): MclLogTape,
+    ("GET", "/api/robotlog"): RobotLogTape | NothingToPlay,
+    # live runs
+    ("POST", "/api/sessions"): SessionInfo,
+    ("GET", "/api/sessions"): list[SessionInfo],
+    ("GET", "/api/sessions/{session_id}"): SessionInfo,
+    ("POST", "/api/sessions/{session_id}/restart"): SessionInfo,
+    ("DELETE", "/api/sessions/{session_id}"): None,
+    ("WS", "/api/sessions/{session_id}/ws"): ServerMessage,  # each message
+    ("WS", "/api/presence"): None,  # nothing is sent: a page holds it open
+    # long jobs, and what they found: a result is its kind's
+    ("POST", "/api/jobs"): JobInfo,
+    ("GET", "/api/jobs"): list[JobInfo],
+    ("GET", "/api/jobs/{job_id}"): JobInfo,
+    ("DELETE", "/api/jobs/{job_id}"): JobInfo,
+    ("GET", "/api/results/{kind}"): list[ResultAbout],
+    ("GET", "/api/results/{kind}/{result_id}"): {
+        "bench": BenchResult,
+        "sweeps": SweepResult,
+        "calibrations": CalibrationResult,
+        "checks": AutonCheckResult,
+    },
+    ("DELETE", "/api/results/{kind}/{result_id}"): None,
+    ("GET", "/api/results/{kind}/{result_id}/files/{name:path}"): None,  # a file
+    ("POST", "/api/results/bench/{result_id}/replay"): Replay,
+    ("GET", "/api/bench/scenario"): ScenarioInfo,
+    ("GET", "/api/sweeps"): SweepsFile,
+    ("PUT", "/api/sweeps"): SweepsFile,
+    # calibration
+    ("GET", "/api/calibrate/parameters"): CalibrationSetup,
+    ("POST", "/api/calibrate/routine"): RoutinePlan,
+    ("GET", "/api/calibration/program"): CalibrationProgram,
+    ("GET", "/api/calibration/session"): CalibrationSessionState,
+    ("POST", "/api/calibration/collect"): SessionCollected,
+    ("POST", "/api/calibration/use"): CalibrationSessionState,
+    ("POST", "/api/calibration/apply"): SessionApplied,
+    ("GET", "/api/calibration/marks"): PassMarks,
+    ("PUT", "/api/calibration/marks"): PassMarks,
+    ("POST", "/api/calibration/end"): EndFound,
+    # pictures and vexsim's own documents
+    ("GET", "/api/image"): None,  # a file
+    ("GET", "/api/guide"): GuideIndex,
+    ("GET", "/api/guide/doc"): GuideText,
+    ("GET", "/api/guide/file"): None,  # a file
+}
+
+
+def response_model(method: str, path: str, params: dict[str, str] | None = None) -> Any:
+    """The model an endpoint answers with (None: nothing to check), by its method and its
+    path as the server declares it (``/api/runs/{run_id}``); ``params``: the path's values,
+    for the one endpoint whose answer goes by its ``kind``. Raises KeyError for an endpoint
+    ``RESPONSES`` doesn't have."""
+    model = RESPONSES[(method.upper(), path)]
+    if isinstance(model, dict):
+        return model[(params or {})["kind"]]
+    return model
 
 
 def _ts(annotation: Any, aliases: dict[int, str]) -> str:

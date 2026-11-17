@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from vexsim.app.jsonsafe import finite
 from vexsim.app.runspec import RunSpec
+from vexsim.runtime.drawing import count, packed
 
 RUNS_DIR = ".vexsim/runs"
 KEEP = 50
@@ -161,16 +162,16 @@ class TapeRecorder:
         if drawings.version == self.drawn or t < self.next_drawing_t - 1e-9:
             return
         self.drawn = drawings.version
-        layers = drawings.snapshot()
+        layers = packed(drawings.snapshot())  # a cloud of points as one shape
         events = self.events["drawings"]
         if (events[-1][1] if events else {}) == layers:  # nothing drawn is how a tape starts
             return
         events.append([t, layers])
-        self.drawn_shapes += sum(len(shapes) for shapes in layers.values())
+        self.drawn_shapes += count(layers)
         self.next_drawing_t = t + self.drawing_period
         if self.drawn_shapes > MAX_DRAWN:  # robot code that draws a lot: keep it more coarsely
             events[:] = events[::2]
-            self.drawn_shapes = sum(len(s) for _, layers in events for s in layers.values())
+            self.drawn_shapes = sum(count(layers) for _, layers in events)
             self.drawing_period *= 2
 
     def _event(self, name: str, t: float, value) -> None:
@@ -410,6 +411,8 @@ def mcl_tape(path: Path, shown: str) -> dict:
             "summary": log.summary(),
             "times": times,
             "estimate": [[round(x, 3), round(y, 3), round(h, 2)] for x, y, h in log.estimates()],
-            "drawings": [[t, log.drawings(u)] for t, u in zip(times, log.updates, strict=True)],
+            "drawings": [
+                [t, packed(log.drawings(u))] for t, u in zip(times, log.updates, strict=True)
+            ],
         }
     )

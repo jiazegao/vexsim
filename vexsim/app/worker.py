@@ -395,6 +395,7 @@ class Worker:
 
     def send_frame(self) -> None:
         from vexsim.app.frames import frame_of, overlay_of
+        from vexsim.runtime.drawing import packed
 
         sim = self.sim
         if sim is None:
@@ -413,7 +414,7 @@ class Worker:
             self.send(overlay)
         if sim.drawings.version != self.drawn:
             self.drawn = sim.drawings.version
-            self.send({"type": "drawings", "layers": sim.drawings.snapshot()})
+            self.send({"type": "drawings", "layers": packed(sim.drawings.snapshot())})
         start = getattr(sim.input_source, "start_s", None)
         if start is not None and start != self.following:
             self.following = start

@@ -3,8 +3,8 @@
 A session waits for its program's build when the program is a PROS project ("building"),
 then starts a worker process (``vexsim.app.worker``) and relays everything the worker
 says to ``listener(session, message)``. It also keeps what a viewer that connects late
-needs: the latest scene, overlay, frame and status, the build log and the console's last
-lines (``catch_up``).
+needs: the latest scene, overlay, frame and status, what the robot code has drawn, where a
+run that follows a log began to, the build log and the console's last lines (``catch_up``).
 
 A session knows the files its run was made from (``watch``, ``vexsim.app.runfiles``) and
 what they were when it started (``stamp``). ``look``, called now and then while someone is
@@ -52,6 +52,8 @@ class Session:
         self.mode = ""
         self.scene: dict | None = None
         self.overlay: dict | None = None
+        self.drawings: dict | None = None  # what the robot code has drawn, as last sent
+        self.following: dict | None = None  # where a run that follows a log began to
         self.frame: dict | None = None
         self.error: dict | None = None
         self.build_log: list[str] = []
@@ -92,6 +94,10 @@ class Session:
                 messages.append(self.scene)
             if self.overlay is not None:
                 messages.append(self.overlay)
+            if self.drawings is not None:
+                messages.append(self.drawings)
+            if self.following is not None:
+                messages.append(self.following)
             if self.console:
                 messages.append({"type": "console", "lines": list(self.console)})
             if self.error is not None:
@@ -257,14 +263,19 @@ class Session:
             if kind == "status":
                 self.state, self.message = message["state"], message.get("message")
                 self.mode = message.get("mode") or self.mode
-            elif kind == "scene":
+            elif kind == "scene":  # a run begins: nothing of the one before is left
                 self.scene, self.overlay, self.frame, self.error = message, None, None, None
+                self.drawings = self.following = None
                 self.console.clear()
                 self.run_id = message.get("run_id")
             elif kind == "frame":
                 self.frame = message
             elif kind == "overlay":
                 self.overlay = message
+            elif kind == "drawings":
+                self.drawings = message
+            elif kind == "following":
+                self.following = message
             elif kind == "console":
                 self.console.extend(message["lines"])
             elif kind == "error":

@@ -5,11 +5,13 @@ from __future__ import annotations
 from typing import get_args
 
 import pytest
+from pydantic import TypeAdapter
 
 from vexsim.app import runs
+from vexsim.app.session import Session
 from vexsim.runtime import drawing
-from vexsim.runtime.drawing import Drawings, Pen
-from vexsim.ui.protocol import DrawColor
+from vexsim.runtime.drawing import Drawings, Pen, count, packed
+from vexsim.ui.protocol import DrawColor, DrawingsMessage, RunSpec, ServerMessage, Shape
 
 
 def test_python_programs_draw_with_a_pen():
@@ -135,7 +137,7 @@ def test_tapes_keep_drawings_as_they_change(tmp_path, monkeypatch):
     sample(0.2)
     assert tape.events["drawings"] == [
         [0.05, {"a": [["point", 1, 1, "violet", 3]]}],
-        [0.2, {"a": [["point", 1, 1, "violet", 3], ["point", 2, 2, "violet", 3]]}],
+        [0.2, {"a": [["points", "violet", 3, [1, 1, 2, 2]]]}],  # two alike: packed (15.6)
     ]
     # robot code that draws a lot is kept more coarsely
     monkeypatch.setattr(runs, "MAX_DRAWN", 10)
@@ -145,3 +147,93 @@ def test_tapes_keep_drawings_as_they_change(tmp_path, monkeypatch):
     kept = [t for t, _ in tape.events["drawings"]]
     assert tape.drawing_period > runs.TAPE_PERIOD_S and tape.drawn_shapes <= 10
     assert len(kept) < 8 and kept == sorted(kept)
+
+
+# --- as drawings travel: runs of points packed (phase 15.6) -----------------------------------
+
+
+def test_runs_of_points_travel_as_one_shape():
+    pen = Pen(drawings := Drawings())
+    for x in range(4):  # a cloud: four alike
+        pen.point("mcl", x, 0, color="violet", size=4)
+    pen.line("mcl", 0, 0, 1, 1)  # ends the run
+    pen.point("mcl", 9, 9, color="violet", size=4)  # one alone stays a point
+    pen.point("mcl", 5, 5, color="red", size=4)  # another color: not the same run
+    pen.point("mcl", 6, 6, color="red", size=4)
+    pen.point("mcl", 7, 7, color="red", size=2)  # another size
+    pen.text("notes", 1, 2, "hello")
+    drawn = drawings.snapshot()
+    as_drawn = {name: [list(shape) for shape in shapes] for name, shapes in drawn.items()}
+    sent = packed(drawn)
+    assert sent == {
+        "mcl": [
+            ["points", "violet", 4, [0, 0, 1, 0, 2, 0, 3, 0]],
+            ["line", 0, 0, 1, 1, "violet"],
+            ["point", 9, 9, "violet", 4],
+            ["points", "red", 4, [5, 5, 6, 6]],
+            ["point", 7, 7, "red", 2],
+        ],
+        "notes": [["text", 1, 2, "hello", "ink"]],
+    }
+    assert drawn == as_drawn == drawings.snapshot()  # what was drawn is as it was
+    assert count(sent) == count(drawn) == 10  # each point of a run counts
+    assert packed({}) == {} and packed({"a": []}) == {"a": []} and count({}) == 0
+    # and it's a shape the protocol has, in a message and on its own
+    TypeAdapter(ServerMessage).validate_python({"type": "drawings", "layers": sent})
+    DrawingsMessage.model_validate({"type": "drawings", "layers": sent})
+    shapes = TypeAdapter(Shape)
+    assert shapes.validate_python(["points", "violet", 4, [0, 0, 1, 0]])
+    for wrong in (["points", "violet", 4], ["points", "puce", 4, [0, 0]], ["points", 4, [0, 0]]):
+        with pytest.raises(ValueError):
+            shapes.validate_python(wrong)
+
+
+def test_a_cloud_of_points_is_a_third_of_the_bytes():
+    import json
+    import random
+
+    rng = random.Random(1)
+    pen = Pen(drawings := Drawings())
+    for _ in range(500):  # MCL's particles, as the 1239E port draws them
+        pen.point("particles", rng.uniform(-72, 72), rng.uniform(-72, 72), color="violet", size=4)
+    plain = len(json.dumps(drawings.snapshot(), separators=(",", ":")))
+    sent = len(json.dumps(packed(drawings.snapshot()), separators=(",", ":")))
+    assert sent < 0.45 * plain, (plain, sent)
+
+
+def test_a_tape_counts_the_points_it_keeps(tmp_path, monkeypatch):
+    monkeypatch.setattr(runs, "MAX_DRAWN", 100)
+    tape = runs.TapeRecorder(tmp_path, {}, {"type": "scene"})
+    pen = Pen(drawings := Drawings())
+    for i in range(8):
+        pen.clear("cloud")
+        for x in range(20):  # twenty points a time: one shape as kept, counted as twenty
+            pen.point("cloud", x, i)
+        frame = {"t": 0.05 * i, "lcd": [], "controller_screen": []}
+        tape.sample(frame, {"path": None, "target": None}, drawings)
+    events = tape.events["drawings"]
+    assert all(
+        len(layers["cloud"]) == 1 and layers["cloud"][0][0] == "points" for _, layers in events
+    )
+    assert tape.drawn_shapes == sum(count(layers) for _, layers in events) <= 100
+    assert tape.drawing_period > runs.TAPE_PERIOD_S  # kept more coarsely, past the limit
+
+
+def test_a_page_that_joins_mid_run_gets_what_was_drawn(tmp_path):
+    """A reload mid-run: the session's catch-up has the code's drawings and where a run that
+    follows a log began, which it used to leave out (they came only when they next changed)."""
+    session = Session("s1", RunSpec(robot="robot.yaml"), base=tmp_path)
+    kinds = lambda: [message["type"] for message in session.catch_up()[0]]  # noqa: E731
+    assert kinds() == ["session", "status"]
+    session._receive({"type": "scene", "run_id": "r1"})
+    layers = packed({"mcl": [["point", 1, 2, "violet", 4], ["point", 3, 4, "violet", 4]]})
+    session._receive({"type": "drawings", "layers": layers})
+    session._receive({"type": "following", "start": 1.25})
+    assert kinds() == ["session", "scene", "drawings", "following", "status"]
+    caught_up = {message["type"]: message for message in session.catch_up()[0]}
+    assert caught_up["drawings"]["layers"] == {"mcl": [["points", "violet", 4, [1, 2, 3, 4]]]}
+    assert caught_up["following"]["start"] == 1.25
+    session._receive({"type": "drawings", "layers": {}})  # the code cleared them: so they are
+    assert {m["type"]: m for m in session.catch_up()[0]}["drawings"]["layers"] == {}
+    session._receive({"type": "scene", "run_id": "r2"})  # a run begins: the last one's are gone
+    assert kinds() == ["session", "scene", "status"]

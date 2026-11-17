@@ -21,6 +21,11 @@ from +x (C++ code gives them as LemLib does; ``sim.hpp`` turns them around):
 
 Colors are names from the field's palette (``COLORS``), so drawings follow the light and
 dark themes.
+
+On their way to the page and into a recording, layers are packed (``packed``): a run of
+points of one color and size, which is what a cloud of particles is, goes as one shape,
+``["points", color, size, [x, y, x, y, ...]]``. Robot code never draws one, and
+``Drawings.layers`` never holds one.
 """
 
 from __future__ import annotations
@@ -39,6 +44,43 @@ POINT_SIZE = 3.0
 
 # numbers each shape takes after its kind and before its color (text: x, y, then the text)
 _NUMBERS = {"point": 2, "line": 4, "circle": 3, "ellipse": 5, "pose": 3}
+
+
+def packed(layers: dict[str, list[list]]) -> dict[str, list[list]]:
+    """Layers as they travel: each run of points of one color and size as one ``points``
+    shape (see the module's text). What isn't a point, and a point on its own, goes as it
+    is, and nothing changes place: what was drawn later is still drawn over what was earlier.
+    The layers given aren't changed."""
+    out: dict[str, list[list]] = {}
+    for name, shapes in layers.items():
+        kept: list[list] = []
+        run: list | None = None  # the points shape the last points went into
+        alone: list | None = None  # or the last shape, if it's a point with none before it
+        for shape in shapes:
+            if shape[0] != "point":
+                kept.append(shape)
+                run = alone = None
+                continue
+            _, x, y, color, size = shape
+            if run is not None and run[1] == color and run[2] == size:
+                run[3] += (x, y)
+            elif alone is not None and alone[3] == color and alone[4] == size:
+                run = kept[-1] = ["points", color, size, [alone[1], alone[2], x, y]]
+                alone = None
+            else:
+                kept.append(shape)
+                run, alone = None, shape
+        out[name] = kept
+    return out
+
+
+def count(layers: dict[str, list[list]]) -> int:
+    """How many shapes layers hold, packed or not: each point of a run counts."""
+    return sum(
+        len(shape[3]) // 2 if shape[0] == "points" else 1
+        for shapes in layers.values()
+        for shape in shapes
+    )
 
 
 def layer_name(name: str) -> str:

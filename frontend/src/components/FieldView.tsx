@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { Drawings, Ghost, Layers, Picture, Shape, StartMarker } from "../draw";
-import { draw, HANDLE_GAP_PX, HANDLE_RADIUS_PX } from "../draw";
+import { draw, HANDLE_GAP_PX, HANDLE_RADIUS_PX, shapeCount } from "../draw";
 import type { Palette } from "../palette";
 import { saveFile } from "../host";
 import { usePanel } from "../layout";
@@ -240,7 +240,7 @@ export function FieldView(props: FieldViewProps) {
       element.dataset.time = t === null ? "" : t.toFixed(3);
       element.dataset.view = `${view!.scale.toFixed(4)},${view!.cx.toFixed(3)},${view!.cy.toFixed(3)}`;
       element.dataset.ghosts = String(ghosts.length);
-      element.dataset.drawn = String(layers.drawings && picture.drawings ? Object.values(picture.drawings).reduce((n, shapes) => n + shapes.length, 0) : 0);
+      element.dataset.drawn = String(layers.drawings && picture.drawings ? shapeCount(picture.drawings) : 0);
       element.dataset.draws = String(++draws);
     };
 

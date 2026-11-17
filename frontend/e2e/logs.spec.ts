@@ -53,6 +53,18 @@ test("draws what the robot code draws, live and recorded, a layer at a time", as
   await expect.poll(() => drawn(page)).toBe(0);
 });
 
+test("a page reloaded in the middle of a run still shows what the code has drawn", async ({ page }) => {
+  await page.getByTestId("config").selectOption("Tour (Python)");
+  await page.getByTestId("run").click();
+  await expect.poll(() => drawn(page), { timeout: 30_000 }).toBe(10); // its stops, drawn once
+  await page.getByTestId("pause").click();
+  await expect(page.getByTestId("status")).toHaveText("Paused");
+  await page.reload();
+  await expect(page.getByTestId("status")).toHaveText("Paused"); // its run, where it was
+  // (phase 15.6) the drawings aren't sent again until they change: a page that joins is told
+  await expect.poll(() => drawn(page)).toBe(10);
+});
+
 test("plays a robot's MCL log, then beside its replay on one timeline", async ({ page }) => {
   test.setTimeout(120_000);
   await page.getByTestId(`item-${LOG}`).click();

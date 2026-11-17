@@ -227,6 +227,14 @@ function drawOverlay(ctx: CanvasRenderingContext2D, view: View, colors: Palette,
   }
 }
 
+/** How many shapes the robot code drew: each point of a run of points counts (they travel
+ * as one shape, "points"). */
+export function shapeCount(drawings: Drawings): number {
+  let count = 0;
+  for (const shapes of Object.values(drawings)) for (const shape of shapes) count += shape[0] === "points" ? shape[3].length >> 1 : 1;
+  return count;
+}
+
 /** What the robot code drew: its marks (under the robot), or its text (over it). Text is in
  * ink, with a dot of its color before it when it has one. */
 export function drawShapes(ctx: CanvasRenderingContext2D, view: View, colors: Palette, drawings: Drawings, text: boolean): void {
@@ -241,6 +249,20 @@ export function drawShapes(ctx: CanvasRenderingContext2D, view: View, colors: Pa
           const [sx, sy] = toScreen(view, x, y);
           ctx.beginPath();
           ctx.arc(sx, sy, Math.max(0.75, size / 2), 0, 2 * Math.PI);
+          ctx.fillStyle = colors.hues[color];
+          ctx.fill();
+          break;
+        }
+        case "points": {
+          // a run of points of one color and size (a cloud of particles): filled at once
+          const [, color, size, at] = shape;
+          const radius = Math.max(0.75, size / 2);
+          ctx.beginPath();
+          for (let i = 0; i + 1 < at.length; i += 2) {
+            const [sx, sy] = toScreen(view, at[i], at[i + 1]);
+            ctx.moveTo(sx + radius, sy);
+            ctx.arc(sx, sy, radius, 0, 2 * Math.PI);
+          }
           ctx.fillStyle = colors.hues[color];
           ctx.fill();
           break;
