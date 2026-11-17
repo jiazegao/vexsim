@@ -820,6 +820,31 @@ class ConfigSaved(_Message):
     version: str
 
 
+class GuideDocument(_Message):
+    """One of vexsim's own documents (the README, a file in docs/), for the Guide page."""
+
+    id: str
+    path: str  # from the repository's top: README.md, docs/cpp.md
+    title: str
+    about: str  # what it's for, in a few words
+
+
+class GuideIndex(_Message):
+    """``GET /api/guide``: the documents there are to read. ``available``: they're installed
+    beside vexsim, so the page can show them; otherwise it links to ``repository``'s."""
+
+    available: bool
+    repository: str
+    documents: list[GuideDocument]
+
+
+class GuideText(_Message):
+    """``GET /api/guide/doc?id=``: a document's Markdown."""
+
+    document: GuideDocument
+    text: str
+
+
 class NewRobotRequest(_Message):
     """Make a robot config at `path` (in the workspace; never over a file): a rectangle to
     draw over on a `preset` drivetrain (tank4, tank6, xdrive, mecanum, hdrive), or a copy
@@ -1806,6 +1831,9 @@ MODELS: list[type[BaseModel]] = [
     ConfigPatched,
     ConfigSave,
     ConfigSaved,
+    GuideDocument,
+    GuideIndex,
+    GuideText,
     NewRobotRequest,
     NewRobot,
     ConfigDriveRequest,

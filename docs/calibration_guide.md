@@ -37,7 +37,7 @@ Then: [9. When to calibrate again](#9-when-to-calibrate-again), [10. A new robot
 | the session: its logs and report (section 6), named by its date | `calibration/2026-11-07` |
 
 **Or in the app.** You can do everything from section 4 on in vexsim's app instead of typing the commands. Open it with `vexsim ui` ([section 3](#3-describe-the-robot)) and click *Calibrate* at the top.
-- The *Session* tab has the steps, numbered, in this guide's order, and each one names the command it runs.
+- The *Session* tab has the steps, numbered, in this guide's order, and each one names the command it runs. A row at its top says which are done and which is next; *In the guide* on a step opens its section of this guide, which the app has on its *Guide* page.
 - In its step 3, *Practice in vexsim first* runs the whole session on a simulated robot. It's a good way to learn the steps before the field.
 - The *Autonomous check* tab is [section 8](#8-the-autonomous-check).
 

@@ -14,6 +14,8 @@ import type {
   ConfigKind,
   ConfigPatched,
   EndFound,
+  GuideIndex,
+  GuideText,
   NewRobot,
   NewRobotRequest,
   NewRoute,
@@ -234,6 +236,12 @@ export const api = {
   planExport: (project: string) => request<RoutesExport>(`/api/routes/export?project=${encodeURIComponent(project)}`),
   exportRoutes: (project: string) => request<RoutesExport>("/api/routes/export", post({ project })),
   duplicateFile: (path: string) => request<WorkspaceFile>("/api/files/duplicate", { method: "POST", body: JSON.stringify({ path }) }),
+  /** A first program written into the folder (never over a file): its path. */
+  starterProgram: () => request<WorkspaceFile>("/api/programs/starter", { method: "POST" }),
+  /** vexsim's own documents, for the Guide page: which there are, one's text, a picture of one's. */
+  guide: () => request<GuideIndex>("/api/guide"),
+  guideDocument: (id: string) => request<GuideText>(`/api/guide/doc?id=${encodeURIComponent(id)}`),
+  guidePictureUrl: (file: string) => withToken(`/api/guide/file?path=${encodeURIComponent(file)}`),
   deleteFile: (path: string) => request<void>(`/api/files?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
 
   /** Write a config opened at `version` (null: whatever is on disk); a conflict if the

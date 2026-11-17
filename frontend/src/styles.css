@@ -3455,3 +3455,405 @@ section.console.folded .editor {
   font-size: 13px;
   white-space: nowrap;
 }
+
+/* --- a way in (phase 15.4): steps in a row, where to start, and the guide ---------------- */
+
+/* Steps to take in order, each done, next or to do: a first run's, a calibration session's */
+.steprow {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(140px, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto; /* in a window too narrow for them all, the row scrolls */
+  list-style: none;
+}
+
+.stepcard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+
+.stepcard.next {
+  border-color: var(--series-1);
+  box-shadow: inset 0 2px 0 var(--series-1);
+}
+
+.step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+}
+
+button.step-head {
+  cursor: pointer;
+}
+
+button.step-head:hover:not(:disabled) {
+  background: none;
+}
+
+button.step-head:hover .step-title {
+  text-decoration: underline;
+}
+
+.step-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stepcard.done .step-mark {
+  background: var(--good);
+  color: #ffffff;
+}
+
+.stepcard.next .step-mark {
+  background: var(--series-1);
+  color: #ffffff;
+}
+
+.step-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.step-state {
+  flex: none;
+  padding-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.stepcard.next .step-state {
+  color: var(--series-1);
+  font-weight: 600;
+}
+
+.step-detail {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.step-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.steprow a,
+.firstrun a,
+.guide-nav a,
+.page-head a {
+  color: var(--series-1);
+}
+
+/* "Start here": the first run's steps, over the field until they're done or put away */
+.firstrun {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.firstrun header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.firstrun h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* The Guide page: the documents on the left, the one being read on the right, each scrolling
+   by itself (the list stays while the document moves) */
+.guidebox {
+  flex: 1;
+  min-height: 0;
+  margin: -12px -16px -16px; /* to the edges of the main area: its padding is the page's own */
+}
+
+.guidebox[hidden] {
+  display: none;
+}
+
+.guide {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.guide-nav {
+  overflow: auto;
+  padding: 12px 10px 24px 16px;
+  border-right: 1px solid var(--border);
+}
+
+.guide-nav h1 {
+  margin: 4px 0 8px;
+  font-size: 20px;
+}
+
+.guide-docs,
+.guide-sections {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-docs > li > a {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.guide-docs > li > a:hover,
+.guide-sections a:hover {
+  background: var(--surface-2);
+}
+
+.guide-docs > li > a.on {
+  background: var(--accent-wash);
+  box-shadow: inset 3px 0 0 var(--series-1);
+}
+
+.guide-sections {
+  margin: 2px 0 8px 12px;
+  border-left: 1px solid var(--border);
+}
+
+.guide-sections a {
+  display: block;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+.guide-sections a.on {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.guide-body {
+  overflow: auto;
+  padding: 8px 28px 60px;
+  scroll-padding-top: 12px;
+}
+
+@media (max-width: 1100px) {
+  .guide {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .guide-nav {
+    max-height: 30vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .guide-body {
+    padding: 8px 16px 40px;
+  }
+}
+
+/* A document, as it reads */
+.document {
+  max-width: 92ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+.document h1 {
+  margin: 14px 0 12px;
+  font-size: 26px;
+  line-height: 1.25;
+}
+
+.document h2 {
+  margin: 32px 0 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.document h3 {
+  margin: 24px 0 8px;
+  font-size: 16.5px;
+}
+
+.document h4,
+.document h5,
+.document h6 {
+  margin: 18px 0 6px;
+  font-size: 14.5px;
+}
+
+.document :is(h1, h2, h3, h4, h5, h6) .anchor {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-weight: 400;
+  text-decoration: none;
+  opacity: 0;
+}
+
+/* its mark is drawn, not written: a heading's text is its words */
+.document .anchor::before {
+  content: "#";
+}
+
+.document :is(h1, h2, h3, h4, h5, h6):hover .anchor,
+.document .anchor:focus-visible {
+  opacity: 1;
+}
+
+.document p,
+.document ul,
+.document ol,
+.document pre,
+.document blockquote,
+.document .table-scroll {
+  margin: 0 0 12px;
+}
+
+.document ul,
+.document ol {
+  padding-left: 24px;
+}
+
+.document li {
+  margin: 3px 0;
+}
+
+.document li > p {
+  margin-bottom: 6px;
+}
+
+.document li > :is(ul, ol) {
+  margin: 3px 0;
+}
+
+.document li.box {
+  list-style: none;
+  margin-left: -20px;
+}
+
+.document li.box input {
+  margin: 0 7px 0 0;
+  vertical-align: -1px;
+}
+
+.document code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  font-size: 0.88em;
+}
+
+.document pre {
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  line-height: 1.45;
+}
+
+.document pre code {
+  padding: 0;
+  background: none;
+  font-size: 12.5px;
+}
+
+.document a {
+  color: var(--series-1);
+}
+
+.document img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.document blockquote {
+  padding: 2px 14px;
+  border-left: 3px solid var(--axis);
+  color: var(--text-secondary);
+}
+
+.document blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.document hr {
+  margin: 22px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.document .table-scroll {
+  overflow-x: auto;
+}
+
+.document table {
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.document th,
+.document td {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.document th {
+  background: var(--surface-2);
+  font-weight: 600;
+}

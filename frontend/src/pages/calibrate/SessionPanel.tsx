@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { JobStatus, ProblemBox } from "../../components/JobPanel";
+import type { Step } from "../../components/Steps";
+import { Steps } from "../../components/Steps";
 import { isActive, latest, useJob } from "../../jobs";
 import type { CalibrationProgram, CalibrationSessionState, ProgramPlan, RunProblem, SessionReport, SessionRun, WorkspaceInfo } from "../../protocol";
+import { GUIDE, SESSION_STEPS, sessionSteps } from "./steps";
 
 const PROGRAM = "calibration/vexsim_calibration"; // where the guide puts the program
 const PRACTICE = "calibration/practice";
@@ -42,6 +45,7 @@ export function SessionPanel(props: {
   onEdit: (path: string) => void;
   onPlayLog: (path: string) => void;
   onRescan: () => void;
+  guide: (doc: string, at?: string | null) => { href: string; go: () => void }; // a link into the guide
 }) {
   const items = props.workspace?.items ?? [];
   const robots = useMemo(() => items.filter((i) => i.kind === "robot"), [items]);
@@ -192,6 +196,16 @@ export function SessionPanel(props: {
   };
 
   const plan = program?.plan ?? null;
+  // the five steps, each done, next or to do, with a way to its card and to its section of the guide
+  const states = sessionSteps(robot, fieldPath, plan, state);
+  const steps: Step[] = SESSION_STEPS.map((step, i) => ({
+    key: step.key,
+    title: step.title,
+    state: states[i].state,
+    detail: states[i].detail,
+    more: { label: "In the guide", ...props.guide(GUIDE, step.at) },
+    onPick: () => document.querySelector(`[data-testid="${step.card}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }),
+  }));
   const writing = isActive(programJob.job?.state);
   const listening = isActive(usbJob.job?.state);
   const practicing = isActive(practiceJob.job?.state);
@@ -200,6 +214,7 @@ export function SessionPanel(props: {
   return (
     <div className="page-split" data-testid="session-panel">
       <div className="page-main">
+        <Steps steps={steps} label="The session, step by step" testid="session-steps" />
         <section className="card" data-testid="session-setup">
           <h2>1. The robot and the field</h2>
           <p className="muted small">

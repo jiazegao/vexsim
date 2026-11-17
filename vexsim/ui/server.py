@@ -16,6 +16,8 @@ app from ``static/`` and an API under ``/api``:
   what benchmarks, sweeps and calibrations found
 - ``GET``/``PUT /api/configurations`` and ``/api/sweeps``: the saved runs and sweeps
 - ``GET``/``PUT /api/config``, ``POST /api/config/{check,patch,overrides}``: the editors
+- ``GET /api/guide[/doc?id=|/file?path=]``: vexsim's own documents, for the Guide page;
+  ``POST /api/programs/starter``: a first program, written into the folder
 - ``WS /api/presence``: held open by each of the app's pages, so the server knows when the
   last one closes (``serve(stop_when_closed=True)`` then stops)
 
@@ -58,7 +60,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers, MutableHeaders
 
 from vexsim import __version__
-from vexsim.app import configs, files, newrobot, results, runs, yamledit
+from vexsim.app import configs, files, guide, newrobot, results, runs, starter, yamledit
 from vexsim.app.benchmarks import ScenarioProblem, describe_scenario
 from vexsim.app.frames import preview_of
 from vexsim.app.jobs import JobManager
@@ -95,6 +97,9 @@ from vexsim.ui.protocol import (
     EndRequest,
     ExportedFile,
     ExportedRoutine,
+    GuideDocument,
+    GuideIndex,
+    GuideText,
     JobInfo,
     MirroredRoute,
     MirrorRouteRequest,
@@ -1140,6 +1145,16 @@ def create_app(
             return JSONResponse({"detail": str(exc)}, status_code=422)
         return NewRobot(path=server.workspace.relative(file))
 
+    @app.post("/api/programs/starter", responses={422: {}})
+    def starter_program():
+        """A first program written into the workspace's programs/ folder (never over a
+        file): a short autonomous routine and a tank drive, to run, read and change."""
+        try:
+            file = starter.write_starter(server.workspace.root)
+        except OSError as exc:
+            return JSONResponse({"detail": f"can't write the program: {exc}"}, status_code=422)
+        return WorkspaceFile(path=server.workspace.relative(file))
+
     @app.post("/api/config/drive", responses={422: {}})
     def config_drive(request: ConfigDriveRequest):
         """A drivetrain preset put on a robot config's text, the rest of it as it was."""
@@ -1695,6 +1710,44 @@ def create_app(
         if file is None or file.suffix.lower() != ".png" or not file.is_file():
             return JSONResponse({"detail": f"no picture {path}"}, status_code=404)
         return FileResponse(file, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+    # --- vexsim's own documents, for the Guide page ------------------------------------------
+
+    def _guide_document(document: guide.Document) -> GuideDocument:
+        return GuideDocument(
+            id=document.id, path=document.path, title=document.title, about=document.about
+        )
+
+    @app.get("/api/guide")
+    def guide_index() -> GuideIndex:
+        """The documents there are to read; where they aren't installed, every one vexsim
+        has, for the page to link to in the repository."""
+        found = guide.documents()
+        if found:
+            documents = [_guide_document(d) for d in found]
+            return GuideIndex(available=True, repository=guide.REPOSITORY, documents=documents)
+        elsewhere = [
+            GuideDocument(id=name, path=path, title=Path(path).name, about=about)
+            for name, path, about in guide.listed()
+        ]
+        return GuideIndex(available=False, repository=guide.REPOSITORY, documents=elsewhere)
+
+    @app.get("/api/guide/doc", responses={404: {}})
+    def guide_document(id: str):
+        try:
+            document, text = guide.read(id)
+        except (KeyError, OSError):
+            return JSONResponse({"detail": f"no document {id}"}, status_code=404)
+        return GuideText(document=_guide_document(document), text=text)
+
+    @app.get("/api/guide/file", responses={404: {}})
+    def guide_file(path: str) -> Response:
+        """A picture one of the documents shows."""
+        try:
+            file = guide.picture(path)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=404)
+        return FileResponse(file, headers={"Cache-Control": "max-age=300"})
 
     @app.get("/api/calibrate/parameters", responses={422: {"model": RunProblem}})
     def calibration_setup(robot: str):

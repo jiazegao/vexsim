@@ -1,7 +1,9 @@
+import type { ReactNode } from "react";
 import type { WorkspaceInfo } from "../protocol";
 import { AutonCheck } from "./calibrate/AutonCheck";
 import { QuickFit } from "./calibrate/QuickFit";
 import { SessionPanel } from "./calibrate/SessionPanel";
+import { GUIDE } from "./calibrate/steps";
 
 export type CalibrateTab = "session" | "check" | "quick";
 const TABS: [CalibrateTab, string, string][] = [
@@ -29,6 +31,7 @@ export function CalibratePage(props: {
   onEdit: (path: string) => void;
   onPlayLog: (path: string) => void;
   onRescan: () => void;
+  guide: (doc: string, at?: string | null) => { href: string; go: () => void }; // a link into the guide
 }) {
   const { tab } = props;
   return (
@@ -37,8 +40,11 @@ export function CalibratePage(props: {
         <h1>Calibrate</h1>
         <p className="muted">
           Make the simulated robot behave like the real one. A session tests each part of the robot on your field, from a program of its own, and
-          the logs it saves are fitted into the robot's config; then your real autonomous is checked against the simulator. The calibration guide (
-          <code>docs/calibration_guide.md</code>) walks through it, step by step.
+          the logs it saves are fitted into the robot's config; then your real autonomous is checked against the simulator.{" "}
+          <GuideLink to={props.guide(GUIDE)} testid="calibrate-guide">
+            The calibration guide
+          </GuideLink>{" "}
+          walks through it, step by step.
         </p>
       </header>
       <div className="tabs page-tabs" role="tablist">
@@ -59,6 +65,7 @@ export function CalibratePage(props: {
           onEdit={props.onEdit}
           onPlayLog={props.onPlayLog}
           onRescan={props.onRescan}
+          guide={props.guide}
         />
       </div>
       <div hidden={tab !== "check"}>
@@ -77,5 +84,22 @@ export function CalibratePage(props: {
         />
       </div>
     </div>
+  );
+}
+
+/** A link into the guide: a click goes there in the app; its address opens it in another tab. */
+export function GuideLink(props: { to: { href: string; go: () => void }; testid?: string; children: ReactNode }) {
+  return (
+    <a
+      href={props.to.href}
+      onClick={(event) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        event.preventDefault();
+        props.to.go();
+      }}
+      data-testid={props.testid}
+    >
+      {props.children}
+    </a>
   );
 }

@@ -1070,6 +1070,27 @@ export interface ConfigSaved {
   version: string;
 }
 
+/** One of vexsim's own documents (the README, a file in docs/), for the Guide page. */
+export interface GuideDocument {
+  id: string;
+  path: string;
+  title: string;
+  about: string;
+}
+
+/** `GET /api/guide`: the documents there are to read. `available`: they're installed beside vexsim, so the page can show them; otherwise it links to `repository`'s. */
+export interface GuideIndex {
+  available: boolean;
+  repository: string;
+  documents: GuideDocument[];
+}
+
+/** `GET /api/guide/doc?id=`: a document's Markdown. */
+export interface GuideText {
+  document: GuideDocument;
+  text: string;
+}
+
 /** Make a robot config at `path` (in the workspace; never over a file): a rectangle to draw over on a `preset` drivetrain (tank4, tank6, xdrive, mecanum, hdrive), or a copy of the robot at `source`, named `name`. */
 export interface NewRobotRequest {
   path: string;

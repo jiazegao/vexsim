@@ -1,11 +1,12 @@
 {
   // The files that run in Node rather than the browser: the build and test configs, the
-  // end-to-end tests, which drive a browser from Node, and the VS Code extension's test.
+  // end-to-end tests, which drive a browser from Node, the VS Code extension's test and the one
+  // that reads vexsim's own documents.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM"],
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "playwright.config.ts", "e2e", "tests/vscode.test.ts"],
+  "include": ["vite.config.ts", "playwright.config.ts", "e2e", "tests/vscode.test.ts", "tests/documents.test.ts"],
   "exclude": []
 }

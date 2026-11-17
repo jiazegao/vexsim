@@ -13,6 +13,9 @@ describe("the address keeps your place", () => {
     [{ page: "calibrate", tab: "session" }, "#/calibrate/session"],
     [{ page: "calibrate", tab: "check", session: "calibration/2026-11-07" }, "#/calibrate/check?session=calibration/2026-11-07"],
     [{ page: "edit", file: "examples/robots/1239e_2026-27.yaml" }, "#/edit?file=examples/robots/1239e_2026-27.yaml"],
+    [{ page: "guide" }, "#/guide"],
+    [{ page: "guide", doc: "calibration_guide" }, "#/guide/calibration_guide"],
+    [{ page: "guide", doc: "readme", at: "7-the-browser-app-vexsim-ui" }, "#/guide/readme?at=7-the-browser-app-vexsim-ui"],
   ];
 
   it("writes each place as it reads, and reads it back", () => {
@@ -55,5 +58,8 @@ describe("the address keeps your place", () => {
     expect(isStep({ page: "simulate" }, { page: "simulate", run: "r1" })).toBe(false);
     expect(isStep({ page: "simulate", run: "r1" }, { page: "simulate", run: "r2" })).toBe(false);
     expect(isStep({ page: "calibrate", tab: "session" }, { page: "calibrate", tab: "session", session: "s" })).toBe(false);
+    expect(isStep({ page: "guide", doc: "readme" }, { page: "guide", doc: "cpp" })).toBe(true); // another document
+    expect(isStep({ page: "guide", doc: "readme" }, { page: "guide", doc: "readme", at: "setup" })).toBe(true); // a heading: Back returns to where you were reading
+    expect(isStep({ page: "guide", doc: "readme", at: "setup" }, { page: "guide", doc: "readme", at: "setup" })).toBe(false);
   });
 });

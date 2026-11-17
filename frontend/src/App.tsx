@@ -7,6 +7,7 @@ import { Controls, SPEEDS } from "./components/Controls";
 import type { ConfigRequest } from "./components/ConfigEditor";
 import type { Compared, FieldSource } from "./components/FieldView";
 import { FieldKey, FieldView } from "./components/FieldView";
+import { FirstRun, firstSteps } from "./components/FirstRun";
 import { KeysHelp } from "./components/KeysHelp";
 import { NewRobotDialog } from "./components/NewRobotDialog";
 import { NewRouteDialog } from "./components/NewRouteDialog";
@@ -50,8 +51,9 @@ const BenchPage = lazy(() => import("./pages/BenchPage").then((m) => ({ default:
 const CalibratePage = lazy(() => import("./pages/CalibratePage").then((m) => ({ default: m.CalibratePage })));
 const AnalyzePage = lazy(() => import("./pages/AnalyzePage").then((m) => ({ default: m.AnalyzePage })));
 const BuildPage = lazy(() => import("./pages/BuildPage").then((m) => ({ default: m.BuildPage })));
+const GuidePage = lazy(() => import("./pages/GuidePage").then((m) => ({ default: m.GuidePage })));
 
-type PageId = "simulate" | "sweeps" | "bench" | "calibrate" | "analyze" | "build";
+type PageId = "simulate" | "sweeps" | "bench" | "calibrate" | "analyze" | "build" | "guide";
 const PAGES: [PageId, string, string][] = [
   ["simulate", "Simulate", "Run a robot on the field"],
   ["sweeps", "Sweeps", "Run saved runs many times over, and measure them"],
@@ -59,12 +61,14 @@ const PAGES: [PageId, string, string][] = [
   ["calibrate", "Calibrate", "Fit the simulator to a real robot's log"],
   ["analyze", "Analyze", "Motor curves, drift and odometry"],
   ["build", "Build", "Build PROS projects; check the compiler"],
+  ["guide", "Guide", "vexsim's guides: using it, calibrating to your robot step by step, programming"],
 ];
 const PAGE_IDS: readonly string[] = PAGES.map(([id]) => id);
 
 const THEME_LABEL: Record<Theme, string> = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
 const EDITOR_KEY = "vexsim.editor";
 const ON_SAVE_KEY = "vexsim.runOnSave";
+const FIRST_RUN_KEY = "vexsim.firstRun:"; // and the folder: its "Start here" was put away
 const STARTABLE: readonly string[] = ["running", "paused", "finished", "error", "stopped"]; // Restart can start it again
 const EDITED: readonly string[] = ["robot", "field", "invalid"]; // what opens in the config editor
 const BUSY: readonly string[] = ["building", "starting", "running", "paused"]; // the run is on the field
@@ -148,6 +152,10 @@ export function App() {
     tab: arrival.tab ?? "session",
   });
   const [buildProject, setBuildProject] = useState<string | null>(null);
+  const [guide, setGuide] = useState<{ doc: string; at: string | null }>({ doc: arrival.doc ?? "", at: arrival.at ?? null }); // the Guide page's document and heading
+  const [runsLoaded, setRunsLoaded] = useState(false); // the run history has been read once
+  const [startHidden, setStartHidden] = useState(false); // "Start here" was put away, for this folder
+  const [writingStarter, setWritingStarter] = useState(false);
   const [overrideRequests, setOverrideRequests] = useState<Record<string, ConfigRequest>>({});
   const [unsaved, setUnsaved] = useState<Record<string, boolean>>({});
   const [closing, setClosing] = useState<string | null>(null); // asking before closing it
@@ -201,6 +209,7 @@ export function App() {
   const loadRuns = useCallback(async () => {
     try {
       setRuns(await api.runs());
+      setRunsLoaded(true);
     } catch {
       // the list stays as it was
     }
@@ -283,6 +292,11 @@ export function App() {
         const about = await api.info();
         setInfo(about);
         document.title = `vexsim · ${about.workspace_name}`;
+        try {
+          setStartHidden(localStorage.getItem(FIRST_RUN_KEY + about.workspace) === "hidden");
+        } catch {
+          // storage off: it shows until its steps are done
+        }
         const found = await scan(about, true);
         loadRuns();
         const running = (await api.sessions())
@@ -945,6 +959,53 @@ export function App() {
     return error;
   };
 
+  // --- a way in (phase 15.4): the guide, and a first run's steps ------------------------------
+
+  /** A document of the guide (and a heading of it), on the Guide page. */
+  const openGuide = useCallback((doc: string, at: string | null = null) => {
+    setGuide({ doc, at });
+    setPage("guide");
+  }, []);
+  /** A link to a place in the guide: its address (to open in another tab), and going there. */
+  const guideLink = useCallback(
+    (doc: string, at: string | null = null) => ({ href: formatPlace({ page: "guide", doc, ...(at ? { at } : {}) }), go: () => openGuide(doc, at) }),
+    [openGuide],
+  );
+  const hideStart = () => {
+    setStartHidden(true);
+    try {
+      if (info) localStorage.setItem(FIRST_RUN_KEY + info.workspace, "hidden");
+    } catch {
+      // storage off: put away until the page is opened again
+    }
+  };
+  /** Run what the form names, but for `change`: the first run's steps. */
+  const runWith = async (change: Partial<RunForm>) => {
+    const next: RunForm = { ...form, config: "", routine: "", route: "", input: "", follow: "", following: false, ...change };
+    setForm(next);
+    const result = formToSpec(next);
+    if ("error" in result) setProblem({ error: result.error, issues: [] });
+    else await startRun(result.spec, null);
+  };
+  /** The starter program, written into the folder and picked. */
+  const addStarter = async () => {
+    setWritingStarter(true);
+    try {
+      const made = await api.starterProgram();
+      if (info) await scan(info, false);
+      setForm((current) => ({ ...current, config: "", program: made.path, routine: "", route: "", mode: "" }));
+      setProblem(null);
+    } catch (error) {
+      setProblem({ error: `Couldn't add a starter program: ${(error as Error).message}`, issues: [] });
+    } finally {
+      setWritingStarter(false);
+    }
+  };
+  const items = workspace?.items ?? [];
+  const first = firstSteps(items, runs, store ? (spec ?? {}) : null);
+  // "Start here" shows in a folder that's new to vexsim, while no run is going, until it's put away
+  const startShown = !!workspace && runsLoaded && !startHidden && !busy && !realLog && !(first.robot && first.driven && first.program && first.ran);
+
   // --- the address keeps your place (address.ts) -------------------------------------------
 
   /** The address named what isn't there (a file since deleted, a run since pruned, a typo): put
@@ -995,6 +1056,7 @@ export function App() {
     }
     setPage(next.page);
     if (next.page === "calibrate") setCalibration((c) => ({ ...c, tab: next.tab ?? c.tab, session: next.session ?? c.session }));
+    if (next.page === "guide") setGuide({ doc: next.doc ?? "", at: next.at ?? null });
     if (next.page === "simulate" && next.run && next.run !== recording?.run?.id) void restoreRun(next.run, false, busy);
     return true;
   };
@@ -1008,8 +1070,9 @@ export function App() {
     if (!PAGE_IDS.includes(page)) return { page: "edit", file: page };
     if (page === "calibrate") return calibration.session ? { page, tab: calibration.tab, session: calibration.session } : { page, tab: calibration.tab };
     if (page === "simulate" && shownRun) return { page, run: shownRun };
+    if (page === "guide") return { page, ...(guide.doc ? { doc: guide.doc } : {}), ...(guide.at ? { at: guide.at } : {}) };
     return { page: page as PageId };
-  }, [page, calibration.tab, calibration.session, shownRun]);
+  }, [page, calibration.tab, calibration.session, shownRun, guide]);
   const placeRef = useRef(place);
   placeRef.current = place;
   // The app moved: the address follows. From where the address is now, a new page, editor or
@@ -1321,6 +1384,18 @@ export function App() {
                 </div>
               </div>
             )}
+            {startShown && (
+              <FirstRun
+                done={first}
+                busy={starting || writingStarter}
+                onNewRobot={() => setNewRobot(true)}
+                onDrive={() => runWith({ program: "", mode: "" })}
+                onStarter={addStarter}
+                onRunProgram={() => runWith({ program: items.find((i) => i.path === form.program && i.kind !== "robot")?.path ?? items.find((i) => i.kind === "program")?.path ?? "", mode: "" })}
+                guide={guideLink("readme")}
+                onHide={hideStart}
+              />
+            )}
             <div className={`stage${realLog ? " paired" : ""}${readoutOpen ? "" : " no-readout"}`}>
               <div className={`fieldcol${realLog ? " paired" : ""}`}>
                 <div className={realLog ? "fieldpair" : "fieldsingle"}>
@@ -1507,6 +1582,7 @@ export function App() {
                   onEdit={openConfig}
                   onPlayLog={playLog}
                   onRescan={() => info && scan(info, false)}
+                  guide={guideLink}
                 />
               </div>
             )}
@@ -1518,6 +1594,11 @@ export function App() {
             {visited.includes("build") && (
               <div className="pagebox" hidden={page !== "build"}>
                 <BuildPage workspace={workspace} root={root} editor={editor} project={buildProject} onProject={setBuildProject} />
+              </div>
+            )}
+            {visited.includes("guide") && (
+              <div className="pagebox guidebox" hidden={page !== "guide"}>
+                <GuidePage doc={guide.doc} at={guide.at} onGo={openGuide} />
               </div>
             )}
           </Suspense>

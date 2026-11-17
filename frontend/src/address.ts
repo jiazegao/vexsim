@@ -6,10 +6,11 @@
 //   #/simulate?run=20261117-154527-ab12
 //   #/calibrate/check?session=calibration/2026-11-07
 //   #/edit?file=examples/robots/1239e_2026-27.yaml
+//   #/guide/calibration_guide?at=5-the-session
 //
 // The Simulate page with nothing on show has no # at all.
 
-export const PAGE_NAMES = ["simulate", "sweeps", "bench", "calibrate", "analyze", "build"] as const;
+export const PAGE_NAMES = ["simulate", "sweeps", "bench", "calibrate", "analyze", "build", "guide"] as const;
 export type PageName = (typeof PAGE_NAMES)[number];
 export const CALIBRATE_TABS = ["session", "check", "quick"] as const;
 export type CalibrateTabName = (typeof CALIBRATE_TABS)[number];
@@ -20,6 +21,8 @@ export interface Place {
   session?: string; // calibrate: the session's folder
   file?: string; // edit: the config's or the route's path
   run?: string; // simulate: the recorded run on show
+  doc?: string; // guide: the document (none: the first)
+  at?: string; // guide: the heading of it
 }
 
 export const HOME: Place = { page: "simulate" };
@@ -37,6 +40,7 @@ export function formatPlace(place: Place): string {
     return `#/calibrate/${tab}${place.session ? `?session=${escaped(place.session)}` : ""}`;
   }
   if (place.page === "simulate") return place.run ? `#/simulate?run=${escaped(place.run)}` : "";
+  if (place.page === "guide") return `#/guide${place.doc ? `/${escaped(place.doc)}` : ""}${place.at ? `?at=${escaped(place.at)}` : ""}`;
   return `#/${place.page}`;
 }
 
@@ -67,12 +71,25 @@ export function parsePlace(hash: string): Place | null {
     const run = query.get("run");
     return run ? { page, run } : HOME;
   }
+  if (page === "guide") {
+    const at = query.get("at");
+    let doc = "";
+    try {
+      doc = decodeURIComponent(tab ?? "");
+    } catch {
+      return null; // an escape that isn't one
+    }
+    return { page, ...(doc ? { doc } : {}), ...(at ? { at } : {}) };
+  }
   return { page };
 }
 
 /** Whether going from one place to another is a step Back should undo: another page, another
- * file in the editor, another tab of Calibrate. A different run or session on the same page
- * isn't: the address just follows it. */
+ * file in the editor, another tab of Calibrate, another document or heading of the guide. A
+ * different run or session on the same page isn't: the address just follows it. */
 export function isStep(from: Place, to: Place): boolean {
-  return from.page !== to.page || from.file !== to.file || (to.page === "calibrate" && (from.tab ?? "session") !== (to.tab ?? "session"));
+  if (from.page !== to.page || from.file !== to.file) return true;
+  if (to.page === "calibrate") return (from.tab ?? "session") !== (to.tab ?? "session");
+  if (to.page === "guide") return from.doc !== to.doc || from.at !== to.at;
+  return false;
 }
