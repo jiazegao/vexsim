@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { WorkspaceInfo } from "../protocol";
+import { useRoving } from "../roving";
 import { AutonCheck } from "./calibrate/AutonCheck";
 import { QuickFit } from "./calibrate/QuickFit";
 import { SessionPanel } from "./calibrate/SessionPanel";
@@ -34,6 +35,7 @@ export function CalibratePage(props: {
   guide: (doc: string, at?: string | null) => { href: string; go: () => void }; // a link into the guide
 }) {
   const { tab } = props;
+  const tabs = useRoving<HTMLDivElement>('[role="tab"]');
   return (
     <div className="page" data-testid="calibrate-page">
       <header className="page-head">
@@ -47,7 +49,7 @@ export function CalibratePage(props: {
           walks through it, step by step.
         </p>
       </header>
-      <div className="tabs page-tabs" role="tablist">
+      <div className="tabs page-tabs" role="tablist" aria-label="Ways to calibrate" {...tabs.props}>
         {TABS.map(([id, label, hint]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} title={hint} onClick={() => props.onTab(id)} data-testid={`calibrate-tab-${id}`}>
             {label}

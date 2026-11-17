@@ -4,6 +4,8 @@ import type { Editor, Place, Problem } from "../problems";
 import { embedded, HOSTS, openInHost } from "../host";
 import { absolute, EDITORS, editorUrl, linkSegments, shortPath } from "../problems";
 import type { RunProblem } from "../protocol";
+import { useRoving } from "../roving";
+import { useScrollFocus } from "../scrollfocus";
 import type { Line, SessionStore } from "../session";
 
 type Tab = "console" | "build" | "problems" | "plots";
@@ -39,6 +41,7 @@ export function ConsolePanel(props: {
   }, [state, errors]);
   useEffect(() => setPeek(state === "error"), [state]); // a failed run's output is what to read
 
+  const tabs = useRoving<HTMLDivElement>('[role="tab"]');
   const open = (props.open ?? true) || peek;
   const fold = (to: boolean) => {
     setPeek(false);
@@ -78,11 +81,13 @@ export function ConsolePanel(props: {
           )}
         </div>
       )}
-      <div className="tabs" role="tablist">
-        {tabButton("console", "Console", output.length)}
-        {tabButton("build", "Build", build.length)}
-        {tabButton("problems", "Problems", problems.length, "problems-tab")}
-        {tabButton("plots", "Plots", 0, "plots-tab")}
+      <div className="tabs">
+        <div className="tabs-list" role="tablist" aria-label="What's shown below the field" {...tabs.props}>
+          {tabButton("console", "Console", output.length)}
+          {tabButton("build", "Build", build.length)}
+          {tabButton("problems", "Problems", problems.length, "problems-tab")}
+          {tabButton("plots", "Plots", 0, "plots-tab")}
+        </div>
         <span className="spacer" />
         {!embedded && (
           <label className="editor" title="Where file:line links open">
@@ -182,7 +187,7 @@ export function Problems(props: { problems: Problem[]; root: string; editor: Edi
 }
 
 export function Lines(props: { lines: Line[]; root: string; editor: Editor; empty: string; testid?: string }) {
-  const box = useRef<HTMLPreElement>(null);
+  const box = useScrollFocus<HTMLPreElement>(); // scrolled from the keyboard too, once it's longer than its box
   const pinned = useRef(true); // follow new lines unless scrolled up
 
   useLayoutEffect(() => {
@@ -194,6 +199,8 @@ export function Lines(props: { lines: Line[]; root: string; editor: Editor; empt
     <pre
       className="lines"
       ref={box}
+      role="group"
+      aria-label="Lines of output"
       data-testid={props.testid ?? "console"}
       onScroll={(event) => {
         const element = event.currentTarget;

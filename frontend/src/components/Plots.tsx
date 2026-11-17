@@ -72,7 +72,8 @@ export function Plots(props: { shown: Recording; compared: Recording[]; playhead
   if (typeof state === "string") return <div className="plots-empty">The run's telemetry didn't load: {state}</div>;
   if (!state) return <div className="plots-empty">Loading the run's telemetry…</div>;
   return (
-    <div className="plots" data-testid="plots">
+    // a tall stack of charts in a short box: scrolled from the keyboard too
+    <div className="plots" role="group" aria-label="Plots of the run" tabIndex={0} data-testid="plots">
       {charts.map((chart) => (
         <Chart key={`${chart.id}:${chart.series.map((s) => `${s.run}${s.column}`).join(",")}`} spec={chart} runs={columns} range={range} playhead={playhead} theme={theme} />
       ))}

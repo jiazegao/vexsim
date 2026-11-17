@@ -119,7 +119,8 @@ export function YamlEditor(props: {
           ]),
           theme,
           EditorView.lineWrapping, // a half-width pane: long flow mappings wrap rather than scroll
-          EditorView.contentAttributes.of({ "aria-label": props.label }),
+          // tabindex: the text takes the keyboard anyway; said outright, an audit can tell
+          EditorView.contentAttributes.of({ "aria-label": props.label, tabindex: "0" }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) callbacks.current.onChange(update.state.doc.toString());
             if (update.docChanged || update.selectionSet) {

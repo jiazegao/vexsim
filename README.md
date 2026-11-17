@@ -524,6 +524,15 @@ Each step's button does it, and a step that's done has none. The steps are out o
 
 Each run executes in a process of its own, so a program that crashes or hangs never takes the app down; *Stop* ends it.
 
+**Without a mouse.** Everything on the page can be reached and used from the keyboard:
+- The first press of Tab, from the top of the page, offers *Skip to Run*: Enter takes you to the *Run* button, whichever page you were on.
+- Each row of tabs (the pages, the list's, the bottom panel's, *Calibrate*'s and *Analyze*'s), each toolbar and the workspace list is one stop for Tab, so *Run* is twelve presses of Tab from the top, where it was more than eighty. Inside one, Left and Right move along a row of tabs or a toolbar, Up and Down move through the list, Home and End go to its ends, and Enter picks. Tab comes back to the tab that's selected, or to where you left the list.
+- In the list, Right reaches an item's ⋯ button, and a recorded run's *Compare*, *Keep*, *Rename* and *Delete*; Left goes back. The Menu key (or Shift+F10) opens an item's menu where it is. Esc or Tab closes the menu, and the keyboard is back on the item.
+- The arrow keys are a group's only when Tab brought you to it. After a click on a tab or an item they are what they are everywhere else: they drive the robot and move through a recorded run.
+- A box that scrolls (the console, the plots, the readings, a guide's code) takes a stop of its own while what's in it doesn't fit, and then the arrow keys scroll it.
+
+Text and controls meet WCAG AA contrast (4.5 to 1) on every surface they sit on, in the light theme and the dark one. *Keys* lists all of this under *Getting around without a mouse*.
+
 **The address keeps your place.** The page you're on is in the address, after the `#`: `#/calibrate/check`, `#/edit?file=robots/my_robot.yaml`, `#/simulate?run=…`. So a reload comes back to where you were: the same page, the same tab and session of *Calibrate*, the config or route you had open, the recorded run that was on the field (and the run in progress, if there is one), with the run form as you left it. Back and Forward step between the pages you've been to, and an address can be bookmarked.
 
 **After a run: replay, plots and the run history**
@@ -1630,6 +1639,8 @@ npm run vscode-test   # the VS Code extension, installed in a VS Code it downloa
                       # it under xvfb-run); also with VEXSIM_PYTHON
 ```
 `npm run typecheck` checks the VS Code extension (`vexsim/ui/vscode`, plain JavaScript) against VS Code's API too. The icons are drawn by `python scripts/make_icons.py` (with Pillow) into `public/icons`.
+
+The page is checked for accessibility as it's tested. `e2e/a11y.spec.ts` audits every page with axe-core, in the light theme and the dark one: a serious or critical finding (text that's hard to read, a control with no name, a role used wrongly) fails it. It also walks the keyboard's way to *Run*, stop by stop. `tests/contrast.test.ts` computes the contrast of every text color in `src/styles.css` against every surface. So a new color for text goes in as one of the text tokens (`--text-*`, `--link`, `--bad-text`, `--good-text`, `--warning-text`), never as a series or status color (those are for marks and fills); a new row of tabs, toolbar or list takes `useRoving` (`src/roving.ts`), which makes it one stop for Tab; and a new box that scrolls takes `useScrollFocus` (`src/scrollfocus.ts`).
 To work on the page with live reloading, run `vexsim ui --dev --no-browser` (on the default port, 8642) and open the link it prints once, for its cookie; then run `npm run dev` and open http://127.0.0.1:5173. Messages are defined once, in `vexsim/ui/protocol.py`: after changing them, run `python -m vexsim.ui.protocol frontend/src/protocol.ts`.
 
 **Adding to vexsim:**

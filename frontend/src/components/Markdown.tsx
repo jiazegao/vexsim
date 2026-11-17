@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from "react";
 import { Fragment } from "react";
 import type { Block, Inline } from "../markdown";
+import { ScrollPre } from "./ScrollPre";
 
 /** Where a link goes: its address for the browser (to open in a new tab, or to copy), and
  * what a click does instead, if the app can go there itself. */
@@ -69,9 +70,9 @@ export function Markdown(props: { blocks: Block[]; prefix: string; link: (href: 
         return <p key={key}>{inline(item.children)}</p>;
       case "code":
         return (
-          <pre key={key} data-language={item.language || undefined}>
+          <ScrollPre key={key} data-language={item.language || undefined} label={item.language ? `Code (${item.language})` : "Code"}>
             <code>{item.text}</code>
-          </pre>
+          </ScrollPre>
         );
       case "rule":
         return <hr key={key} />;

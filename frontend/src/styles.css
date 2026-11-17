@@ -7,7 +7,7 @@
   --surface-3: #e9e8e2;
   --text-primary: #0b0b0b;
   --text-secondary: #52514e;
-  --text-muted: #898781;
+  --text-muted: #666560;
   --gridline: #e1e0d9;
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.12);
@@ -22,7 +22,7 @@
   --syntax-key: #1c5cab;
   --syntax-value: #0b0b0b;
   --syntax-string: #8a4b0f;
-  --syntax-comment: #6b6a66;
+  --syntax-comment: #666560;
   --syntax-anchor: #6250d6;
   --wheel: #6f6e69;
   --obstacle: #9a9a96;
@@ -30,6 +30,15 @@
   --warning: #fab219;
   --critical: #d03b3b;
   --focus: #2a78d6;
+  /* Text and the fills that carry text: each reads at 4.5:1 or better on every surface it
+     sits on (tests/contrast.test.ts computes it). The series colors above are for marks. */
+  --link: #1c5cab; /* links, and what's switched on */
+  --bad-text: #b03030;
+  --good-text: #087508;
+  --warning-text: #7d5200;
+  --primary: #2167c0; /* under white text: the main button, a step's number */
+  --good-fill: #0a850a;
+  --chip-fill: #6b6a66;
   --speed-slow: #d9692e; /* a planned trajectory's speed, one hue: slow to fast */
   --speed-fast: #7a2c06;
   --accent-wash: rgba(42, 120, 214, 0.1);
@@ -46,7 +55,7 @@
     --surface-3: #2e2e2c;
     --text-primary: #f0efec;
     --text-secondary: #c3c2b7;
-    --text-muted: #898781;
+    --text-muted: #9c9a92;
     --gridline: #2c2c2a;
     --axis: #383835;
     --border: rgba(255, 255, 255, 0.12);
@@ -61,11 +70,16 @@
     --syntax-key: #86b6ef;
     --syntax-value: #f0efec;
     --syntax-string: #f0a36e;
-    --syntax-comment: #9a9890;
+    --syntax-comment: #9c9a92;
     --syntax-anchor: #9085e9;
     --wheel: #8d8c86;
     --obstacle: #6b6b67;
     --focus: #3987e5;
+    --link: #86b6ef;
+    --bad-text: #ee8080;
+    --good-text: #3fc23f;
+    --warning-text: #fab219;
+    --primary: #2a6fc9;
     --speed-slow: #a4481b;
     --speed-fast: #ffc7a6;
     --accent-wash: rgba(57, 135, 229, 0.16);
@@ -80,7 +94,7 @@
   --surface-3: #2e2e2c;
   --text-primary: #f0efec;
   --text-secondary: #c3c2b7;
-  --text-muted: #898781;
+  --text-muted: #9c9a92;
   --gridline: #2c2c2a;
   --axis: #383835;
   --border: rgba(255, 255, 255, 0.12);
@@ -95,11 +109,16 @@
   --syntax-key: #86b6ef;
   --syntax-value: #f0efec;
   --syntax-string: #f0a36e;
-  --syntax-comment: #9a9890;
+  --syntax-comment: #9c9a92;
   --syntax-anchor: #9085e9;
   --wheel: #8d8c86;
   --obstacle: #6b6b67;
   --focus: #3987e5;
+  --link: #86b6ef;
+  --bad-text: #ee8080;
+  --good-text: #3fc23f;
+  --warning-text: #fab219;
+  --primary: #2a6fc9;
   --speed-slow: #a4481b;
   --speed-fast: #ffc7a6;
   --accent-wash: rgba(57, 135, 229, 0.16);
@@ -174,7 +193,7 @@ button:disabled {
 }
 
 button.primary {
-  background: var(--series-1);
+  background: var(--primary);
   border-color: transparent;
   color: #ffffff;
   font-weight: 600;
@@ -182,7 +201,7 @@ button.primary {
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--series-1);
+  background: var(--primary);
   filter: brightness(1.08);
 }
 
@@ -378,7 +397,7 @@ textarea {
 
 .item-problem {
   font-size: 12px;
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 /* --- run bar ----------------------------------------------------------------------- */
@@ -529,11 +548,11 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   color: #ffffff;
-  background: var(--text-muted);
+  background: var(--chip-fill);
 }
 
 .chip.state-running {
-  background: var(--good);
+  background: var(--good-fill);
 }
 
 .chip.state-paused {
@@ -548,7 +567,7 @@ textarea {
 .chip.state-building,
 .chip.state-starting,
 .chip.state-finished {
-  background: var(--series-1);
+  background: var(--primary);
 }
 
 .time {
@@ -876,7 +895,7 @@ label.keyrow {
 }
 
 .motors tr.hot td {
-  color: var(--critical);
+  color: var(--bad-text);
   font-weight: 600;
 }
 
@@ -960,7 +979,7 @@ section.console {
 }
 
 .line.error {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .line.info {
@@ -984,7 +1003,7 @@ section.console {
 
 button.ghost.on {
   background: var(--accent-wash);
-  color: var(--series-1);
+  color: var(--link);
 }
 
 .fieldview > .hint {
@@ -1004,7 +1023,7 @@ button.ghost.on {
 
 .fieldview > .hint.bad {
   border-color: var(--critical);
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .swatch.force {
@@ -1088,7 +1107,7 @@ button.ghost.on {
 }
 
 .pad .buttons button.down {
-  background: var(--series-1);
+  background: var(--primary);
   border-color: transparent;
   color: #ffffff;
 }
@@ -1192,7 +1211,7 @@ kbd {
   padding: 0;
   border: none;
   background: none;
-  color: var(--series-1);
+  color: var(--link);
   font: inherit;
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--series-1) 45%, transparent);
@@ -1243,7 +1262,7 @@ button.place:hover:not(:disabled) {
   padding: 0 5px;
   border-radius: 4px;
   background: var(--accent-wash);
-  color: var(--series-1);
+  color: var(--link);
   font-style: normal;
   font-size: 11px;
 }
@@ -1271,7 +1290,7 @@ button.danger {
 .config-message {
   margin: 0;
   font-size: 12px;
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 /* --- recorded runs: the list, the timeline, the plots -------------------------------- */
@@ -1321,7 +1340,7 @@ button.danger {
 }
 
 .run-actions button.ghost.on {
-  color: var(--series-1);
+  color: var(--link);
 }
 
 button.ghost.danger {
@@ -1617,7 +1636,7 @@ button.pagetab,
 }
 
 .pagetab .unsaved {
-  color: var(--series-1);
+  color: var(--link);
 }
 
 .config-editor {
@@ -1647,7 +1666,7 @@ button.pagetab,
 }
 
 .editor-state.bad {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .editor-ask {
@@ -1879,7 +1898,7 @@ button.pagetab,
 .item-menu-error {
   margin: 4px 8px;
   font-size: 12px;
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 /* --- the Design view: a robot's forms beside its diagram, and its drawing tools ---------- */
@@ -1904,7 +1923,7 @@ button.pagetab,
 
 .view-switch button.on {
   background: var(--accent-wash);
-  color: var(--series-1);
+  color: var(--link);
   font-weight: 600;
 }
 
@@ -1968,7 +1987,7 @@ button.pagetab,
 
 .design-panel .bad,
 .dialog .bad {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .design-stale {
@@ -2149,7 +2168,7 @@ button.pagetab,
 
 .design-parts button.on {
   background: var(--accent-wash);
-  color: var(--series-1);
+  color: var(--link);
 }
 
 .checks {
@@ -2235,7 +2254,7 @@ button.pagetab,
 
 .design-tools button.on {
   background: var(--accent-wash);
-  color: var(--series-1);
+  color: var(--link);
   font-weight: 600;
 }
 
@@ -2258,7 +2277,7 @@ button.pagetab,
   margin-top: -3px;
   padding: 1px 6px;
   font-weight: 500;
-  color: var(--series-1);
+  color: var(--link);
 }
 
 .dialog.new-robot {
@@ -2392,7 +2411,7 @@ label.check {
 }
 
 .bad {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .stack {
@@ -2602,7 +2621,7 @@ table.data .row-actions {
 .progress > span {
   position: absolute;
   inset: 0 auto 0 0;
-  background: var(--series-1);
+  background: var(--primary);
   border-radius: 3px;
   transition: width 0.2s;
 }
@@ -2704,11 +2723,11 @@ ul.checks li {
 }
 
 ul.checks li.ok > span:first-child {
-  color: var(--good);
+  color: var(--good-text);
 }
 
 ul.checks li.bad > span:first-child {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 ol.steps {
@@ -2809,7 +2828,7 @@ ol.steps {
 
 .route-step.on .step-number {
   border-color: var(--series-1);
-  background: var(--series-1);
+  background: var(--primary);
   color: var(--surface-1);
 }
 
@@ -2828,7 +2847,7 @@ ol.steps {
 }
 
 .step-end .bad {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .route-form {
@@ -2955,7 +2974,7 @@ ol.steps {
 .route-tools button.on {
   background: var(--accent-wash);
   border-color: var(--series-1);
-  color: var(--series-1);
+  color: var(--link);
   font-weight: 600;
 }
 
@@ -3029,12 +3048,12 @@ ol.steps {
 
 .export-state.new {
   border-color: var(--good);
-  color: var(--good);
+  color: var(--good-text);
 }
 
 .export-state.changed {
   border-color: var(--series-1);
-  color: var(--series-1);
+  color: var(--link);
 }
 
 .export-diff {
@@ -3049,11 +3068,11 @@ ol.steps {
 }
 
 .export-diff .added {
-  color: var(--good);
+  color: var(--good-text);
 }
 
 .export-diff .removed {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .dialog.export-routes .actions {
@@ -3083,7 +3102,7 @@ ol.steps {
 }
 
 .warning-text {
-  color: var(--critical);
+  color: var(--bad-text);
 }
 
 .snippet {
@@ -3527,12 +3546,12 @@ button.step-head:hover .step-title {
 }
 
 .stepcard.done .step-mark {
-  background: var(--good);
+  background: var(--good-fill);
   color: #ffffff;
 }
 
 .stepcard.next .step-mark {
-  background: var(--series-1);
+  background: var(--primary);
   color: #ffffff;
 }
 
@@ -3550,7 +3569,7 @@ button.step-head:hover .step-title {
 }
 
 .stepcard.next .step-state {
-  color: var(--series-1);
+  color: var(--link);
   font-weight: 600;
 }
 
@@ -3572,7 +3591,7 @@ button.step-head:hover .step-title {
 .firstrun a,
 .guide-nav a,
 .page-head a {
-  color: var(--series-1);
+  color: var(--link);
 }
 
 /* "Start here": the first run's steps, over the field until they're done or put away */
@@ -3808,7 +3827,7 @@ button.step-head:hover .step-title {
 }
 
 .document a {
-  color: var(--series-1);
+  color: var(--link);
 }
 
 .document img {
@@ -3856,4 +3875,62 @@ button.step-head:hover .step-title {
 .document th {
   background: var(--surface-2);
   font-weight: 600;
+}
+
+/* --- the keyboard's way through the page (phase 15.5) ---------------------------------
+   Each row of tabs, each toolbar and each list is one stop for Tab (roving.ts); these are
+   the boxes that make them groups. */
+
+.sidebar-tabs,
+.tabs-list,
+.pagetabs-pages,
+.pagetabs-files {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.topbar-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+}
+
+/* the header's tabs fill its height and scroll sideways: their focus ring is drawn inside
+   them, where it isn't cut off */
+.topbar .pagetab:focus-visible,
+.topbar .pagetab > button:focus-visible {
+  outline-offset: -3px;
+}
+
+/* the first stop for Tab: past the header and the lists, to Run. Off the page until then */
+.skip {
+  position: absolute;
+  top: -100px;
+  left: 8px;
+  z-index: 100;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--link);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.skip:focus {
+  top: 6px;
+}
+
+/* read out, not shown: a page's heading where its tab already says it */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

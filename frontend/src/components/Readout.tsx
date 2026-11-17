@@ -39,7 +39,7 @@ export function Readout(props: {
   const scene = source.kind === "live" ? source.store.scene : source.kind === "recording" ? source.playback.tape.scene : null;
   if (!frame || !scene) {
     return (
-      <aside className="readout" aria-label="Readings">
+      <aside className="readout" aria-label="Readings" tabIndex={0}>
         <p className="muted">Readings appear here once a run starts.</p>
       </aside>
     );
@@ -66,7 +66,7 @@ export function Readout(props: {
     </section>
   );
   return (
-    <aside className="readout" aria-label="Readings" data-testid="readout">
+    <aside className="readout" aria-label="Readings" tabIndex={0} data-testid="readout">
       <section>
         <h3>{scene.robot.name}</h3>
         <dl data-testid="true-pose" data-x={frame.pose[0]} data-y={frame.pose[1]} data-heading={frame.pose[2]}>

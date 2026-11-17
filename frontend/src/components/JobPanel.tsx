@@ -3,6 +3,7 @@ import type { JobView } from "../jobs";
 import { fraction, isActive } from "../jobs";
 import type { ResultAbout, RunProblem } from "../protocol";
 import { when } from "../recording";
+import { ScrollPre } from "./ScrollPre";
 
 const STATES: Record<string, { label: string; chip: string }> = {
   queued: { label: "Waiting", chip: "state-running" },
@@ -74,7 +75,9 @@ export function JobStatus(props: { job: JobView | null; onCancel: () => void; un
       {props.log !== false && job.log.length > 0 && (
         <details className="job-log">
           <summary>Log ({job.log.length} lines)</summary>
-          <pre className="lines">{job.log.join("\n")}</pre>
+          <ScrollPre className="lines" label="The job's log">
+            {job.log.join("\n")}
+          </ScrollPre>
         </details>
       )}
     </div>

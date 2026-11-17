@@ -33,6 +33,7 @@ import type { AppInfo, NothingToPlay, Preview, ProjectRoutines, RunConfiguration
 import type { Recording } from "./recording";
 import { COMPARE_DASHES, forgetTelemetry, MAX_COMPARED, openLog, openRun, openWorstCase, renamed, shortName } from "./recording";
 import type { RunForm } from "./runform";
+import { useRoving } from "./roving";
 import { emptyForm, formToSpec, loadForm, reconcile, saveForm, sameRun, specToForm } from "./runform";
 import { isLive, SessionStore } from "./session";
 import type { Pose } from "./startpose";
@@ -167,6 +168,10 @@ export function App() {
   const [bottomOpen, setBottomOpen] = usePanel("bottom", short);
   const [runbarOpen, setRunbarOpen] = useState<boolean | null>(null); // by hand; null: as the window asks
   const [runOnSave, setRunOnSave] = useState(loadRunOnSave); // a save of the run's code runs it again
+  // each of these is one stop for Tab, the arrow keys moving within it (roving.ts)
+  const pageTabs = useRoving<HTMLDivElement>('[role="tab"]');
+  const fileTabs = useRoving<HTMLDivElement>("button");
+  const appTools = useRoving<HTMLDivElement>("button");
   const playhead = useMemo(() => new Playhead(), []);
   usePlayheadClock(playhead);
   useStore(store);
@@ -1126,7 +1131,8 @@ export function App() {
       const pressingButton = tag === "BUTTON" && (event.key === " " || event.key === "Enter");
       if (event.key === "Escape" && help) setHelp(false);
       else if (event.key === "Escape" && narrow && sidebarOpen) setSidebarOpen(false); // the list, over the page
-      if (event.ctrlKey || event.metaKey || event.altKey || typing || pressingButton) return;
+      // (a key already taken: an arrow that moved through a row of tabs or the list, roving.ts)
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || typing || pressingButton) return;
       if (page !== "simulate" && event.key !== "?") return; // an editor's diagram has its own keys
       const index = SPEEDS.indexOf(speed);
       const toggle = (key: keyof Layers) => setLayers((l) => ({ ...l, [key]: !l[key] }));
@@ -1197,8 +1203,22 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [changeSpeed, driving, help, narrow, page, playhead, restart, scrubbing, setSidebarOpen, sidebarOpen, speed, state, store]);
 
+  /** To the Run button, past everything before it (the skip link's): or, with no robot to
+   * run yet, to the first thing to set. */
+  const skipToRun = (event: { preventDefault: () => void }) => {
+    event.preventDefault(); // not a place in the address
+    setPage("simulate");
+    requestAnimationFrame(() => {
+      const run = document.getElementById("run") as HTMLButtonElement | null;
+      (run && !run.disabled ? run : document.querySelector<HTMLElement>(".runbar select, .runbar button:not(:disabled)"))?.focus();
+    });
+  };
+
   return (
     <div className="app">
+      <a className="skip" href="#run" onClick={skipToRun} data-testid="skip-to-run">
+        Skip to Run
+      </a>
       <header className="topbar">
         <button
           type="button"
@@ -1218,37 +1238,46 @@ export function App() {
             {info.workspace_name}
           </span>
         )}
-        <div className="pagetabs" role="tablist" aria-label="Pages">
-          {PAGES.map(([id, label, hint]) => (
-            <button key={id} role="tab" aria-selected={page === id} className={`pagetab${page === id ? " on" : ""}`} onClick={() => setPage(id)} title={hint} data-testid={`page-${id}`}>
-              {label}
-            </button>
-          ))}
+        <div className="pagetabs">
+          <div className="pagetabs-pages" role="tablist" aria-label="Pages" {...pageTabs.props}>
+            {PAGES.map(([id, label, hint]) => (
+              <button key={id} role="tab" aria-selected={page === id} className={`pagetab${page === id ? " on" : ""}`} onClick={() => setPage(id)} title={hint} data-testid={`page-${id}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           {openConfigs.length > 0 && <span className="pagetabs-gap" aria-hidden="true" />}
-          {openConfigs.map((path) => (
-            <span key={path} className={`pagetab config${page === path ? " on" : ""}`}>
-              <button role="tab" aria-selected={page === path} onClick={() => setPage(path)} title={path} data-testid={`page-${path}`}>
-                {fileName(path)}
-                {unsaved[path] && (
-                  <span className="unsaved" title="Unsaved changes" aria-label="unsaved changes">
-                    {" "}
-                    ●
-                  </span>
-                )}
-              </button>
-              <button type="button" className="close" onClick={() => askToClose(path)} aria-label={`Close ${path}`} title="Close">
-                ×
-              </button>
-            </span>
-          ))}
+          {openConfigs.length > 0 && (
+            // the files open in editors: each a button to its editor, and one to close it
+            <div className="pagetabs-files" role="toolbar" aria-label="Open files" {...fileTabs.props}>
+              {openConfigs.map((path) => (
+                <span key={path} className={`pagetab config${page === path ? " on" : ""}`}>
+                  <button type="button" aria-current={page === path ? "page" : undefined} onClick={() => setPage(path)} title={path} data-testid={`page-${path}`}>
+                    {fileName(path)}
+                    {unsaved[path] && (
+                      <span className="unsaved" title="Unsaved changes" aria-label="unsaved changes">
+                        {" "}
+                        ●
+                      </span>
+                    )}
+                  </button>
+                  <button type="button" className="close" onClick={() => askToClose(path)} aria-label={`Close ${path}`} title="Close">
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         {info && <span className="muted small version">v{info.version}</span>}
-        <button className="ghost small" onClick={() => setHelp(true)} title="Every key, for running and driving (?)" data-testid="keys">
-          Keys
-        </button>
-        <button className="ghost small" onClick={() => setTheme(nextTheme(theme))} title="Light, dark, or as your system is set">
-          {THEME_LABEL[theme]}
-        </button>
+        <div className="topbar-tools" role="toolbar" aria-label="The app" {...appTools.props}>
+          <button className="ghost small" onClick={() => setHelp(true)} title="Every key, for running and driving (?)" data-testid="keys">
+            Keys
+          </button>
+          <button className="ghost small" onClick={() => setTheme(nextTheme(theme))} title="Light, dark, or as your system is set">
+            {THEME_LABEL[theme]}
+          </button>
+        </div>
       </header>
       {loadError && (
         <div className="banner" role="alert">
@@ -1294,6 +1323,7 @@ export function App() {
         />
         <main className="main">
           <div className="simulate" hidden={page !== "simulate"}>
+            <h1 className="visually-hidden">Simulate</h1>
             <RunBar
               workspace={workspace}
               form={form}

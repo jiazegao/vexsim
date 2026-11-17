@@ -66,6 +66,17 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
       ["Double-click", "the whole field"],
     ],
   },
+  {
+    title: "Getting around without a mouse",
+    keys: [
+      ["Tab, then Enter", "from the top of the page: Skip to Run"],
+      ["Tab / Shift+Tab", "the next / the last stop: a row of tabs, a toolbar and the list are one stop each"],
+      ["← / →", "along a row of tabs or a toolbar that Tab brought you to (Home / End: its ends)"],
+      ["↑ / ↓", "through the list; → for an item's ⋯ button, or a run's Compare, Keep, Rename and Delete"],
+      ["Enter", "pick what has the keyboard"],
+      ["Menu key, Shift+F10", "an item's menu: Edit, Duplicate, Delete"],
+    ],
+  },
 ];
 
 /** Every key, as a dialog. */

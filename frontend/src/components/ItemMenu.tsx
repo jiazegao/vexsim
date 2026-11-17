@@ -24,6 +24,7 @@ export function ItemMenu(props: { label: string; at: { x: number; y: number }; a
   const [place, setPlace] = useState(props.at);
   const close = useRef(props.onClose); // the latest: listeners added once call it
   close.current = props.onClose;
+  const [opener] = useState(() => document.activeElement as HTMLElement | null); // what had the keyboard as it opened
 
   useLayoutEffect(() => {
     const element = box.current;
@@ -62,6 +63,16 @@ export function ItemMenu(props: { label: string; at: { x: number; y: number }; a
     };
   }, []);
 
+  // the keyboard goes back to what opened it when it closes, unless it has gone elsewhere
+  // (a click on something else; the editor an action opened)
+  useEffect(
+    () => () => {
+      const at = document.activeElement;
+      if (opener?.isConnected && (!at || at === document.body)) opener.focus();
+    },
+    [opener],
+  );
+
   // the first thing it offers has the keyboard
   useEffect(() => {
     box.current?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
@@ -85,6 +96,11 @@ export function ItemMenu(props: { label: string; at: { x: number; y: number }; a
     }
   };
   const move = (event: React.KeyboardEvent) => {
+    if (event.key === "Tab") {
+      event.preventDefault(); // out of the menu: it closes, and the keyboard is back where it was
+      close.current();
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? [])];

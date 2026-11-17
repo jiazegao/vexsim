@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRoving } from "../roving";
 import { embedded, HOSTS, openInHost } from "../host";
 import type { ItemKind, WorkspaceInfo, WorkspaceItem } from "../protocol";
 import type { Editor } from "../problems";
@@ -126,7 +127,13 @@ export function Sidebar(props: {
   const opened = useRef(0);
   // a menu closes itself, not one opened since (its action still going when another opened)
   const closeMenu = useCallback((id: number) => setMenu((open) => (open?.id === id ? null : open)), []);
-  const list = useRef<HTMLDivElement>(null);
+  // The head (its tabs and Refresh) and the list are each one stop for Tab (roving.ts). In the
+  // list Up and Down move between the items, Right reaches an item's ⋯ button (and a run's
+  // actions), and the Menu key (or Shift+F10) opens an item's menu where it is.
+  const head = useRoving<HTMLDivElement>("button");
+  const items = useRoving<HTMLDivElement>("button.item, button.group-action", { down: true, row: "li", beside: "button.item-more" });
+  const runsList = useRoving<HTMLDivElement>("button.item", { down: true, row: "li", beside: ".run-actions button" });
+  const list = items.group;
   useEffect(() => {
     if (!fresh) return;
     list.current?.querySelector(`[data-testid="item-${CSS.escape(fresh)}"]`)?.scrollIntoView({ block: "nearest" });
@@ -148,13 +155,15 @@ export function Sidebar(props: {
   };
   return (
     <nav className="sidebar" id="sidebar" aria-label="Workspace and runs" data-testid="workspace" hidden={props.hidden}>
-      <div className="sidebar-head" role="tablist">
-        <button role="tab" aria-selected={tab === "workspace"} className={tab === "workspace" ? "on" : ""} onClick={() => choose("workspace")} data-testid="tab-workspace">
-          Workspace
-        </button>
-        <button role="tab" aria-selected={tab === "runs"} className={tab === "runs" ? "on" : ""} onClick={() => choose("runs")} data-testid="tab-runs">
-          Runs {props.runCount > 0 && <span className="count">{props.runCount}</span>}
-        </button>
+      <div className="sidebar-head" role="toolbar" aria-label="The list" {...head.props}>
+        <div className="sidebar-tabs" role="tablist" aria-label="What's listed">
+          <button role="tab" aria-selected={tab === "workspace"} className={tab === "workspace" ? "on" : ""} onClick={() => choose("workspace")} data-testid="tab-workspace">
+            Workspace
+          </button>
+          <button role="tab" aria-selected={tab === "runs"} className={tab === "runs" ? "on" : ""} onClick={() => choose("runs")} data-testid="tab-runs">
+            Runs {props.runCount > 0 && <span className="count">{props.runCount}</span>}
+          </button>
+        </div>
         <span className="spacer" />
         {tab === "workspace" && (
           <button className="ghost small" onClick={props.onRefresh} disabled={props.loading} title="Look for new and changed files" data-testid="refresh">
@@ -163,9 +172,9 @@ export function Sidebar(props: {
         )}
       </div>
       {tab === "runs" ? (
-        props.runs
+        <div {...runsList.props}>{props.runs}</div>
       ) : (
-        <div ref={list}>
+        <div {...items.props}>
           {workspace && workspace.items.length === 0 && (
             <p className="muted pad">No robot configs, programs or PROS projects in this folder yet.</p>
           )}
@@ -207,7 +216,7 @@ export function Sidebar(props: {
                         <button
                           className={`item${selected ? " selected" : ""}${fresh === item.path ? " fresh" : ""}`}
                           data-testid={`item-${item.path}`}
-                          title={`${item.path}\n${hint}\nRight-click for Edit, Duplicate and Delete`}
+                          title={`${item.path}\n${hint}\nRight-click (or the Menu key) for Edit, Duplicate and Delete`}
                           aria-pressed={selected}
                           onClick={() => onPick(item)}
                         >
@@ -227,6 +236,7 @@ export function Sidebar(props: {
                           aria-label={`More for ${item.name}`}
                           aria-haspopup="menu"
                           aria-expanded={menu?.item.path === item.path}
+                          tabIndex={-1} // reached with the Right arrow from its item, not with Tab
                           data-menu-trigger=""
                           data-testid={`menu-${item.path}`}
                         >

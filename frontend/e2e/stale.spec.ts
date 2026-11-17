@@ -149,6 +149,7 @@ test("the workspace list follows the disk when the window gets the focus back", 
 
 test("the address keeps your place: over a reload, and Back and Forward", async ({ page }) => {
   const selected = (testid: string) => expect(page.getByTestId(testid)).toHaveAttribute("aria-selected", "true");
+  const current = (testid: string) => expect(page.getByTestId(testid)).toHaveAttribute("aria-current", "page"); // an open file's button
   await page.goto(`/?token=${TOKEN}`);
   await expect(page.getByTestId("field")).toBeVisible();
   await expect.poll(() => page.url()).not.toContain("token"); // the key isn't left in the address
@@ -179,11 +180,11 @@ test("the address keeps your place: over a reload, and Back and Forward", async 
   await expect.poll(() => hash(page)).toBe(`#/edit?file=${ROBOT}`);
   await page.reload();
   await expect(page.locator('[data-testid="config-editor"]:not([hidden])')).toHaveAttribute("data-path", ROBOT);
-  await selected(`page-${ROBOT}`);
+  await current(`page-${ROBOT}`);
   await page.goBack();
   await selected("page-calibrate");
   await page.goForward();
-  await selected(`page-${ROBOT}`);
+  await current(`page-${ROBOT}`);
 
   // an address typed, or from a bookmark; one that names nothing is the Simulate page
   await page.goto("/#/build");

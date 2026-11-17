@@ -88,7 +88,7 @@ export function RunBar(props: {
           <button type="button" className="ghost small" onClick={() => props.onFold?.(false)} title="Change the robot, the program, the start and the rest" data-testid="runbar-edit">
             Edit
           </button>
-          <button type="submit" className="primary" disabled={!form.robot || props.starting} data-testid="run">
+          <button type="submit" id="run" className="primary" disabled={!form.robot || props.starting} data-testid="run">
             {props.starting ? "Starting…" : "Run"}
           </button>
         </div>
@@ -208,7 +208,7 @@ export function RunBar(props: {
           </select>
         </label>
         <div className="actions">
-          <button type="submit" className="primary" disabled={!form.robot || props.starting} data-testid="run">
+          <button type="submit" id="run" className="primary" disabled={!form.robot || props.starting} data-testid="run">
             {props.starting ? "Starting…" : "Run"}
           </button>
         </div>

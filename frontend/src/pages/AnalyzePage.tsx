@@ -6,6 +6,7 @@ import { PathChart } from "../components/PathChart";
 import { isActive, useJob } from "../jobs";
 import { fixed } from "../pose";
 import type { Drift, MotorCurves, Odometry, RunProblem, WorkspaceInfo } from "../protocol";
+import { useRoving } from "../roving";
 
 type Tool = "motors" | "drift" | "odometry";
 const TOOLS: [Tool, string][] = [
@@ -26,6 +27,7 @@ export function AnalyzePage(props: { workspace: WorkspaceInfo | null; robot: str
   const [tool, setTool] = useState<Tool>("motors");
   const robots = useMemo(() => props.workspace?.items.filter((i) => i.kind === "robot" && !i.problem) ?? [], [props.workspace]);
   const robot = props.robot || robots[0]?.path || "";
+  const tabs = useRoving<HTMLDivElement>('[role="tab"]');
 
   return (
     <div className="page" data-testid="analyze-page">
@@ -36,7 +38,7 @@ export function AnalyzePage(props: { workspace: WorkspaceInfo | null; robot: str
           as <code>vexsim motor-curves</code>, <code>drift</code> and <code>odometry</code>.
         </p>
       </header>
-      <div className="tabs subtabs" role="tablist">
+      <div className="tabs subtabs" role="tablist" aria-label="Tools" {...tabs.props}>
         {TOOLS.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tool === id} className={tool === id ? "on" : ""} onClick={() => setTool(id)} data-testid={`tool-${id}`}>
             {label}

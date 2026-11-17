@@ -27,7 +27,7 @@ export function useController(store: SessionStore | null, enabled: boolean, onSc
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
       if (!isDrivingKey(event.code) || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (typing(event.target)) return;
+      if (typing(event.target) || event.defaultPrevented) return; // (taken already: an arrow that moved through the list, roving.ts)
       // Held keys count from when they go down (a key held as the run starts drives it),
       // but only a live run's keys are the robot's alone.
       held.current.add(event.code);
