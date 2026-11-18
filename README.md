@@ -1544,7 +1544,7 @@ vexsim/
 |---|---|
 | `examples/` | robot and field configs, Python and C++ programs, inputs, scenarios, scripts ([the table above](#the-example-files)) |
 | `docs/` | deep dives: [models.md](docs/models.md) (every parameter's source, measurement experiments), [conventions.md](docs/conventions.md), [programming.md](docs/programming.md), [cpp.md](docs/cpp.md), [benchmarking.md](docs/benchmarking.md) (a worked 100-seed example), [calibration.md](docs/calibration.md), [calibration_guide.md](docs/calibration_guide.md) (calibrating, step by step, for students), [porting_1239e.md](docs/porting_1239e.md), [1239e_real_vs_sim.md](docs/1239e_real_vs_sim.md); images and an example report |
-| `frontend/` | the browser app's source (React and TypeScript, the field drawn on a canvas), its unit tests (`tests/`, Vitest) and its end-to-end tests (`e2e/`, Playwright) |
+| `frontend/` | the browser app's source (React and TypeScript, the field drawn on a canvas), its unit tests (`tests/`, Vitest) and its end-to-end tests (`e2e/`, Playwright). `src/App.tsx` is the shell (the header, the workspace list, the page on show); what each feature keeps is a hook in `src/app/` (`useWorkspace`, `useRunForm`, `useRuns`, `useRealLog`, `useEditors`, `useAddress`, `useKeys`), beside the Simulate page (`SimulatePage.tsx`); the other pages are in `src/pages/`, and what they're made of in `src/components/` |
 | `tests/` | the test suite, including a C++ test project for the bridge (`tests/cpp/bridge_test`) |
 | `PLAN.md` | the design plan and the phase history |
 

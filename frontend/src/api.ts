@@ -1,4 +1,4 @@
-// The UI server's REST API (see vexsim/ui/server.py). Every request carries the server's
+// The UI server's REST API (see vexsim/ui/server/). Every request carries the server's
 // token: the page was opened with it in its link (?token=...), and the server traded it for a
 // cookie. A page shown inside another app (the VS Code panel) gets no cookies, so the page
 // keeps the token for this tab as well, and sends it with each request.
