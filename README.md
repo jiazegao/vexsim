@@ -1352,7 +1352,7 @@ print(result.combos(), result.rows[0]["final_error_in"])
 ## 15. Module reference: what each part does
 ```
 vexsim/
-  cli.py, __main__.py   the `vexsim` command
+  cli/, __main__.py     the `vexsim` command
   units.py, v5.py       unit conversions; V5 hardware constants
   config/               robot and field schemas, YAML loading, validation, summaries
   core/                 clock, event scheduler, random streams
@@ -1372,7 +1372,7 @@ vexsim/
 ### Top level
 | Module | What it does |
 |---|---|
-| `cli.py` | Every `vexsim` command: parses arguments, loads configs, wires the pieces below together, and prints results. `main(argv)` returns the exit code. |
+| `cli/` | Every `vexsim` command: parses arguments, loads configs, wires the pieces below together, and prints results. A module a group of commands, each with its part of the parser: `analysis` (validate-config, motor-curves, drift, odometry), `running` (run, plot, replay), `projects` (build, doctor, routines, route), `bench`, `calibration` (calibration, logger), `calibrate` (calibrate, calibration-routine) and `app` (ui, shortcut, vscode). `parser.py` puts the parser together (`build_parser`) and has `main(argv)`, which returns the exit code; both are imported from `vexsim.cli`. |
 | `__main__.py` | Makes `python -m vexsim` work. |
 | `units.py` | Conversions between VEX units and SI (`in_to_m`, `rpm_to_rad_s`, `mv_to_v`, ...). The simulator computes in SI and converts only at its boundaries. |
 | `v5.py` | V5 constants: 21 smart ports, cartridge speeds (100/200/600 rpm), ±12000 mV, 11 W per motor, the 88 W motor budget, the 18 in starting size. |
