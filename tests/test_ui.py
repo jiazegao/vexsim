@@ -211,6 +211,21 @@ def test_workspace_finds_what_vexsim_can_use(tmp_path):
 # --- jobs -----------------------------------------------------------------------------------
 
 
+def test_a_program_in_a_string_isnt_a_program(tmp_path):
+    """A Python file is a robot program by what it defines, not by what its text holds: a
+    test with a program in a string (vexsim's own have them) isn't one. A file that doesn't
+    parse, one being typed, still is."""
+    program = "def autonomous(bot):\n    yield\n"
+    (tmp_path / "real.py").write_text(program + "\n\ndef opcontrol(bot):\n    yield\n")
+    (tmp_path / "test_it.py").write_text(
+        f'PROGRAM = """\n{program}"""\n\n\ndef test_it():\n    pass\n'
+    )
+    (tmp_path / "half.py").write_text(program + "\n\ndef opcontrol(bot:\n")
+    found = {item.path: item.detail for item in Workspace(tmp_path).scan()}
+    programs = "Python: autonomous, opcontrol"
+    assert found == {"real.py": programs, "half.py": programs}
+
+
 def test_jobs_run_in_their_own_processes():
     jobs = JobManager()
     heard = []

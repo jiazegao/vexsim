@@ -10,6 +10,7 @@ of a folder that hasn't changed is answered from the last one.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import os
 import re
@@ -294,8 +295,7 @@ class Workspace:
         if suffix in (".yaml", ".yml"):
             return self._config(path)
         if suffix == ".py":
-            text = _read(path)
-            functions = sorted(set(_PROGRAM_FUNCTION.findall(text or "")))
+            functions = _program_functions(_read(path) or "")
             if functions:
                 return WorkspaceItem(
                     "program", self.relative(path), path.name, "Python: " + ", ".join(functions)
@@ -421,6 +421,22 @@ def _size(path: Path) -> int:
         return path.stat().st_size
     except OSError:
         return MAX_CAPTURE + 1
+
+
+def _program_functions(text: str) -> list[str]:
+    """The robot program's functions a Python file defines (initialize, autonomous, opcontrol),
+    sorted; none if it isn't a program. By what it defines, not what its text holds: a test
+    with a program in a string isn't one. A file that doesn't parse (one being typed) goes by
+    its text, so it stays listed, and says what's wrong when it's run."""
+    found = sorted(set(_PROGRAM_FUNCTION.findall(text)))
+    if not found:
+        return []
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return found
+    defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    return [name for name in found if name in defined]
 
 
 def _read(path: Path, limit: int = MAX_READ) -> str | None:
