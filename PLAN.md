@@ -339,7 +339,9 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 15.5 | **[done]** Accessibility: readable grey text, a keyboard path, the right roles, an audit in the browser tests | No serious or critical axe finding on any page, light or dark; *Run* is two key presses from the top with the skip link, and at most 12 Tab presses without it (83 before) |
 | 15.6 | **[done]** What the server sends, checked; drawings packed; a reload mid-run keeps the code's drawings | Every endpoint's response is checked against its protocol model in the tests; a run whose code draws MCL's particles records at least 40% fewer bytes a second; a page reloaded mid-run shows the drawings |
 | 15.7 | **[done]** The big files split by feature: `App.tsx`, `server.py`, `protocol.py`, `cli.py` | None of the four is over about 600 lines; every test passes unchanged; the generated `protocol.ts` is the same, byte for byte |
-| 16 | *(planned, not started)* The physics step, compiled | Decided with numbers after 15.1: see [section 18](#18-the-physics-step-compiled-phase-16-planned) |
+| 16.1 | The physics step, compiled ([section 18](#18-the-physics-step-compiled-phase-16)): the wheels' loads, the motors, the mechanisms, the contact, the solve and the battery in C, built with the toolchain vexsim finds, the robot's state shared with it; the Python step stays the model | With the compiled step every existing test passes unchanged; from the same state the two steps agree on every number to 1 part in 10⁹, and whole runs to a nanometre; a Python program's run is at least 2.5× faster and 1239E's Left 40 at least 1.5×; without a compiler everything runs as before |
+| 16.2 | The rest of a millisecond: what Python still does every step (sensors, events, the loop), trimmed without changing a number | A Python program's run at least 3× faster than before the phase and Left 40 at least 1.7×, with results the same as 16.1's to the last bit |
+| 16.3 | Where it shows: run records and the app say which step ran; the step built in the background when `vexsim ui` starts | A recorded run says which step made it; the first run after installing doesn't wait for the build |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |
@@ -795,12 +797,44 @@ A review of the whole project (2026-11-17), by measuring it: the simulator's spe
   - *What it doesn't do:* the hooks hand each other what they need as arguments, in one order (the folder, the form, the runs, the log, the editors, the address), and `App` still re-renders as a whole on every frame of a run, as it did. Splitting the state so that only the field's part re-renders is a change of behaviour, and wasn't this sub-phase's.
   - *Afterwards, with phase 15 done:* the README's six pictures of the app that are made by `frontend/scripts/pictures.mjs` were made again (they were 15.2's: no *Guide* page, no *Run on save*, the old text colors). Making them showed vexsim's own tests and its starter program's template in the workspace list as Python programs, in the repository's own folder: the list went by a file's text holding `def autonomous`, and those hold programs in strings. It goes by what the file defines now (`Workspace`, with a test); a file that doesn't parse still goes by its text, so a program being typed stays listed.
 
-## 18. The physics step, compiled (phase 16, planned)
-Not started. The simulator steps every millisecond in Python and NumPy, 73 to 123 µs a step; on 1239E's C++ code that's about half of a run's time, the rest being the sensors, the events and the wait on the robot code. Compiling the step (the motors, the wheels' contact, the solve, the walls) with the C++ toolchain vexsim already finds would make a C++ project's runs about 1.7× faster, and a Python program's about 3×.
+## 18. The physics step, compiled (phase 16)
+The simulator steps every millisecond in Python and NumPy. Phase 15.1 took what could be had without touching the step; this phase compiles the step itself, with the C++ toolchain vexsim already finds. It's the only phase that changes the simulation's numbers, so how much it may change them was decided first.
 
-Its cost is a second copy of the physics: every model change made twice, and the two checked against each other for as long as both exist. So it waits for phase 15.1's numbers, and would be:
-- optional: used when the toolchain is there and its own check passes, else the Python step;
-- checked: the tests run both steps on the same scenarios and compare the paths within a tolerance;
-- the only change to the simulation's numbers in the project, so its tolerance is decided first.
+**What was measured** (2026-11-24, this repository, a 4-core Linux container; its speed wanders by a fifth from hour to hour):
 
-Other ways to the same end, to weigh then: stepping the mechanisms and the thermal model less often, and resting a robot that isn't moving or commanded.
+| What | Result |
+|---|---|
+| A Python program (`tour.py` on `full_omni_6m`, 6 motors) | 116 µs for each 1 ms step. The step itself (`Robot.advance`) is 83 µs of it (72%); the sensors' work every millisecond 13, their sampling 6, the events and the loop 12 |
+| 1239E Left 40 (C++, LemLib, MCL; 9 motors, 4 mechanisms) | 305 µs a step. The step is 144 µs (47%), the wait on the robot code 106 (35%), the sensors' sampling 20, the rest 35 |
+| So, with a step that costs next to nothing | a Python program about 3× faster, 1239E's project about 1.8× |
+| The step's arithmetic done in another order (the solve on the system reversed, `tanh` from the C library one at a time) | the solve differs by up to 1.5 × 10⁻¹² of its size in a step; six scenarios' paths end within 6 × 10⁻¹² mm of the plain step's over 10 to 15 s |
+| Every step's velocities nudged by 1 part in 10¹³ | paths within 7 × 10⁻⁹ mm: the dynamics damp an error, they don't grow it |
+| The same, by 1 part in 10¹¹ | the same, but 1239E's Left 40 once ended 30 mm away: a reading had sat on a rounding edge, and from there it was another run |
+| A wheel off the floor | 0 to 1% of the examples' steps (more for a robot with a dropped center wheel) |
+| Touching a wall or an element | 0.6% of Left 40's steps, 5 to 17% when driven among elements; 90 to 150 µs each. Walls and elements together cost 1.3 to 5.6 µs a step in autonomous runs |
+| Copying nine motors' state to a compiled step and back, each step | 13 µs. Reading a number through a property over shared memory: 40 ns more than a plain attribute |
+
+**Decisions** (2026-11-24):
+- *The tolerance, first.* From the same state, one step of the compiled step gives every number within one part in 10⁹ of the Python step's (10⁻⁹ outright for a number under 1). A whole run from the same start stays within a nanometre and 10⁻⁷ degrees of the Python step's. Both are a hundred thousand times what rounding was measured to leave, and far under anything a model change would. Not promised: the same digits. A run where a sensor's reading falls within that distance of a rounding edge can part from its twin, as it could from a nudge of 1 part in 10¹¹; nothing in the measured scenarios came near.
+- *The Python step stays the model.* `Robot`, `V5Motor`, `Mechanism` and the rest are what the documents describe and what a change is made to first. The C is a copy of their arithmetic, expression for expression, and nothing is in it that isn't in them.
+- *Checked three ways:* the library's own check when it's first built on a computer (a made-up robot stepped by both, a few hundred steps); tests that step every example robot both ways from the same states, and run whole scenarios both ways; and a mode that runs both steps on every step of anything (`VEXSIM_STEP=check`), which CI runs the whole test suite under. A model change made in one copy only fails all three.
+- *Optional.* Used when a compiler is found, the library builds and its check passes; else the Python step, without a word (`vexsim doctor` says which, and why). `VEXSIM_STEP=python` or `compiled` picks one; `compiled` is an error where it can't be had.
+- *What's compiled:* the wheels' loads (with wheels lifting off), the motors with their firmware loops, current limit and heat, the mechanisms, the wheels' contact and its Jacobian, the solve, the pose, the battery. *What stays in Python:* walls and elements (already skipped while there's room, and rare), the pieces, the sensors, the events, and any supply that isn't the stock battery (a replay's logged voltage): the step takes its voltage and gives back the load.
+- *The state is shared, not copied.* A robot's numbers live in one block of doubles the C reads and writes in place. The Python objects that held them (`V5Motor`, `MotorThermal`, `PowerSystem`, `Battery`, `Mechanism`, the contact state) become views of the block when the robot first steps: the same classes' methods, their numbers properties over it. So everything that reads or sets a motor, from a program to a test, works as it did, and the Python step runs on the same objects, which is how the check mode compares the two.
+- *C, not C++,* built by the `gcc` beside the `g++` vexsim finds (one file, no library but the C one), into vexsim's build cache, loaded with `ctypes`: nothing to match Python's own compiler.
+- *Not done, weighed:* stepping mechanisms and the thermal model less often, and resting a robot that isn't moving, were other ways to the same end. Compiled, a mechanism and a motor's heat are a few tens of nanoseconds a step and a resting robot's step the same few microseconds as a moving one's: nothing left to gain, and both would have changed the numbers.
+
+**16.1 The step in C**
+- `vexsim/physics/step.c`, a copy of the Python step's arithmetic, and `vexsim/physics/compiled.py`: where each number lives (one table, from which the C header is written and checked by a test, as the page's protocol types are), the build, the load, the library's own check, and the shared views.
+- `Robot.advance` uses it from a robot's first step when it can: stock classes, one supply for every motor, a drivetrain within its sizes. Anything else steps in Python as before.
+- `VEXSIM_STEP=python|compiled|check`; `vexsim doctor` reports the step.
+- Tests: one step both ways from the same state, over every example robot and the states that take each branch (each control and brake mode, the current limit, derating, a lifted robot, wheels lifting off, mechanisms at their stops, pushes, traction wheels' friction circles); whole runs both ways (a Python program, driver input, walls and elements, a C++ project); the wheels' loads against NumPy's; no compiler, a build that fails, a robot it can't take. CI: the compiled step on Python 3.13's jobs, the Python step on 3.11's, and a job that runs every test in the check mode.
+
+**16.2 The rest of a millisecond**
+- With the step compiled, what a millisecond costs is the Python around it: every device asked to integrate and publish, every-millisecond events through the heap, the loop's own bookkeeping. Trimmed where that changes no number (a device with nothing to integrate or publish isn't asked; an event due every tick doesn't go through the heap), each measured, the results the same as 16.1's to the last bit.
+- Walls in C only if contact turns out to matter in a run that's waited for.
+
+**16.3 Where it shows**
+- A run's record says which step made it, and the app shows it; the Build page says whether the compiled step is in use, and why not.
+- `vexsim ui` builds the step in the background when it starts, so the first run doesn't wait for it.
+- The numbers, before and after, in the README.
