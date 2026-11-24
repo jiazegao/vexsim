@@ -62,7 +62,7 @@ python -m pip install -e ".[dev,viz,ui]"
 The `vexsim` command is installed with the package (`python -m vexsim` works too).
 
 ### C++ toolchain (only for running PROS C++ code)
-vexsim compiles PROS projects for your PC with g++ 11 or newer.
+vexsim compiles PROS projects for your PC with g++ 11 or newer. With the same compiler it also compiles its own physics step, which makes every simulation faster: about twice as fast for a C++ project, four times for a Python program. Without a compiler everything but C++ code still runs, on the Python step: [the same numbers](#the-physics-step-python-or-compiled), more slowly.
 - **Windows:** install MSYS2 from https://www.msys2.org (default folder `C:\msys64`). In the "MSYS2 UCRT64" terminal, run `pacman -S --needed mingw-w64-ucrt-x86_64-gcc`. vexsim finds it in `msys64` or `msys2` at the top of any drive. Otherwise add `...\ucrt64\bin` to your PATH, or set `VEXSIM_CXX` to the full path of `g++.exe`.
 - **Linux:** `sudo apt install g++` (or your distribution's equivalent).
 - **macOS:** `brew install gcc`, then set `VEXSIM_CXX=g++-14` (or the version you installed).
@@ -76,6 +76,7 @@ vexsim doctor
                   g++ 13.3.0, target x86_64-linux-gnu, thread model posix
 [ ok ] build      test program compiled and linked in 2.0 s
 [ ok ] run        tasks, delays and mutexes run in lockstep with simulated time
+[ ok ] physics    the compiled step, built in 0.4 s: on its check it agreed with the Python step to 2e-14
 ```
 
 | Environment variable | Effect |
@@ -83,6 +84,7 @@ vexsim doctor
 | `VEXSIM_CXX` | the g++ to use |
 | `VEXSIM_CACHE_DIR` | where builds go (default `%LOCALAPPDATA%\vexsim\build` on Windows, `~/.cache/vexsim/build` elsewhere) |
 | `VEXSIM_LEMLIB_SOURCE` | a LemLib source checkout to build from, instead of downloading the release (for working offline) |
+| `VEXSIM_STEP` | which [physics step](#the-physics-step-python-or-compiled) runs: `python`, `compiled` (an error where it can't be had) or `check` (both, compared at every step: slow). Unset: the compiled one wherever it builds |
 
 ---
 
@@ -183,7 +185,13 @@ Conversions happen only at those boundaries (`vexsim/units.py`).
 
 ### Randomness
 - Every random number comes from a named stream derived from the run's seed (`--seed`, default 0): `sensor.imu.10`, `sensor.rotation.11.static`, and so on. Adding or removing a sensor never changes the noise another sensor sees, which keeps comparisons between robot configs fair.
-- The same seed with the same versions of numpy and vexsim gives bit-identical runs. Results can differ across platforms or library versions.
+- The same seed with the same versions of numpy and vexsim, and the same physics step, gives bit-identical runs. Results can differ across platforms or library versions.
+
+### The physics step: Python or compiled
+- The 1 ms step is written in Python and NumPy: that's the model, and what the documents describe. Where there's a C compiler (the one that builds PROS projects), vexsim also compiles a copy of the step's arithmetic in C, checks it against the Python step, and uses it from then on. Nothing has to be set up: the first simulation after installing builds it (half a second), and `vexsim doctor` says which step runs and why.
+- **The two give the same results.** From the same state, a step of each agrees on every number to better than one part in 10⁹ (measured: about one in 10¹³, which is rounding), and a whole run stays within a nanometre of its twin. They aren't the same digits: a compiler doesn't round a sum in the order NumPy does.
+- So a result doesn't depend on which step ran, to any size that matters. If you want the very same digits on two computers, give both the same step: `VEXSIM_STEP=python` works everywhere.
+- `VEXSIM_STEP=check` runs both steps at every step and stops if they disagree: for whoever changes the physics ([Developing vexsim](#18-developing-vexsim)).
 
 ### Truth and belief
 The simulator always knows where the robot really is (the **true pose**, drawn solid in the viewer). Robot code and localizers only see sensor readings and produce an **estimated pose** (the blue outline). Every comparison vexsim makes (in the viewer, telemetry, benchmarks and `vexsim run`'s headless summary) is the estimate against the truth.
@@ -1408,7 +1416,8 @@ vexsim/
 | `power.py` | `PowerSystem`: sums every motor's draw into battery current, sags the bus voltage, and shares a 20 A budget beyond 8 motors. `IdealSupply` for tests and rigs. |
 | `wheel.py` | Wheel-ground contact: `OmniWheelSpec`, `TractionWheelSpec`, `MecanumWheelSpec`; smoothed Coulomb friction on three channels; the traction friction circle. |
 | `chassis.py` | `NormalLoads`: each wheel's share of the weight, with weight transfer under acceleration and turning, drop-center rocking and lift-off. |
-| `robot.py` | `Robot`: the drivetrain built from a config. Gear groups (`DriveGroup`), wheels, chassis, mechanisms and power; the implicit integrator; the pose, velocities and contacts; wall and obstacle contacts. |
+| `robot.py` | `Robot`: the drivetrain built from a config. Gear groups (`DriveGroup`), wheels, chassis, mechanisms and power; the implicit integrator (`_step_python`: the model's step); the pose, velocities and contacts; wall and obstacle contacts. `advance` takes the compiled step where there is one. |
+| `compiled/` | The step in C, for the robots it can take. `step.c`: a copy of the Python step's arithmetic. `layout.py`: where each of a robot's numbers lives in its block of doubles (`step_layout.h` is written from it). `lib.py`: the library found in the build cache or built there, loaded, checked. `views.py`: the robot's motors, battery and mechanisms as views of the block. `step.py`: `Compiled`, a robot's compiled step, and `engage`, which gives a robot one at its first step. `check.py`: the library's own check. `modes.py`: `VEXSIM_STEP`, `use`, the tolerance. |
 | `kinematics.py` | `DriveKinematics`: which gear-group speeds produce a body motion (forward, sideways, turn), for any drivetrain; whether it can strafe; top speeds. |
 | `mechanism.py` | `Mechanism`: a lift, intake or arm: its motors through a ratio, inertia, load, friction and hard stops. |
 | `field.py` | `Walls` and `FieldSpec`: the perimeter. Footprint corners past a wall (and a shape's round edges' furthest points) are resolved with impulses (bounce, wall friction), then pushed back inside. `robot_impulses` is shared with obstacles. |
@@ -1573,7 +1582,8 @@ Omni wheels grip along their rolling direction and roll freely across it, which 
 
 ### Chassis and robot dynamics
 - Each wheel sits on a stiff spring under a rigid chassis. The loads carry the weight and balance the pitch and roll moments of the ground forces below the CG: weight transfer, drop-center rocking, wheel lift-off.
-- The degrees of freedom are the body's forward, sideways and yaw velocities, plus one shaft speed per gear group. Contact velocities are linear in them, and each 1 ms step solves a linearly implicit Euler update, stable even though tire friction is far stiffer than the step. Motor torques are explicit. The example robot runs about 6× faster than real time on one core.
+- The degrees of freedom are the body's forward, sideways and yaw velocities, plus one shaft speed per gear group. Contact velocities are linear in them, and each 1 ms step solves a linearly implicit Euler update, stable even though tire friction is far stiffer than the step. Motor torques are explicit.
+- A step of the 6-motor example takes about 85 µs in Python and 3 µs [compiled](#the-physics-step-python-or-compiled). With its sensors and a program, a whole simulation runs about 9 times faster than real time on the Python step and 35 times on the compiled one, on one core.
 
 ### Walls, obstacles, pieces, mechanisms
 - **Walls and solid obstacles:** footprint corners inside them are contacts, resolved with impulses: a bounce (`wall_restitution`, none below 5 cm/s) and friction (`wall_friction`); then the robot is moved out. A robot driving into a wall stalls with its wheels slipping, and an angled approach squares it up (a wall reset).
@@ -1625,7 +1635,7 @@ pytest          # every test (the C++ bridge tests skip without g++, unless VEXS
 ruff check .    # lint
 ruff format .   # format
 ```
-CI (`.github/workflows/ci.yml`) runs on Windows (with MSYS2 g++) and Linux, with Python 3.11 and 3.13: lint, every test with the C++ bridge required, validation of every example config, and every example command, uploading the plots and telemetry as artifacts. A Linux job checks the browser app: types, unit tests, a fresh build that must match the committed one, and the end-to-end tests. Another, on Windows and Linux, installs the VS Code extension in a real VS Code and opens the app in its panel.
+CI (`.github/workflows/ci.yml`) runs on Windows (with MSYS2 g++) and Linux, with Python 3.11 and 3.13: lint, every test with the C++ bridge required (on the compiled physics step with 3.13, on the Python one with 3.11), validation of every example config, and every example command, uploading the plots and telemetry as artifacts. A Linux job runs every test once more with both physics steps, compared at every step. A Linux job checks the browser app: types, unit tests, a fresh build that must match the committed one, and the end-to-end tests. Another, on Windows and Linux, installs the VS Code extension in a real VS Code and opens the app in its panel.
 
 **The browser app** (`frontend/`, with Node.js 22):
 ```
@@ -1643,8 +1653,14 @@ npm run vscode-test   # the VS Code extension, installed in a VS Code it downloa
 The page is checked for accessibility as it's tested. `e2e/a11y.spec.ts` audits every page with axe-core, in the light theme and the dark one: a serious or critical finding (text that's hard to read, a control with no name, a role used wrongly) fails it. It also walks the keyboard's way to *Run*, stop by stop. `tests/contrast.test.ts` computes the contrast of every text color in `src/styles.css` against every surface. So a new color for text goes in as one of the text tokens (`--text-*`, `--link`, `--bad-text`, `--good-text`, `--warning-text`), never as a series or status color (those are for marks and fills); a new row of tabs, toolbar or list takes `useRoving` (`src/roving.ts`), which makes it one stop for Tab; and a new box that scrolls takes `useScrollFocus` (`src/scrollfocus.ts`).
 To work on the page with live reloading, run `vexsim ui --dev --no-browser` (on the default port, 8642) and open the link it prints once, for its cookie; then run `npm run dev` and open http://127.0.0.1:5173. Messages are defined once, in `vexsim/ui/protocol/` (a new model goes in its feature's module, in `registry.py`'s `MODELS` and in `__init__.py`): after changing them, run `python -m vexsim.ui.protocol frontend/src/protocol.ts`. The registry also says what each endpoint answers with (`RESPONSES`): a new endpoint goes in there, and a test fails until it does. The server doesn't check its answers as it runs (a recording is megabytes); the tests do, for it: every answer a test gets from the server, and every message of a live run, is checked against its model (`tests/conftest.py`), whatever the test itself looks at. With `VEXSIM_REQUIRE_ANSWERS=1`, as in CI, a run of all the tests also fails if there's an endpoint none of them got an answer from.
 
+**The physics step is written twice.** The model is the Python: `Robot._step_python`, `V5Motor.update`, `MotorThermal`, `Mechanism.advance`, the contact functions in `wheel.py`, `NormalLoads`, `PowerSystem.end_step` and `Battery`. `vexsim/physics/compiled/step.c` is a copy of their arithmetic, function for function, each naming the one it copies. A change to the physics is made in the Python first, then there:
+- *A change to an expression:* the same change in the C function of the same name, the operations in the same order.
+- *A new number* (a motor's, a mechanism's, the robot's): its name in the table in `compiled/layout.py`; `python -m vexsim.physics.compiled` to write `step_layout.h` again; if a program can read or set it, its property in `compiled/views.py`; if it's a constant, its line in `Compiled.refresh` (`compiled/step.py`).
+- *Then:* `pytest tests/test_step.py` steps every example robot both ways from the same states and runs whole scenarios both ways; `VEXSIM_STEP=check pytest` runs every test with both steps, compared at each step. Both fail on a change made in one copy only, and name the number that differs. The tolerance is one part in 10⁹ for a step and a nanometre for a run ([PLAN.md](PLAN.md), section 18): if a change can't keep to it, the copy is wrong, not the tolerance.
+- What isn't in the C stays as it was: walls, game elements and pieces, the sensors, any supply that isn't the stock battery. A robot the C can't take (a subclass of `Robot` or `V5Motor`, more than 13 gear groups) steps in Python without a word.
+
 **Adding to vexsim:**
-- *A model parameter:* add a field to the spec dataclass (`MotorSpec`, `OmniWheelSpec`, ...). It becomes an override key automatically. Document its source in `docs/models.md`.
+- *A model parameter:* add a field to the spec dataclass (`MotorSpec`, `OmniWheelSpec`, ...). It becomes an override key automatically. Document its source in `docs/models.md`. A parameter the step itself reads (a motor's, a wheel's, the battery's) also goes to the compiled step: see above.
 - *A sensor type:* a config class in `config/robot.py`, a spec in `devices/specs.py` (in every preset), a device in `devices/devices.py`, the suite in `devices/suite.py`; for C++, the shim header, `runtime/devices.cpp`, and a reading line in `bridge/program.py`.
 - *A PROS function:* declare it in the shim header under `vexsim/bridge/cpp/include/pros/`, implement it in `runtime/devices.cpp` or `scheduler.cpp`, and exercise it in `tests/cpp/bridge_test`.
 - *A benchmark task or controller:* `bench/scenario.py` (the schema and `CONTROLLER_KINDS`) and `bench/trial.py`.

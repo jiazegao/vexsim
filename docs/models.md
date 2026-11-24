@@ -194,7 +194,9 @@ F = mu * N * tanh(|c| / x_s) * c / |c|,   c = (grip slip, sideways slip)
 
 **Motor direction:** a negative port means the motor's raw positive direction drives its group backward. Group commands apply that sign, as a PROS 4 `MotorGroup` does.
 
-**Speed:** about 170 µs per simulated millisecond for the 6-motor example, so about 6× faster than real time on one core.
+**Two copies of the step.** `Robot._step_python` and the functions it calls are the model. Where there's a C compiler, vexsim compiles a copy of their arithmetic (`vexsim/physics/compiled/step.c`) and uses that: the wheels' loads, the motors, the mechanisms, the contact, the solve, the pose and the battery, on the robot's numbers in a block of memory the Python objects are views of. Walls, game elements and sensors stay in Python. From the same state the two agree on every number to better than one part in 10⁹ (measured: one in 10¹³), and whole runs to a nanometre; the tests step every example robot both ways, and `VEXSIM_STEP=check` compares them at every step of anything. `VEXSIM_STEP=python` keeps to the Python step.
+
+**Speed:** a step of the 6-motor example takes about 85 µs in Python and 3 µs compiled. With sensors and a program, a simulation runs about 9× faster than real time on the Python step and 35× on the compiled one, on one core.
 
 **What the tests check** (`tests/test_drive.py`):
 - top speed matches the gearing within 1%
@@ -318,7 +320,7 @@ Pieces don't spin. Robots can't drive over or pick them up: intakes and scoring 
 | Distance | ~30 Hz; 20–2000 mm; σ 7.5 mm below 200 mm, 2.5% above; sees walls, obstacles and pieces; by default never misses and reports confidence 63 | range and accuracy (±15 mm / ±5%, taken as ~2σ): [VEX][dist]; rate: VEX Forum |
 | GPS | 20 ms, 20 ms latency; fix while its camera sees the code strip 0.3–4 m away; position σ 5 mm + 4 mm per meter to the strip; heading σ 0.3° | update rate "at worst 20 Hz": VEX Forum; rest estimates |
 
-**Rotation sensor (tracking wheel).** The wheel's rotation is integrated every physics step from the true contact velocity at its *true* mounting point with its *true* diameter. The localizer only knows the configured geometry, so per-device errors show up as odometry error, as on a real robot. The harsh preset adds random lift-off moments, when the wheel stops counting.
+**Rotation sensor (tracking wheel).** The wheel's rotation is integrated every physics step from the true contact velocity at its *true* mounting point with its *true* diameter. Its scrub noise is drawn every step, in proportion to the sideways travel (none at rest), so the wheel's sequence of noise is the same whatever the robot does. The localizer only knows the configured geometry, so per-device errors show up as odometry error, as on a real robot. The harsh preset adds random lift-off moments, when the wheel stops counting.
 
 **IMU.**
 - Calibration averages the raw gyro over 2 s and subtracts that from then on.

@@ -58,6 +58,8 @@ include = ["vexsim*"]
     "cpp/calibration/*.cpp",
     "cpp/calibration/*.h",
 ]
+# The physics step in C, compiled where there's a compiler (vexsim/physics/compiled)
+"vexsim.physics.compiled" = ["*.c", "*.h"]
 # The browser app, built from frontend/ by `npm run build`, and the VS Code extension
 "vexsim.ui" = ["static/*", "static/assets/*", "static/icons/*", "vscode/*"]
 

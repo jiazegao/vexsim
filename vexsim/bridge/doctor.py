@@ -1,4 +1,5 @@
-"""``vexsim doctor``: check that robot code can be compiled and run on this machine."""
+"""``vexsim doctor``: check that robot code can be compiled and run on this machine, and say
+which physics step the simulator takes here."""
 
 from __future__ import annotations
 
@@ -37,6 +38,28 @@ EXPECTED = "doctor: counter 3 at 50 ms"
 
 def run_doctor(cxx: str | None = None, log: Callable[[str], None] = print) -> bool:
     log(f"vexsim {__version__}, Python {platform.python_version()} on {platform.platform()}")
+    ready = _robot_code(cxx, log)
+    _physics(log)
+    if ready:
+        log("Ready. Build a PROS project with: vexsim build <project folder>")
+    return ready
+
+
+def _physics(log: Callable[[str], None]) -> None:
+    """Which step the simulator's own physics takes (vexsim/physics/compiled): the
+    compiled one where the compiler builds it and it passes its check, else the Python one,
+    which gives the same numbers more slowly. Either way vexsim works."""
+    from vexsim.physics import compiled
+
+    ok, text = compiled.describe()
+    first, *more = text.splitlines()
+    log(f"[{' ok ' if ok else 'note'}] physics    {first}")
+    for line in more:
+        log(f"                  {line}")
+
+
+def _robot_code(cxx: str | None, log: Callable[[str], None]) -> bool:
+    """Whether a PROS project can be compiled and run here."""
     try:
         tc = find_toolchain(cxx)
     except BuildError as exc:
@@ -82,7 +105,6 @@ def run_doctor(cxx: str | None = None, log: Callable[[str], None] = print) -> bo
         log(f"[FAIL] run        expected {EXPECTED!r}, got {console!r}")
         return False
     log("[ ok ] run        tasks, delays and mutexes run in lockstep with simulated time")
-    log("Ready. Build a PROS project with: vexsim build <project folder>")
     return True
 
 

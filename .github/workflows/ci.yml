@@ -14,6 +14,16 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
         python: ["3.11", "3.13"]
+        # The simulator's physics step is Python, or the same arithmetic compiled where
+        # there's a compiler (PLAN.md section 18). Each is tested on both systems: the
+        # compiled one must be had (not fallen back from) on 3.13's jobs, and 3.11's take
+        # the Python one, as a computer without a compiler does. test_step.py compares the
+        # two on every job, and the job below runs every test with both.
+        include:
+          - python: "3.11"
+            step: python
+          - python: "3.13"
+            step: compiled
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +36,7 @@ jobs:
         run: python -m pip install -e ".[dev,viz,ui]"
 
       # The C++ bridge compiles robot code with g++: MSYS2's MinGW-w64 (UCRT64) on Windows,
-      # the runner's own g++ on Linux.
+      # the runner's own g++ on Linux. The same compiler builds the physics step.
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
         id: msys2
@@ -57,6 +67,7 @@ jobs:
         env:
           VEXSIM_REQUIRE_CXX: "1"  # fail, don't skip, the C++ bridge tests
           VEXSIM_REQUIRE_ANSWERS: "1"  # and fail if a server endpoint answered no test
+          VEXSIM_STEP: ${{ matrix.step }}
           PYTHONUNBUFFERED: "1"
 
       - name: Report test failures as annotations
@@ -115,6 +126,38 @@ jobs:
             1239e_localization.png
             bench/
             bench_lemlib/
+
+  # Every test again with both physics steps: each step of every robot in every test is
+  # taken by the Python step and by the compiled one from the same state, and the two must
+  # agree to one part in 10^9 (VEXSIM_STEP=check). It's what keeps the C a copy of the
+  # Python: a change to the model made in only one of them fails here.
+  steps:
+    name: Both physics steps
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -e ".[dev,viz,ui]"
+
+      - name: Every test, both steps compared
+        shell: bash
+        timeout-minutes: 50
+        run: pytest --junitxml=pytest.xml -o faulthandler_timeout=600 2>&1 | tee pytest.log
+        env:
+          VEXSIM_REQUIRE_CXX: "1"
+          VEXSIM_STEP: check
+          PYTHONUNBUFFERED: "1"
+
+      - name: Report test failures as annotations
+        if: failure()
+        run: python .github/scripts/pytest_annotations.py pytest.xml pytest.log
 
   # Whole calibration sessions of simulated "real" robots, recorded and fitted (PLAN.md 14.4):
   # minutes each, so in a job of their own, beside the others; plain pytest leaves them out.

@@ -159,5 +159,6 @@ test("builds a PROS project and checks the compiler", async ({ page }) => {
   await page.getByTestId("build-examples/pros_projects/minimal_pros4").click();
   await expect(page.getByTestId("build-result")).toBeVisible({ timeout: 120_000 });
   await page.getByTestId("doctor").click();
-  await expect(page.getByTestId("doctor-lines").locator("li.ok")).toHaveCount(3, { timeout: 120_000 });
+  // the compiler, a build, a run, and the physics step it compiles for itself (phase 16)
+  await expect(page.getByTestId("doctor-lines").locator("li.ok")).toHaveCount(4, { timeout: 120_000 });
 });

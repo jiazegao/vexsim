@@ -19,6 +19,11 @@ Motor torques, Coriolis terms and external forces are treated explicitly.
 Field walls, if given, then push the footprint (or the body's shape) back inside
 (see field.py).
 
+The step is ``Robot._step_python``. Where there's a C compiler it also runs
+compiled (the ``compiled`` package: the same arithmetic in C, on the same
+objects), which ``advance`` takes from a robot's first step; the two give the
+same numbers to rounding, and are tested against each other.
+
 Motor direction: a negative port in the config means the motor is mounted so
 that its raw positive direction drives the group backward. Group commands
 apply that sign, so positive always means "wheels roll forward", exactly like
@@ -214,6 +219,9 @@ class Robot:
         self.walls = walls
         self.wall_contacts: list[WallContact] = []  # this step's
         self.wall_hits = 0  # times the robot started touching a wall
+        # which step it takes, decided at its first: None until then, False for the Python
+        # step, else its compiled one (the compiled package)
+        self._compiled: Any = None
 
     # --- construction helpers ---------------------------------------------------------
 
@@ -294,6 +302,31 @@ class Robot:
         self.advance(dt)
 
     def advance(self, dt: float) -> None:
+        step = self._compiled
+        if step is None:  # the first step: the compiled one where there is one
+            from vexsim.physics.compiled import engage
+
+            step = self._compiled = engage(self)
+        if step:
+            step.step(dt)
+        else:
+            self._step_python(dt)
+        if self.walls is not None:
+            touching = bool(self.wall_contacts)
+            self.wall_contacts = self.walls.resolve(self)
+            self.wall_hits += bool(self.wall_contacts) and not touching
+
+    @property
+    def step_name(self) -> str:
+        """Which step it takes: "compiled" or "python" ("" before its first)."""
+        step = self._compiled
+        if step is None:
+            return ""
+        return "compiled" if step and step.usable else "python"
+
+    def _step_python(self, dt: float) -> None:
+        """One step, up to the walls. This is the model: step.c copies its arithmetic, so a
+        change here is made there too (PLAN.md section 18; tests/test_step.py compares them)."""
         qdot = self.qdot
         normal = self.normal_loads(*self._ground_force)
         if self.lifted:
@@ -337,10 +370,6 @@ class Robot:
         self.heading += w * dt
         self.time += dt
         self.power.end_step(dt)
-        if self.walls is not None:
-            touching = bool(self.wall_contacts)
-            self.wall_contacts = self.walls.resolve(self)
-            self.wall_hits += bool(self.wall_contacts) and not touching
 
         self._ground_force = (float(contact_forces[0]), float(contact_forces[1]))
         state = self.contacts

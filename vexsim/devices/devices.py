@@ -137,7 +137,10 @@ class RotationDevice(Device):
         c, s = math.cos(self.heading), math.sin(self.heading)
         along, across = c * vx + s * vy, -s * vx + c * vy
         self.angle += along * dt / self.radius
-        if spec.scrub > 0 and across:
+        if spec.scrub > 0:
+            # Drawn every step, sideways travel or none. Drawn only when there is some, which
+            # numbers the noise got hung on whether a speed came out exactly zero or a
+            # rounding error away from it, and so on which physics step ran.
             self.angle += self.rng.normal(0.0, spec.scrub * abs(across) * dt / self.radius)
 
     def measure(self, now_us: int) -> RotationReading:
