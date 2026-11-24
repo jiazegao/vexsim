@@ -56,11 +56,15 @@ PATHS = [  # x, y, heading, points, forwards, end heading, speed
 def test_the_cpp_plans_as_the_python_does(cache_dir, tmp_path):
     """vexsim/trajectory.hpp and algorithms/control/trajectory.py, the same plans to within
     rounding (the maker's planner, src/trajectory.ts, is held to the Python by Vitest)."""
-    from vexsim.bridge.build import MOTIONS_INCLUDE, find_toolchain
+    from vexsim.bridge.build import MOTIONS_INCLUDE, _run, find_toolchain
 
     exe = tmp_path / ("plans.exe" if sys.platform == "win32" else "plans")
     command = [find_toolchain().cxx, "-std=gnu++17", "-O2", f"-I{MOTIONS_INCLUDE}", str(HARNESS)]
-    subprocess.run([*command, "-o", str(exe)], check=True, capture_output=True)
+    if sys.platform == "win32":
+        command.append("-static")  # so the harness needs none of MinGW's DLLs to run
+    # as vexsim builds: with the compiler's own folder on PATH (its helpers' DLLs are there)
+    built = _run([*command, "-o", str(exe)])
+    assert built.returncode == 0, f"the harness didn't compile:\n{built.stdout}{built.stderr}"
     lines, expected = [], []
     limits = f"{LIMITS.max_velocity} {LIMITS.max_accel} {LIMITS.max_lateral_accel} 10"
     for x, y, h, r, turn, forwards, speed in ARCS:
