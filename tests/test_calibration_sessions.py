@@ -316,6 +316,31 @@ def test_omni_held_out_run_matches_within_the_sensors_noise(fit_omni):
 # --- a robot wired other than its config says ---------------------------------------------------
 
 
+def test_a_free_spin_with_5_5w_motors_fits_the_11w_ones(build, tmp_path):
+    """Phase 17.3: 1239E's six-bar robot, two of whose six drive motors are 5.5 W ones, on its
+    side for the free spin. The fit takes the 11 W motors' readings alone (a 5.5 W motor's
+    numbers are another group's): it finds the cap the real robot's firmware puts on their
+    voltage commands, keeps vexsim's own motor values, which the real robot shares, and says
+    it left the 5.5 W motors out. Their 8 V drive would otherwise read as a cap."""
+    config = load_robot(ROBOTS / "1239e_six_bar.yaml")
+    field = without_pieces(load_field(FIELDS / "1239e_six_bar.yaml"))
+    real = config.model_copy(update={"overrides": {**config.overrides, "motor.voltage_cap": 1.0}})
+    sd, _ = record(build, tmp_path, config, real, field, tests=["device_check", "free_spin"])
+    folder = tmp_path / "session"
+    assert main(["calibration", "collect", str(folder), "--from", str(sd)]) == 0
+    run, log = Session.open(folder).logs("free_spin")[-1]
+    group, rated = session_fit.spun_motors(config)
+    assert group == "motor" and sorted(rated) == [7, 8, 14, 15]
+    found, step = session_fit.fit_free_spin(config, log, run=run, workers=4)
+    assert found["motor.voltage_cap"] == pytest.approx(1.0, abs=0.02)
+    values = {v.key: v for v in step.values}
+    for key in ("motor.natural_free_rpm", "motor.free_current_a", "motor.coulomb_fraction"):
+        value = values[key]
+        assert abs(value.after - UNCHANGED[key]) <= value.tolerance, (key, value)
+    assert not any(key.startswith("motor_5_5w.") for key in found)
+    assert any("5.5W motors are left out" in note for note in step.notes)
+
+
 def test_a_miswired_robot_stops_at_the_device_check(build, tmp_path):
     config = load_robot(ROBOTS / "1239e_2026-27.yaml")
     field = without_pieces(load_field(FIELDS / "1239e_2026-27.yaml"))

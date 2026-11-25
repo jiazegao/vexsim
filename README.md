@@ -151,7 +151,7 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 ### The example files
 | Folder | Contents |
 |---|---|
-| `examples/robots/` | `full_omni_6m` (6-motor full-omni tank with tracking wheels, IMU and a distance sensor: the main example), `traction_6m` (traction wheels in the middle), `xdrive_4m`, `mecanum_4m`, `hdrive_5m`, `lemlib_example` (the robot LemLib's example program configures), `1239e_2026-27` (a real team's robot, with mechanisms), `1239e_six_bar` (the same team's six-bar robot: a tracking wheel, six distance sensors, a six-bar lift with a claw) |
+| `examples/robots/` | `full_omni_6m` (6-motor full-omni tank with tracking wheels, IMU and a distance sensor: the main example), `traction_6m` (traction wheels in the middle), `xdrive_4m`, `mecanum_4m`, `hdrive_5m`, `lemlib_example` (the robot LemLib's example program configures), `1239e_2026-27` (a real team's robot, with mechanisms), `1239e_six_bar` (the same team's six-bar robot: a tracking wheel, six distance sensors, a six-bar lift with a claw, and 5.5 W motors among its 11 W ones) |
 | `examples/fields/` | `v5rc_empty` (walls only), `practice_elements` (a barrier, two goals, six balls), `1239e_2026-27` (the 2026-27 field as team 1239E models it), `1239e_six_bar` (the same field for the six-bar's lower sensors: its bases as tall as the team's code says, and the pins and cups) |
 | `examples/programs/` | `tour.py`: a Python program that runs every chassis motion, and numbers its stops on the field; `tank_drive.py`: tank driver control only, to drive or to follow a log |
 | `examples/inputs/` | `strafe_square.csv`: scripted controller input |
@@ -1263,7 +1263,7 @@ python examples/scripts/evaluate_1239e.py --seeds 6 --tracking rcl+mcl,mcl,rcl,o
 5. **Write the field config**, with element heights if your sensors care about them.
 6. **Run each routine** headless, and compare the pose your code believes with the truth.
 
-**A team's next robot.** The team's six-bar robot is ported the same way from another branch of its repository, as a project of its own beside the first: [examples/pros_projects/1239e_six_bar](examples/pros_projects/1239e_six_bar/README.md), with its own robot (`examples/robots/1239e_six_bar.yaml`: a six-motor drive, a tracking wheel, six distance sensors 2 to 5.5 in high, a six-bar lift with a claw) and field. Its code shares the first port's RCL, MCL and selector, so the same marked edits carry over; its README says what changed, what the simulator can't do as the robot is built (5.5 W motors, picking up pins), and what the simulation found ([docs/porting_1239e.md](docs/porting_1239e.md#12-the-teams-six-bar-robot)).
+**A team's next robot.** The team's six-bar robot is ported the same way from another branch of its repository, as a project of its own beside the first: [examples/pros_projects/1239e_six_bar](examples/pros_projects/1239e_six_bar/README.md), with its own robot (`examples/robots/1239e_six_bar.yaml`: a six-motor drive, a tracking wheel, six distance sensors 2 to 5.5 in high, a six-bar lift with a claw) and field. Its code shares the first port's RCL, MCL and selector, so the same marked edits carry over; its README says what changed, what the simulator can't do as the robot is built (picking up pins; its four 5.5 W motors are simulated), and what the simulation found ([docs/porting_1239e.md](docs/porting_1239e.md#12-the-teams-six-bar-robot)).
 ```
 vexsim run examples/robots/1239e_six_bar.yaml --program examples/pros_projects/1239e_six_bar --field examples/fields/1239e_six_bar.yaml --routine left5pin
 ```

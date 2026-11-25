@@ -68,6 +68,12 @@ def test_the_robot_has_every_device_the_code_uses():
     singles = sorted(m for m in code["motors"] if abs(m) != SKILLS_ONLY)
     in_config = sorted(p for name, m in mechanisms.items() for p in m.motors)
     assert singles == sorted([-19, 17, 18, -16]) and in_config == singles
+    # the 5.5 W motors: the drive's third a side (the team's README), and the claw's two
+    # (inferred from the 88 W motor rule, the robot config says why)
+    small = [p for g in (*gearing.values(), *mechanisms.values()) for p in g.motors
+             if g.motor_cartridge(p) == "5.5w"]  # fmt: skip
+    assert sorted(small) == [-16, -13, 10, 18]
+    assert sum(g.power_w for g in (*gearing.values(), *mechanisms.values())) == 88.0
     sensors = {s.port: s for s in robot.sensors}
     assert [s.type for p, s in sensors.items() if p in code["imu"]] == ["imu"]
     (rotation,) = code["rotation"]
@@ -212,6 +218,8 @@ def test_left_5_pin_runs_localizes_and_logs_itself(port_exe, tmp_path):
     console = "\n".join(sim.console)
     for port in (15, 8):
         assert f"port {port}: the code declares the green (200 rpm) cartridge" in console
+    for port in (13, 10):  # 5.5 W motors in groups the code declares blue
+        assert f"port {port}: a 5.5W motor, which is green (200 rpm) only" in console
     assert f"port {SKILLS_ONLY}: the code uses a motor here" in console
     columns = sim.recorder.columns
     lift = [r[columns.index("lift_deg")] for r in rows]

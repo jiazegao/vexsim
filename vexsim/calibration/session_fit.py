@@ -40,6 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from vexsim.calibration import feedforward
+from vexsim.calibration import fit as fit_module
 from vexsim.calibration.fit import (
     FitResult,
     channels,
@@ -157,7 +158,8 @@ def with_overrides(config: RobotConfig, values: dict[str, float]) -> RobotConfig
 
 
 def _relative(key: str, value: float) -> float:
-    """A key's tolerance, in its units."""
+    """A key's tolerance, in its units (a 5.5W motor's as the 11W motor's)."""
+    key = key.replace("motor_5_5w.", "motor.", 1)
     if key in TOLERANCE_OF:
         return TOLERANCE_OF[key]
     if key in TOLERANCE:
@@ -222,8 +224,22 @@ def drive_ports(config: RobotConfig) -> dict[str, list[int]]:
 
 
 def rated_rpm(config: RobotConfig) -> dict[int, float]:
-    """Each drive motor's rated speed (rpm), by its (raw) port."""
-    return {abs(p): g.motor_free_rpm for g in config.drivetrain.gearing.values() for p in g.motors}
+    """Each drive motor's rated speed (rpm), by its (raw) port: its cartridge's, or a 5.5W
+    motor's 200."""
+    return fit_module.rated_rpm(config)
+
+
+def spun_motors(config: RobotConfig) -> tuple[str, dict[int, float]]:
+    """The motors a free spin fits, with their rated speeds (rpm), and their parameters'
+    group: the drive's 11W motors (a 5.5W motor's numbers are another group, which their
+    speeds don't tell), or for a drive of 5.5W motors alone, theirs."""
+    rated = rated_rpm(config)
+    small = {
+        abs(p) for g in config.drivetrain.gearing.values() for p in g.motors
+        if g.motor_cartridge(p) == "5.5w"
+    }  # fmt: skip
+    eleven = {p: r for p, r in rated.items() if p not in small}
+    return ("motor", eleven) if eleven else ("motor_5_5w", rated)
 
 
 def stretches(log: RobotLog) -> list[tuple[str, np.ndarray]]:
@@ -239,8 +255,8 @@ def stretches(log: RobotLog) -> list[tuple[str, np.ndarray]]:
 
 def steady_speeds(config: RobotConfig, log: RobotLog, last_ms: float = 500.0) -> dict[str, float]:
     """Each stretch's steady speed: the drive motors' mean speed over its last ``last_ms``, as
-    a fraction of their rated speed."""
-    rated = rated_rpm(config)
+    a fraction of their rated speed (the motors the free spin fits: ``spun_motors``)."""
+    rated = spun_motors(config)[1]
     t = log.time_ms
     out = {}
     for text, rows in stretches(log):
@@ -259,7 +275,7 @@ def steady_speeds(config: RobotConfig, log: RobotLog, last_ms: float = 500.0) ->
 def velocity_noise(config: RobotConfig, log: RobotLog) -> tuple[float, float] | None:
     """How noisy the drive motors' speed readings are (a fraction of rated speed), and how
     well that's known: their spread while the free spin holds each voltage steady."""
-    rated = rated_rpm(config)
+    rated = spun_motors(config)[1]
     t = log.time_ms
     spreads = []
     for text, rows in stretches(log):
@@ -285,6 +301,11 @@ def velocity_noise(config: RobotConfig, log: RobotLog) -> tuple[float, float] | 
 def voltage_cap(config: RobotConfig, log: RobotLog) -> tuple[float | None, str]:
     """Whether the free spin's voltage commands were held to rated speed: the cap (a fraction
     of rated speed, 0 for none; None if the log can't tell) and what showed it."""
+    if spun_motors(config)[0] == "motor_5_5w":
+        return None, (
+            "a 5.5W motor's drive is held to 8 V, so its 9 V and 12 V speeds can't tell a cap: "
+            "the cap stays as it is"
+        )
     speeds = steady_speeds(config, log)
     v9, v12 = speeds.get("9 V"), speeds.get("12 V")
     if not v9 or not v12:
@@ -322,9 +343,18 @@ def fit_free_spin(
         step.values.append(
             Value("motor.voltage_cap", before_cap, cap, 0.0, TOLERANCE_OF["motor.voltage_cap"])
         )
+    group, rated = spun_motors(config)
+    if group == "motor" and len(rated) < len(rated_rpm(config)):
+        step.notes.append(
+            "the drive's 5.5W motors are left out: the free spin fits its 11W motors, and the "
+            "5.5W motors keep vexsim's numbers (motor_5_5w)"
+        )
+    keys = [key.replace("motor.", f"{group}.", 1) for key in FREE_SPIN]
     say("free spin: fitting the motors")
     trial = with_overrides(config, found)
-    result = fit_logs(trial, [log], FREE_SPIN, workers=workers, progress=say, lifted=[True])
+    result = fit_logs(
+        trial, [log], keys, workers=workers, progress=say, lifted=[True], motors=set(rated)
+    )
     found.update(result.after)
     step.values += _fitted_values(result, config)
     before = as_configured(config, [log], lifted=True)

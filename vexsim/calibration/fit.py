@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -36,6 +36,7 @@ from vexsim.calibration.log import RobotLog
 from vexsim.calibration.replay import AGES_MS, LEADS_MS, at_age, commands_logged, simulate
 from vexsim.config.robot import RobotConfig
 from vexsim.physics.params import PARAM_GROUPS, check_overrides, resolve_params
+from vexsim.v5 import CARTRIDGE_FREE_RPM
 from vexsim.workers import clean_start, process_pool
 
 RATE_SAMPLES = 3  # rates from differences over 3 samples (30 ms)
@@ -77,10 +78,26 @@ class Channel:
     factor: float = 1.0  # unit conversion of the logged value
 
 
-def channels(config: RobotConfig, log: RobotLog) -> list[Channel]:
+def rated_rpm(config: RobotConfig) -> dict[int, float]:
+    """Each drive motor's rated speed (rpm), by its (raw) port: its cartridge's, or a 5.5W
+    motor's 200 among faster ones."""
+    return {
+        abs(p): CARTRIDGE_FREE_RPM[g.motor_cartridge(p)]
+        for g in config.drivetrain.gearing.values()
+        for p in g.motors
+    }
+
+
+def channels(
+    config: RobotConfig, log: RobotLog, motors: Collection[int] | None = None
+) -> list[Channel]:
+    """What a log and its replay are compared by: the drive motors' speeds and currents
+    (``motors``: only these ports'), the tracking wheels, the IMU's heading."""
     out = []
-    rpm = {abs(p): g.motor_free_rpm for g in config.drivetrain.gearing.values() for p in g.motors}
+    rpm = rated_rpm(config)
     for port in log.ports("m"):
+        if motors is not None and port not in motors:
+            continue
         if port in rpm and f"m{port}_rpm" in log:
             out.append(Channel("motor velocity", f"m{port}_rpm", 0.01 * rpm[port], False))
             out.append(Channel("motor current", f"m{port}_ma", 0.1, False, 1e-3))
@@ -246,9 +263,11 @@ def fit_logs(
     workers: int = 1,
     progress: Callable[[str], None] | None = None,
     lifted: Sequence[bool] | None = None,
+    motors: Collection[int] | None = None,
 ) -> FitResult:
     """``fit`` to several logs at once, each weighing the same (``lifted``: which of them had
-    the robot off the ground). Each log gets its own replay and its own timing."""
+    the robot off the ground). Each log gets its own replay and its own timing. ``motors``:
+    the drive motors (ports) whose readings are compared, if not all of them."""
     logs = list(logs)
     up = list(lifted) if lifted is not None else [False] * len(logs)
     names = list(default_parameters(config) if parameters is None else parameters)
@@ -259,7 +278,7 @@ def fit_logs(
         if name.rpartition(".")[0] not in PARAM_GROUPS or name.startswith("sensor."):
             raise ValueError(f"can't fit {name}: only physics parameters can be fitted")
     say = progress or (lambda text: None)
-    chans = [channels(config, log) for log in logs]
+    chans = [channels(config, log, motors) for log in logs]
     if not any(chans):
         raise ValueError("the log has no drive motor, rotation sensor or IMU readings to compare")
     direct = {}

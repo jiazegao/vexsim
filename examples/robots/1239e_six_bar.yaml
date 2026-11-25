@@ -34,11 +34,12 @@ drivetrain:
     - {name: rb, pos_in: [-4.5, -5.70675], type: omni, diameter_in: 2.75}
   gearing:
     # leftMotors({-15, -14, -13}) and rightMotors({8, 7, 10}), blue, 450 rpm at the wheels:
-    # 36:48. The team's README says the third motor a side (13 and 10) is a 5.5 W motor;
-    # vexsim simulates the 11 W motor only, so here all six are 11 W, and the simulated drive
-    # has about a fifth more torque than the real one (the same top speed).
-    left:  {motors: [-15, -14, -13], cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb]}
-    right: {motors: [8, 7, 10],      cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb]}
+    # 36:48. The team's README says the third motor a side (13 and 10) is a 5.5 W motor:
+    # geared 2.25:1 up from its 200 rpm, to the same 450 (its gearing is assumed to match).
+    left:  {motors: [-15, -14, -13], cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb],
+            motors_5_5w: [-13]}
+    right: {motors: [8, 7, 10],      cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb],
+            motors_5_5w: [10]}
 
 mechanisms:
   # liftMotors({-19, 20}), blue, 12:84 (LIFT_GEAR_RATIO: 7 motor degrees per lift degree).
@@ -48,12 +49,16 @@ mechanisms:
   # is 5000 ("max = 5000 motor deg"). Load, inertia and friction are assumed.
   lift: {motors: [-19], cartridge: blue, ratio: "12:84", inertia_kgm2: 0.0025,
          load_torque_nm: 0.5, friction_nm: 0.05, range_deg: [0, 714]}
-  # clawGrippersMotor(18), green, in motor degrees from closed: hardResetClaw() drives it
+  # The claw's two motors are 5.5 W ones (inferred): the code declares them green, as a
+  # 5.5 W motor must be, and the motor rule's 88 W leaves room for them only so (the drive's
+  # 55 W, the lift's 19 and the intake's 17 at 11 W each: 77 W, and 11 for the two). If
+  # they're 11 W motors, write cartridge: green for both.
+  # clawGrippersMotor(18), in motor degrees from closed: hardResetClaw() drives it
   # shut against its stop and calls that 0, and autonomous() assumes it starts at 13 (so
   # the stop is at -13 here). It opens to 200 (openClaw(200)); the open stop is assumed.
-  claw: {motors: [18], cartridge: green, inertia_kgm2: 0.0005, friction_nm: 0.05,
+  claw: {motors: [18], cartridge: 5.5w, inertia_kgm2: 0.0005, friction_nm: 0.05,
          range_deg: [-13, 207]}
-  claw_rollers: {motors: [-16], cartridge: green, inertia_kgm2: 0.0001, friction_nm: 0.02}
+  claw_rollers: {motors: [-16], cartridge: 5.5w, inertia_kgm2: 0.0001, friction_nm: 0.02}
   front_intake: {motors: [17], cartridge: blue, inertia_kgm2: 0.0002, friction_nm: 0.02}
 
 sensors:

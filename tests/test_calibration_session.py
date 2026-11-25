@@ -17,6 +17,7 @@ from tests.conftest import EXAMPLE_ROBOT, ROOT
 from vexsim.app.configs import parse_location
 from vexsim.app.yamledit import Change, apply
 from vexsim.calibration import feedforward
+from vexsim.calibration import fit as fit_module
 from vexsim.calibration import session as sessions
 from vexsim.calibration import session_fit as fits
 from vexsim.calibration.log import BEGIN, END, RobotLog
@@ -39,6 +40,7 @@ from vexsim.calibration.session_fit import (
     Value,
     calibrate,
     imu_noise,
+    spun_motors,
     voltage_cap,
 )
 from vexsim.cli import main
@@ -331,6 +333,59 @@ def test_a_free_spin_tells_whether_voltage_commands_are_capped():
     cap, why = voltage_cap(CONFIG, free_spin_log(capped))
     assert cap == 1.0 and "held to rated speed" in why
     assert voltage_cap(CONFIG, free_spin_log({"3 V": 0.27}))[0] is None
+
+
+def test_a_free_spin_reads_the_11w_motors_and_not_the_5_5w_ones():
+    """Phase 17.3: a 5.5 W motor's drive is held to 8 V, so it runs as fast at 9 V as at 12, at
+    150% of its 200 rpm, which would read as a cap among capped blue motors. The free spin
+    reads the 11 W motors alone; a drive of 5.5 W motors alone can't tell a cap."""
+    gearing = CONFIG.drivetrain.gearing
+    mixed = CONFIG.model_copy(
+        update={
+            "drivetrain": CONFIG.drivetrain.model_copy(
+                update={
+                    "gearing": {
+                        name: g.model_copy(update={"motors_5_5w": (g.motors[-1],)})
+                        for name, g in gearing.items()
+                    }
+                }
+            )
+        }
+    )
+    group, rated = spun_motors(mixed)
+    assert group == "motor" and sorted(rated) == [1, 2, 4, 5]
+    assert fits.rated_rpm(mixed)[3] == 200.0 and fits.rated_rpm(mixed)[1] == 600.0
+    eleven = {"3 V": 0.27, "6 V": 0.56, "9 V": 0.85, "12 V": 1.0}  # capped
+    small = {"3 V": 0.4, "6 V": 0.8, "9 V": 1.5, "12 V": 1.5}  # 8 V at 9 and 12 V
+    names = ["time_ms", *[f"m{p}_rpm" for p in range(1, 7)]]
+    rows, marks = [], []
+    for k, mark in enumerate(eleven):
+        marks.append((k * 1500.0, mark))
+        for t in range(k * 1500, (k + 1) * 1500, 10):
+            row = [eleven[mark] * 600.0] * 6
+            row[2] = row[5] = small[mark] * 200.0  # ports 3 and 6
+            rows.append([float(t), *row])
+    log = RobotLog.from_rows(names, rows, {}, marks)
+    assert voltage_cap(mixed, log)[0] == 1.0
+    channels = {
+        c.name: c.scale for c in fit_module.channels(mixed, log) if c.group == "motor velocity"
+    }
+    assert channels["m3_rpm"] == 2.0 and channels["m1_rpm"] == 6.0  # 1% of each one's rated
+    only_small = mixed.model_copy(
+        update={
+            "drivetrain": mixed.drivetrain.model_copy(
+                update={
+                    "gearing": {
+                        name: g.model_copy(update={"cartridge": "5.5w", "motors_5_5w": ()})
+                        for name, g in gearing.items()
+                    }
+                }
+            )
+        }
+    )
+    assert spun_motors(only_small)[0] == "motor_5_5w"
+    cap, why = voltage_cap(only_small, log)
+    assert cap is None and "held to 8 V" in why
 
 
 def made_readings(rng, n=6000) -> Readings:
