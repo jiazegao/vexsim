@@ -68,14 +68,21 @@ def test_the_robot_has_every_device_the_code_uses():
     singles = sorted(m for m in code["motors"] if abs(m) != SKILLS_ONLY)
     in_config = sorted(p for name, m in mechanisms.items() for p in m.motors)
     assert singles == sorted([-19, 17, 18, -16]) and in_config == singles
-    # the 5.5 W motors: every motor the code declares green or red (the team), the claw's
-    # two; and the drive's third a side (the team's README), whose groups declare them blue
+    # the 5.5 W motors: every motor the code makes green or red (the team). The claw's two
+    # are declared green; the drive's groups are declared blue, and initialize() sets each
+    # one's first motor green (set_gearing(green, 0)).
     text = CONFIGS.read_text()
     declared = re.findall(r"pros::Motor \w+\((-?\d+), pros::MotorGearset::(\w+)\)", text)
-    assert sorted(int(p) for p, gears in declared if gears in ("green", "red")) == [-16, 18]
+    green = [int(p) for p, gears in declared if gears in ("green", "red")]
+    main = (PROJECT / "src" / "main.cpp").read_text()
+    calls = r"(\w+)\.set_gearing\(pros::MotorGears::(\w+), (\d+)\)"
+    for group, gears, index in re.findall(calls, main):
+        if gears in ("green", "red"):
+            green.append(code[group][int(index)])
+    assert sorted(green) == [-16, -15, 8, 18]
     small = [p for g in (*gearing.values(), *mechanisms.values()) for p in g.motors
              if g.motor_cartridge(p) == "5.5w"]  # fmt: skip
-    assert sorted(small) == [-16, -13, 10, 18]
+    assert sorted(small) == sorted(green)
     assert sum(g.power_w for g in (*gearing.values(), *mechanisms.values())) == 88.0
     sensors = {s.port: s for s in robot.sensors}
     assert [s.type for p, s in sensors.items() if p in code["imu"]] == ["imu"]
@@ -216,13 +223,13 @@ def test_left_5_pin_runs_localizes_and_logs_itself(port_exe, tmp_path):
     assert 13 < rows[-1][0] - rows[0][0] < 16  # the routine takes 14.6 s
     error = sim.recorder.pose_error("autonomous")
     assert error.mean_in < 4.0 and error.max_in < 10.0 and error.final_in < 6.0
-    # What the simulated robot can't be as the code has it, said on the console:
-    # set_gearing(green, 0) on each side's first motor, and the skills-only lift motor.
+    # What the simulated robot can't be as the code has it, said on the console: the drive's
+    # groups declare their 5.5 W motors blue (until initialize() sets them green), and the
+    # skills-only lift motor. Every motor the code sets green is a 5.5 W one.
     console = "\n".join(sim.console)
     for port in (15, 8):
-        assert f"port {port}: the code declares the green (200 rpm) cartridge" in console
-    for port in (13, 10):  # 5.5 W motors in groups the code declares blue
         assert f"port {port}: a 5.5W motor, which is green (200 rpm) only" in console
+    assert "the code declares the green" not in console
     assert f"port {SKILLS_ONLY}: the code uses a motor here" in console
     columns = sim.recorder.columns
     lift = [r[columns.index("lift_deg")] for r in rows]

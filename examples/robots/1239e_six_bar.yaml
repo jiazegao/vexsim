@@ -34,12 +34,14 @@ drivetrain:
     - {name: rb, pos_in: [-4.5, -5.70675], type: omni, diameter_in: 2.75}
   gearing:
     # leftMotors({-15, -14, -13}) and rightMotors({8, 7, 10}), blue, 450 rpm at the wheels:
-    # 36:48. The team's README says the third motor a side (13 and 10) is a 5.5 W motor:
-    # geared 2.25:1 up from its 200 rpm, to the same 450 (its gearing is assumed to match).
+    # 36:48. The first motor a side (15 and 8) is a 5.5 W motor: initialize() sets it green
+    # ("Override gearset for 5.5 motors": set_gearing(green, 0), index 0), and every motor
+    # the code makes green is a 5.5 W one (the team; its README's "the third, 13 and 10" is
+    # wrong). Geared 2.25:1 up from its 200 rpm, to the same 450 (assumed to match).
     left:  {motors: [-15, -14, -13], cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb],
-            motors_5_5w: [-13]}
+            motors_5_5w: [-15]}
     right: {motors: [8, 7, 10],      cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb],
-            motors_5_5w: [10]}
+            motors_5_5w: [8]}
 
 mechanisms:
   # liftMotors({-19, 20}), blue, 12:84 (LIFT_GEAR_RATIO: 7 motor degrees per lift degree).

@@ -330,7 +330,7 @@ def test_a_free_spin_with_5_5w_motors_fits_the_11w_ones(build, tmp_path):
     assert main(["calibration", "collect", str(folder), "--from", str(sd)]) == 0
     run, log = Session.open(folder).logs("free_spin")[-1]
     group, rated = session_fit.spun_motors(config)
-    assert group == "motor" and sorted(rated) == [7, 8, 14, 15]
+    assert group == "motor" and sorted(rated) == [7, 10, 13, 14]
     found, step = session_fit.fit_free_spin(config, log, run=run, workers=4)
     assert found["motor.voltage_cap"] == pytest.approx(1.0, abs=0.02)
     values = {v.key: v for v in step.values}
