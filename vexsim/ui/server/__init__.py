@@ -55,6 +55,7 @@ from vexsim.ui.server.serving import (
     DEFAULT_PORT,
     DEV_ORIGINS,
     FIRST_PAGE_S,
+    prepare_step,
     serve,
     stop_when_closed_for,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "DEFAULT_PORT",
     "DEV_ORIGINS",
     "serve",
+    "prepare_step",
     "CLOSED_GRACE_S",
     "FIRST_PAGE_S",
     "stop_when_closed_for",

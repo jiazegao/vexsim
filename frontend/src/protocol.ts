@@ -697,6 +697,7 @@ export interface RunRecord {
   samples: number;
   kept?: boolean;
   follow_start?: number | null;
+  physics?: "compiled" | "python" | null;
 }
 
 /** A run ended (finished, stopped, restarted, failed) and was recorded. */

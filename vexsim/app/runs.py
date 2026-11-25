@@ -3,7 +3,7 @@
 A run's folder holds:
 
 - ``run.json``: what ran (the spec, the command, robot and field), how it ended, how far
-  the robot code's pose was from the truth (``RunRecord``)
+  the robot code's pose was from the truth, which physics step made it (``RunRecord``)
 - ``tape.json.gz``: the field as the browser draws it, every ``TAPE_PERIOD_S`` of simulated
   time, for scrubbing back and forth (the scene, frames, and when the motion overlay, the
   screens and the robot code's drawings changed)
@@ -44,6 +44,7 @@ PLOT_POINTS = 5_000  # telemetry rows sent for plots, at most
 _ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 
 Ended = Literal["finished", "stopped", "restarted", "error"]
+Physics = Literal["compiled", "python"]  # the physics steps (vexsim/physics/compiled)
 
 
 class PoseErrorSummary(BaseModel):
@@ -80,6 +81,10 @@ class RunRecord(BaseModel):
     kept: bool = False
     # a run that follows a log (spec.follow): when it began to, the log's first moment
     follow_start: float | None = None
+    # Which physics step made it. The two agree to a nanometre over a run, not to the
+    # digit, so a record says which its numbers are. None: recorded before vexsim said,
+    # or it ended before its first step.
+    physics: Physics | None = None
 
 
 def runs_root(workspace: str | Path) -> Path:
@@ -188,6 +193,7 @@ class TapeRecorder:
         recorder=None,
         console: list[str] = (),
         follow_start: float | None = None,
+        physics: str | None = None,
     ) -> RunRecord:
         """Write the run's folder (once) and return its record."""
         self.finished = True
@@ -201,6 +207,7 @@ class TapeRecorder:
             pose_error=None if error is None else PoseErrorSummary(**_rounded(vars(error))),
             samples=len(self.samples),
             follow_start=None if follow_start is None else round(follow_start, 4),
+            physics=physics or None,
         )
         tape = {"scene": self.scene, "samples": self.samples, "events": self.events}
         with gzip.open(self.folder / "tape.json.gz", "wt", encoding="utf-8") as f:

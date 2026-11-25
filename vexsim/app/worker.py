@@ -286,6 +286,7 @@ class Worker:
                 recorder=sim.recorder,
                 console=self.console_log,
                 follow_start=getattr(sim.input_source, "start_s", None),
+                physics=sim.robot.step_name,  # the step its robot took ("" if it took none)
             )
             prune(self.runs)
         except (OSError, ValueError) as exc:

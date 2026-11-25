@@ -116,7 +116,9 @@ export function BuildPage(props: { workspace: WorkspaceInfo | null; root: string
       </section>
       <section className="card">
         <h2>Compiler</h2>
-        <p className="muted">Is there a g++ that builds PROS projects for vexsim, and do they run? It compiles and runs a small test program.</p>
+        <p className="muted">
+          Is there a g++ that builds PROS projects for vexsim, and do they run? It compiles and runs a small test program. It also says which physics step the simulator takes: its own, compiled with the same g++ (faster), or the Python one.
+        </p>
         <div className="actions">
           <button type="button" onClick={() => doctor.start({ kind: "doctor" })} disabled={isActive(doctor.job?.state)} data-testid="doctor">
             Check the compiler

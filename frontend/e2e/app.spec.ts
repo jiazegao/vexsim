@@ -385,3 +385,22 @@ test("marks a config's mistakes at their lines as you type", async ({ page }) =>
   await page.getByRole("button", { name: "Close examples/fields/practice_elements.yaml" }).click();
   await expect(page.getByTestId("config-editor")).toHaveCount(0);
 });
+
+test("a recorded run says which physics step made it", async ({ page }) => {
+  test.setTimeout(90_000);
+  const runCount = async () => ((await (await page.request.get("/api/runs")).json()) as unknown[]).length;
+  const before = await runCount();
+  await page.getByTestId("robot").selectOption(ROBOT);
+  await page.getByTestId("field-select").selectOption("examples/fields/v5rc_empty.yaml");
+  await page.getByTestId("program").selectOption(PROGRAM);
+  await page.locator(".controls .speed select").selectOption("0"); // as fast as it goes
+  await page.getByTestId("run").click();
+  await expect.poll(runCount, { timeout: 60_000 }).toBe(before + 1);
+  // the test server's computer has a compiler (the Build page's check needs one), so the
+  // run's worker took the compiled step; hovering over the run says so, with its command
+  const [newest] = (await (await page.request.get("/api/runs")).json()) as { physics: string }[];
+  expect(newest.physics).toBe("compiled");
+  await page.getByTestId("tab-runs").click();
+  const run = page.getByTestId("open-run").first();
+  await expect(run).toHaveAttribute("title", /^vexsim run .*\n\nSimulated with the compiled physics step\n\nOpen this run/s);
+});

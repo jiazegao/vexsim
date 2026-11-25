@@ -341,7 +341,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 15.7 | **[done]** The big files split by feature: `App.tsx`, `server.py`, `protocol.py`, `cli.py` | None of the four is over about 600 lines; every test passes unchanged; the generated `protocol.ts` is the same, byte for byte |
 | 16.1 | **[done]** The physics step, compiled ([section 18](#18-the-physics-step-compiled-phase-16)): the wheels' loads, the motors, the mechanisms, the contact, the solve and the battery in C, built with the toolchain vexsim finds, the robot's state shared with it; the Python step stays the model | With the compiled step every existing test passes unchanged; from the same state the two steps agree on every number to 1 part in 10⁹, and whole runs to a nanometre; a Python program's run is at least 2.5× faster and 1239E's Left 40 at least 1.5×; without a compiler everything runs as before |
 | 16.2 | **[done]** The rest of a millisecond: what Python still does every step (sensors, events, the loop), trimmed without changing a number | A Python program's run at least 3× faster than before the phase and Left 40 at least 1.7×, with results the same as 16.1's to the last bit |
-| 16.3 | Where it shows: run records and the app say which step ran; the step built in the background when `vexsim ui` starts | A recorded run says which step made it; the first run after installing doesn't wait for the build |
+| 16.3 | **[done]** Where it shows: run records and the app say which step ran; the step built in the background when `vexsim ui` starts | A recorded run says which step made it; the first run after installing doesn't wait for the build |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |
@@ -874,3 +874,11 @@ The simulator steps every millisecond in Python and NumPy. Phase 15.1 took what 
 - A run's record says which step made it, and the app shows it; the Build page says whether the compiled step is in use, and why not.
 - `vexsim ui` builds the step in the background when it starts, so the first run doesn't wait for it.
 - The numbers, before and after, in the README.
+
+- **As built (16.3):** `RunRecord.physics` and `Robot.step_name`; `prepare_step` in `vexsim/ui/server/serving.py`; in the page, `madeBy` and `runTitle` (`recording.ts`), the run list's hover and the Build page's words. Where it differs from the plan, or says more:
+  - *A run's record says which step made it:* `physics` in its `run.json`, `compiled` or `python`, taken from its robot when the run ends (a run that ended before its first step has none, and neither have the records written before: they read as they did).
+  - *The app shows it where a run's command already was:* hovering over a run in *Runs* gives its command, *Simulated with the compiled physics step* (or *the Python*), and what a click does. Not a column: it's a thing to be able to find out, not to read on every row.
+  - *The Build page's check* is `vexsim doctor`, which has said which step runs, and why, since 16.1; the page's own words now say that it does.
+  - *`vexsim ui` builds the step as it starts,* on a thread of its own (0.6 s, once on a computer), so a run's worker finds it made. Told to keep to the Python step (`VEXSIM_STEP=python`), it builds nothing.
+  - *The numbers* are in the README where the step is described ([its section on the two steps](README.md#the-physics-step-python-or-compiled), and the models' section on speed), and above, in 16.2's table.
+  - *The checks:* a run recorded with each step says so, in its message and its file; an old record without the field reads; the server's thread builds and checks the library into an empty cache, and builds nothing in Python mode; `serve` starts it. In the browser: a run's hover names the compiled step (`e2e/app.spec.ts`); `tests/recording.test.ts`.

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { fixed, formatTime } from "../pose";
 import type { RunRecord } from "../protocol";
-import { COMPARE_DASHES, MAX_COMPARED, when } from "../recording";
+import { COMPARE_DASHES, MAX_COMPARED, runTitle, when } from "../recording";
 import { DashSwatch } from "./FieldView";
 
 const ENDED: Record<RunRecord["ended"], string> = {
@@ -60,7 +60,7 @@ export function RunsList(props: {
                 className={`item${shown ? " selected" : ""}`}
                 onClick={() => props.onOpen(run)}
                 disabled={props.opening === run.id}
-                title={`${run.command}\n\nOpen this run to play it back`}
+                title={runTitle(run)}
                 data-testid="open-run"
               >
                 <span className="item-name">

@@ -547,3 +547,79 @@ def test_the_noise_a_device_draws_is_numpys_normal():
     for sigma in [0.0, 1e-9, 3.5e-4, 0.0, 2.0] * 2000:
         assert a.normal(0.0, sigma) == sigma * b.standard_normal()
     assert a.random() == b.random()
+
+
+# --- where it shows (16.3) ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("step", ["compiled", "python"])
+def test_a_recorded_run_says_which_step_made_it(library, step, tmp_path, monkeypatch):
+    """A run's worker is a process of its own: it takes the step ``VEXSIM_STEP`` says (the
+    compiled one where it's unset), and the run's record says which."""
+    from tests.test_ui import Recorder, doing, tour_workspace, wait_for
+    from vexsim.app import runs
+    from vexsim.app.runspec import RunSpec
+    from vexsim.app.session import Session
+
+    monkeypatch.setenv("VEXSIM_RUNS_DIR", str(tmp_path / "recorded-runs"))
+    if step == "python":
+        monkeypatch.setenv("VEXSIM_STEP", "python")
+    else:
+        monkeypatch.delenv("VEXSIM_STEP", raising=False)
+    workspace = tour_workspace(tmp_path)
+    heard = Recorder()
+    spec = RunSpec(robot="robot.yaml", program="tour.py")
+    session = Session("s-step", spec, base=workspace, listener=heard)
+    session.start()
+    try:
+        session.command({"cmd": "speed", "value": 0})  # as fast as possible
+        wait_for(lambda: heard.of("recorded"), timeout=60, about=lambda: doing(session))
+    finally:
+        session.stop()
+    record = heard.of("recorded")[0]["run"]
+    assert record["ended"] == "finished" and record["physics"] == step
+    kept = runs.read_record(runs.runs_root(workspace), record["id"])
+    assert kept.physics == step and kept.duration > 10
+
+
+def test_a_record_from_before_they_said_still_reads(tmp_path):
+    from vexsim.app import runs
+    from vexsim.app.runspec import RunSpec
+
+    record = runs.RunRecord(
+        id="20261101-120000-ab12", name="An old run", created=1.0, command="vexsim run r.yaml",
+        spec=RunSpec(robot="r.yaml"), mode="driver", robot="R", field="F", duration=2.0,
+        ended="stopped", message=None, pose_error=None, samples=3,
+    )  # fmt: skip
+    assert record.physics is None
+    old = record.model_dump(mode="json")
+    del old["physics"]  # as run.json files were written before
+    assert runs.RunRecord.model_validate(old) == record
+    with pytest.raises(ValueError):
+        runs.RunRecord.model_validate({**old, "physics": "fast"})
+
+
+def test_vexsim_ui_builds_the_step_off_to_the_side(library, tmp_path, fresh, monkeypatch, capsys):
+    """So the first run after installing doesn't wait for a compiler: its worker finds the
+    library made."""
+    import uvicorn
+
+    from vexsim.ui.server import serving
+
+    with using_cache(tmp_path / "cache"):
+        thread = serving.prepare_step()
+        thread.join(120)
+        assert not thread.is_alive()
+        assert list((tmp_path / "cache").glob(f"step-*/{compiled.LIB_NAME}"))
+        assert list((tmp_path / "cache").glob("step-*/checked.txt"))  # and checked
+    monkeypatch.setenv("VEXSIM_STEP", "python")  # where it's told not to use one, none is built
+    with using_cache(tmp_path / "unused"):
+        compiled.forget()
+        serving.prepare_step().join(120)
+        assert not list((tmp_path / "unused").glob("step-*"))
+
+    done = []  # and `vexsim ui` does it as it starts
+    monkeypatch.setattr(serving, "prepare_step", lambda: done.append("prepared"))
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: done.append("served"))
+    serving.serve(tmp_path, open_browser=False)
+    assert done == ["prepared", "served"] and "vexsim UI for" in capsys.readouterr().out

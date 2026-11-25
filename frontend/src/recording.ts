@@ -76,6 +76,21 @@ export function when(created: number, now = Date.now()): string {
   return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
 }
 
+/** Which physics step made a run's numbers, as its record says: vexsim's step is Python,
+ * or the same arithmetic compiled where there's a compiler. The two agree to a nanometre
+ * over a run, not to the digit. Null for a run recorded before vexsim said. */
+export function madeBy(run: RunRecord): string | null {
+  if (run.physics === "compiled") return "the compiled physics step";
+  if (run.physics === "python") return "the Python physics step";
+  return null;
+}
+
+/** What hovering over a run in the history says: its command, what made it, what a click does. */
+export function runTitle(run: RunRecord): string {
+  const made = madeBy(run);
+  return [run.command, made && `Simulated with ${made}`, "Open this run to play it back"].filter(Boolean).join("\n\n");
+}
+
 /** A recording with a new name (and label). */
 export function renamed(recording: Recording, run: RunRecord): Recording {
   return { ...recording, run, name: run.name, label: `${when(run.created)} ${run.name}` };

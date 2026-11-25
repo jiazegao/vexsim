@@ -38,6 +38,25 @@ def _listen(port: int | None) -> socket.socket:
     raise OSError(f"can't listen on 127.0.0.1:{port or DEFAULT_PORT}: {error}")
 
 
+def prepare_step() -> threading.Thread:
+    """Build the simulator's compiled physics step now, off to the side, if this computer
+    hasn't yet (vexsim/physics/compiled). A run's worker then finds it made, so the first
+    run after installing doesn't wait for a compiler."""
+
+    def build() -> None:
+        try:
+            from vexsim.physics import compiled
+
+            if compiled.mode() != "python":
+                compiled.library()
+        except Exception:  # whatever is wrong, a run says so when one is started
+            pass
+
+    thread = threading.Thread(target=build, name="vexsim-physics-step", daemon=True)
+    thread.start()
+    return thread
+
+
 def serve(
     folder: str | Path = ".",
     *,
@@ -71,6 +90,7 @@ def serve(
         print("It stops when you close the app (or press Ctrl+C here).", flush=True)
     else:
         print("Keep this window open while you use it; press Ctrl+C to stop.", flush=True)
+    prepare_step()
     if window:
         threading.Timer(0.5, open_window, args=(url,)).start()
     elif open_browser:
