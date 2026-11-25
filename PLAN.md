@@ -340,7 +340,7 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 15.6 | **[done]** What the server sends, checked; drawings packed; a reload mid-run keeps the code's drawings | Every endpoint's response is checked against its protocol model in the tests; a run whose code draws MCL's particles records at least 40% fewer bytes a second; a page reloaded mid-run shows the drawings |
 | 15.7 | **[done]** The big files split by feature: `App.tsx`, `server.py`, `protocol.py`, `cli.py` | None of the four is over about 600 lines; every test passes unchanged; the generated `protocol.ts` is the same, byte for byte |
 | 16.1 | **[done]** The physics step, compiled ([section 18](#18-the-physics-step-compiled-phase-16)): the wheels' loads, the motors, the mechanisms, the contact, the solve and the battery in C, built with the toolchain vexsim finds, the robot's state shared with it; the Python step stays the model | With the compiled step every existing test passes unchanged; from the same state the two steps agree on every number to 1 part in 10⁹, and whole runs to a nanometre; a Python program's run is at least 2.5× faster and 1239E's Left 40 at least 1.5×; without a compiler everything runs as before |
-| 16.2 | The rest of a millisecond: what Python still does every step (sensors, events, the loop), trimmed without changing a number | A Python program's run at least 3× faster than before the phase and Left 40 at least 1.7×, with results the same as 16.1's to the last bit |
+| 16.2 | **[done]** The rest of a millisecond: what Python still does every step (sensors, events, the loop), trimmed without changing a number | A Python program's run at least 3× faster than before the phase and Left 40 at least 1.7×, with results the same as 16.1's to the last bit |
 | 16.3 | Where it shows: run records and the app say which step ran; the step built in the background when `vexsim ui` starts | A recorded run says which step made it; the first run after installing doesn't wait for the build |
 
 ## 12. Risks and mitigations
@@ -855,6 +855,20 @@ The simulator steps every millisecond in Python and NumPy. Phase 15.1 took what 
 **16.2 The rest of a millisecond**
 - With the step compiled, what a millisecond costs is the Python around it: every device asked to integrate and publish, every-millisecond events through the heap, the loop's own bookkeeping. Trimmed where that changes no number (a device with nothing to integrate or publish isn't asked; an event due every tick doesn't go through the heap), each measured, the results the same as 16.1's to the last bit.
 - Walls in C only if contact turns out to matter in a run that's waited for.
+
+- **As built (16.2):** `Device.integrates`, `SensorSuite.step`, `RotationDevice.integrate`, and the first test of `Walls.resolve` and of `Arena._robot_obstacles`. Measured on another computer than 16.1's table (the session's was replaced, by a faster one), all four interleaved in one sitting, in µs for each 1 ms step:
+
+  | | Before the phase | 16.1 | Now, the Python step | Now, the compiled step |
+  |---|---|---|---|---|
+  | A Python program: `tour.py`, 15 s | 81 | 18.8 | 80 | 14.5: 5.6× faster than before the phase, 69× real time |
+  | 1239E Left 40 (C++, MCL), 15 s | 149 | 64 | 153 | 62: 2.4× faster, 16× real time |
+
+  Where it differs from the plan, or says more:
+  - *What was left of a millisecond,* for the Python program after 16.1: the sensors' work each millisecond 10 µs of 27 (two tracking wheels at 3.3 µs each, and every device asked to add up motion it doesn't have and to publish a reading it hasn't got); events 14 (the sensors' sampling 4.5, the program's tick 3.8, the recorder 1.8); the compiled step with its Python 3.5; the walls 1.1.
+  - *Three trims.* The suite asks a device to add up motion only if it does (`integrates`: a tracking wheel), and to publish only while a reading is waiting out its latency. A tracking wheel works out its travel on plain floats (NumPy's scalars are slow one at a time) and draws its noise as `sigma * rng.standard_normal()`, which is what `rng.normal(0.0, sigma)` computes. The walls' and the elements' first test (is anything in reach?) is on plain floats too.
+  - *Not a bit different.* Twelve whole runs (six scenarios, each with both steps): every state every 10 ms, the tracking wheels' own angles, the console and the telemetry are what 16.1 gave, bit for bit. In the tests: a tracking wheel against the formula it replaced, every millisecond for 4 s; the noise against NumPy's, from the same place in the stream; no device asked that has nothing to do, and each reading still arriving when its latency is up.
+  - *The walls stay in Python.* What they cost when nothing is in reach is now a third of a microsecond a step, elements included; touching one is rare in a run that's waited for (0.6% of Left 40's steps).
+  - *Not done:* events due every tick still go through the heap (a microsecond a step; taking them out means keeping their order with every other event's by hand), and a sample still makes its reading object (4.5 µs a step, spread over ten devices). For a C++ project what's left is the robot code: of Left 40's 62 µs a step, 54 is waiting for it (182 exchanges a simulated second, about 300 µs each, its own work and the pipe's), and Python's part of an exchange is 10 (the readings formatted 5, sent 3, the reply applied 2). That's the bridge's shape, not the step's.
 
 **16.3 Where it shows**
 - A run's record says which step made it, and the app shows it; the Build page says whether the compiled step is in use, and why not.

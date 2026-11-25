@@ -77,10 +77,9 @@ class Walls:
         """Push the robot's footprint back inside the walls; returns this step's contacts."""
         half = self.half_size
         cg = robot.cg_position
-        if (
-            abs(cg[0]) + robot.footprint_radius < half[0]
-            and abs(cg[1]) + robot.footprint_radius < half[1]
-        ):
+        x, y = cg.tolist()  # (plain floats: this test runs every step)
+        reach = robot.footprint_radius
+        if abs(x) + reach < half[0] and abs(y) + reach < half[1]:
             return []  # nowhere near a wall (the usual case)
 
         heading = robot.heading

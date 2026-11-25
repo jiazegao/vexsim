@@ -25,6 +25,7 @@ from vexsim.bridge.program import CppProgram
 from vexsim.calibration.replay import LoggedSupply
 from vexsim.config import load_field, load_robot
 from vexsim.config.field import FieldConfig
+from vexsim.devices.devices import RotationDevice
 from vexsim.physics import compiled
 from vexsim.physics.compiled import check as check_module
 from vexsim.physics.compiled import lib as lib_module
@@ -472,3 +473,77 @@ def test_a_library_found_again_isnt_checked_again(monkeypatch, tmp_path, fresh, 
         again = compiled.library()
         assert again.path == first.path and again.built_s is None and again.worst is None
         assert again.agreement == first.worst == first.agreement  # kept beside it
+
+
+# --- the rest of a millisecond (16.2): cheaper, and not a bit different -----------------------
+
+
+def test_a_tracking_wheel_adds_up_as_it_did(monkeypatch):
+    """The wheel's travel each step, by plain floats and one standard normal: the same
+    numbers as ``robot.point_velocity`` and ``rng.normal(0.0, sigma)`` give, which is how
+    it was written before."""
+
+    def plainly(self, robot, dt):
+        vx, vy = robot.point_velocity(self.rel)
+        c, s = math.cos(self.heading), math.sin(self.heading)
+        along, across = c * vx + s * vy, -s * vx + c * vy
+        self.angle += along * dt / self.radius
+        self.angle += self.rng.normal(0.0, self.spec.scrub * abs(across) * dt / self.radius)
+
+    def angles(seconds: float) -> list[tuple]:
+        config = load_robot(ROOT / "examples" / "robots" / "full_omni_6m.yaml")
+        sim = Simulation(config, seed=3, echo=None, input_source=ScriptedInput.from_csv(INPUT))
+        sim.start("driver")
+        wheels = [d for d in sim.sensors.devices.values() if d.integrates]
+        assert len(wheels) == 2 and all(d.spec.scrub > 0 for d in wheels)
+        rows = []
+        for _ in range(round(seconds * 1000)):
+            sim.run_for(0.001)
+            read = tuple(d.value and d.value.position_cdeg for d in wheels)  # (None at first)
+            rows.append(tuple(d.angle for d in wheels) + read)
+        return rows
+
+    now = angles(4)
+    monkeypatch.setattr(RotationDevice, "integrate", plainly)
+    assert now == angles(4)  # to the last bit, every millisecond
+    assert max(abs(a) for a in now[-1][:2]) > 1.0  # (and they turned)
+
+
+def test_only_devices_with_something_to_do_are_asked_each_millisecond():
+    config = load_robot(ROOT / "examples" / "robots" / "full_omni_6m.yaml")
+    sim = Simulation(config, seed=3, echo=None)
+    suite = sim.sensors
+    asked: list[tuple[str, str, bool]] = []  # (what, the device's kind, a reading was waiting)
+
+    def watch(device) -> None:
+        if not device.integrates:  # motors, the IMU, a distance sensor: nothing adds up
+            device.integrate = lambda robot, dt: asked.append(("integrate", device.kind, False))
+        publish = device.publish
+
+        def published(now_us: int) -> None:
+            asked.append(("publish", device.kind, bool(device._pending)))
+            publish(now_us)
+
+        device.publish = published
+
+    for device in suite.devices.values():
+        watch(device)
+    sim.start("driver")
+    sim.run_for(0.03)  # three samples of everything
+    assert not [a for a in asked if a[0] == "integrate"]
+    assert all(waiting for _, _, waiting in asked)  # asked to publish only with one waiting
+    motors = [d for d in suite.devices.values() if d.kind == "motor"]
+    assert len(motors) == 6 and all(d.value is not None for d in motors)
+    # and each reading still arrives when its latency is up: the 20 ms sample at 25 ms
+    assert {d.published_at_us for d in motors} == {25_000}
+    assert sum(d.integrates for d in suite.devices.values()) == 2  # the two tracking wheels
+
+
+def test_the_noise_a_device_draws_is_numpys_normal():
+    """``sigma * rng.standard_normal()`` for ``rng.normal(0.0, sigma)``: the same number
+    from the same place in the stream, sigma zero included."""
+    a = np.random.Generator(np.random.PCG64(7))
+    b = np.random.Generator(np.random.PCG64(7))
+    for sigma in [0.0, 1e-9, 3.5e-4, 0.0, 2.0] * 2000:
+        assert a.normal(0.0, sigma) == sigma * b.standard_normal()
+    assert a.random() == b.random()

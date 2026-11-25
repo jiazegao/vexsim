@@ -240,8 +240,8 @@ class Arena:
         # steps of most runs, skipped for the price of one distance.
         room = self._room.get(robot)
         if room is not None:
-            cg = robot.cg_position
-            if math.hypot(cg[0] - room[0], cg[1] - room[1]) < room[2]:
+            x, y = robot.cg_position.tolist()
+            if math.hypot(x - room[0], y - room[1]) < room[2]:
                 return []
         if robot.outline is None:
             found = self._footprint_obstacles(robot)

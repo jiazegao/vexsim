@@ -62,7 +62,7 @@ python -m pip install -e ".[dev,viz,ui]"
 The `vexsim` command is installed with the package (`python -m vexsim` works too).
 
 ### C++ toolchain (only for running PROS C++ code)
-vexsim compiles PROS projects for your PC with g++ 11 or newer. With the same compiler it also compiles its own physics step, which makes every simulation faster: about twice as fast for a C++ project, four times for a Python program. Without a compiler everything but C++ code still runs, on the Python step: [the same numbers](#the-physics-step-python-or-compiled), more slowly.
+vexsim compiles PROS projects for your PC with g++ 11 or newer. With the same compiler it also compiles its own physics step, which makes every simulation faster: about twice as fast for a C++ project, five times for a Python program. Without a compiler everything but C++ code still runs, on the Python step: [the same numbers](#the-physics-step-python-or-compiled), more slowly.
 - **Windows:** install MSYS2 from https://www.msys2.org (default folder `C:\msys64`). In the "MSYS2 UCRT64" terminal, run `pacman -S --needed mingw-w64-ucrt-x86_64-gcc`. vexsim finds it in `msys64` or `msys2` at the top of any drive. Otherwise add `...\ucrt64\bin` to your PATH, or set `VEXSIM_CXX` to the full path of `g++.exe`.
 - **Linux:** `sudo apt install g++` (or your distribution's equivalent).
 - **macOS:** `brew install gcc`, then set `VEXSIM_CXX=g++-14` (or the version you installed).
@@ -1583,7 +1583,7 @@ Omni wheels grip along their rolling direction and roll freely across it, which 
 ### Chassis and robot dynamics
 - Each wheel sits on a stiff spring under a rigid chassis. The loads carry the weight and balance the pitch and roll moments of the ground forces below the CG: weight transfer, drop-center rocking, wheel lift-off.
 - The degrees of freedom are the body's forward, sideways and yaw velocities, plus one shaft speed per gear group. Contact velocities are linear in them, and each 1 ms step solves a linearly implicit Euler update, stable even though tire friction is far stiffer than the step. Motor torques are explicit.
-- A step of the 6-motor example takes about 85 µs in Python and 3 µs [compiled](#the-physics-step-python-or-compiled). With its sensors and a program, a whole simulation runs about 9 times faster than real time on the Python step and 35 times on the compiled one, on one core.
+- A step of the 6-motor example takes 50 to 85 µs in Python and 2 to 3 µs [compiled](#the-physics-step-python-or-compiled). With its sensors and a program, a whole simulation runs about 10 times faster than real time on the Python step and 50 times on the compiled one, on one core; 1239E's C++ project, about 5 and 12 times (most of what's left there is the robot code's own work).
 
 ### Walls, obstacles, pieces, mechanisms
 - **Walls and solid obstacles:** footprint corners inside them are contacts, resolved with impulses: a bounce (`wall_restitution`, none below 5 cm/s) and friction (`wall_friction`); then the robot is moved out. A robot driving into a wall stalls with its wheels slipping, and an angled approach squares it up (a wall reset).

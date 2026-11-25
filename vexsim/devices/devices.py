@@ -52,6 +52,10 @@ class Device:
     def measure(self, now_us: int) -> Any:
         raise NotImplementedError
 
+    # Whether ``integrate`` does anything: the suite calls it after every physics step
+    # only on the devices that say so (a tracking wheel).
+    integrates = False
+
     def integrate(self, robot: Robot, dt: float) -> None:
         """Called after every physics step, for sensors that accumulate motion."""
 
@@ -113,7 +117,7 @@ class RotationDevice(Device):
         self.angle = 0.0  # true wheel rotation, rad
         self._last_angle_deg = 0.0
         self._lifted_until = -1.0
-        self.tracking = cfg.tracking_wheel is not None
+        self.tracking = self.integrates = cfg.tracking_wheel is not None
         if self.tracking:
             tw = cfg.tracking_wheel
             offset = static_rng.normal(0.0, in_to_m(spec.offset_error_in), size=2)
@@ -133,7 +137,12 @@ class RotationDevice(Device):
         if spec.liftoff_rate_hz > 0 and self.rng.random() < spec.liftoff_rate_hz * dt:
             self._lifted_until = robot.time + spec.liftoff_duration_s
             return
-        vx, vy = robot.point_velocity(self.rel)
+        # The wheel's contact velocity, as robot.point_velocity(self.rel) gives it, and the
+        # noise as rng.normal(0.0, sigma) does: the same arithmetic on plain floats (this
+        # runs every millisecond, and NumPy's scalars are slow one at a time).
+        px, py = self.rel.tolist()
+        u, v, w = robot.qdot[:3].tolist()
+        vx, vy = u - w * py, v + w * px
         c, s = math.cos(self.heading), math.sin(self.heading)
         along, across = c * vx + s * vy, -s * vx + c * vy
         self.angle += along * dt / self.radius
@@ -141,7 +150,8 @@ class RotationDevice(Device):
             # Drawn every step, sideways travel or none. Drawn only when there is some, which
             # numbers the noise got hung on whether a speed came out exactly zero or a
             # rounding error away from it, and so on which physics step ran.
-            self.angle += self.rng.normal(0.0, spec.scrub * abs(across) * dt / self.radius)
+            sigma = spec.scrub * abs(across) * dt / self.radius
+            self.angle += sigma * self.rng.standard_normal()
 
     def measure(self, now_us: int) -> RotationReading:
         spec = self.spec

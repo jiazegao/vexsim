@@ -196,7 +196,7 @@ F = mu * N * tanh(|c| / x_s) * c / |c|,   c = (grip slip, sideways slip)
 
 **Two copies of the step.** `Robot._step_python` and the functions it calls are the model. Where there's a C compiler, vexsim compiles a copy of their arithmetic (`vexsim/physics/compiled/step.c`) and uses that: the wheels' loads, the motors, the mechanisms, the contact, the solve, the pose and the battery, on the robot's numbers in a block of memory the Python objects are views of. Walls, game elements and sensors stay in Python. From the same state the two agree on every number to better than one part in 10⁹ (measured: one in 10¹³), and whole runs to a nanometre; the tests step every example robot both ways, and `VEXSIM_STEP=check` compares them at every step of anything. `VEXSIM_STEP=python` keeps to the Python step.
 
-**Speed:** a step of the 6-motor example takes about 85 µs in Python and 3 µs compiled. With sensors and a program, a simulation runs about 9× faster than real time on the Python step and 35× on the compiled one, on one core.
+**Speed:** a step of the 6-motor example takes 50 to 85 µs in Python and 2 to 3 µs compiled. With sensors and a program, a simulation runs about 10× faster than real time on the Python step and 50× on the compiled one, on one core.
 
 **What the tests check** (`tests/test_drive.py`):
 - top speed matches the gearing within 1%

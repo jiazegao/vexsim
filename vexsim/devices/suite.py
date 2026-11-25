@@ -90,11 +90,16 @@ class SensorSuite:
         return self
 
     def step(self, world: World, dt: float) -> None:
-        for device in self.devices.values():
-            device.integrate(self.robot, dt)
+        # Every millisecond, so only what has something to do is asked: the devices that
+        # add up motion, and the ones with a reading waiting out its latency.
+        robot, devices = self.robot, self.devices.values()
+        for device in devices:
+            if device.integrates:
+                device.integrate(robot, dt)
         end_us = world.clock.us + world.dt_us
-        for device in self.devices.values():
-            device.publish(end_us)
+        for device in devices:
+            if device._pending:
+                device.publish(end_us)
 
     def frame(self, time: float) -> SensorFrame:
         groups: dict[str, dict] = {k: {} for k in ("motor", "rotation", "imu", "distance", "gps")}
