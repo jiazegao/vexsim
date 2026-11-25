@@ -161,7 +161,7 @@ def test_the_header_holds_the_robot_and_the_plan(plan):
         volts = ", ".join(str(mv.get(p, 0)) for p in (10, 9, 19, 17))
         brake = int(step.brake == "brake")
         assert f'\t{{"{step.name}", {end - start}, {brake}, {{{volts}}}}},' in header
-    assert "{-22.2, -20.45, 0.0, {" in header  # the straight test's spot
+    assert "{-22.2, -19.95, 0.0, {" in header  # the straight test's spot
 
 
 def test_tracking_wheels_count_the_way_their_config_says():
@@ -221,7 +221,7 @@ def test_every_test_runs_from_the_menu_and_logs(full):
     assert [s[1] for s in student.screens if s[1].startswith("done")] == ["done passed"]
     by_name = {log.info["name"]: log for log in found}
     assert set(by_name) >= {"imu_turns_left", "imu_turns_right", "push_forward", "push_back"}
-    assert by_name["straight"].info["spot"] == "-22.20 -20.45 0.0"
+    assert by_name["straight"].info["spot"] == "-22.20 -19.95 0.0"
     assert sim.lcd[1].startswith("Battery") and sim.lcd[1].rstrip().endswith(f"{len(found)} saved")
 
 

@@ -342,15 +342,15 @@ The tests (`tests/test_calibration_sessions.py`, `pytest -m session`; CI runs th
 
 | | 1239E (no tracking wheels, 5 distance sensors) | `full_omni_6m` (two tracking wheels) | truth |
 |---|---|---|---|
-| wheel diameter | 3.2001 in | 3.2082 in | 3.20, 3.21 in |
+| wheel diameter | 3.1948 in | 3.2082 in | 3.20, 3.21 in |
 | IMU scale error | 0.00502 | 0.00398 | 0.0050, 0.0040 |
 | voltage cap | 1 | 1 | 1 |
-| longitudinal, lateral, rolling | 0.746, 0.250, 0.130 | 0.750, 0.250, 0.130 | 0.75, 0.25, 0.13 |
+| longitudinal, lateral, rolling | 0.750, 0.250, 0.130 | 0.750, 0.250, 0.130 | 0.75, 0.25, 0.13 |
 | tracking wheels | | 2.0444 in; y −1.759 in; x −3.322 in | as built: 2.0444; −1.759; −3.321 |
 | distance noise, range | 0.32%, 2290 mm | 0.32%, 2290 mm | 0.3%, 2300 mm |
-| glancing misses | 85% past 45° and 1500 mm | 88% past 45° and 1500 mm | 90%, 45°, 1500 mm |
-| confidence per m, per degree | 8.01, 0.242 | 8.23, 0.245 | 8, 0.25 |
-| held-out run (motor speed; IMU rate) | 2.97 rpm (noise 2.85); 0.45 deg/s (0.50) | 3.00 rpm (3.05); 0.52 deg/s (0.46) | |
+| glancing misses | 83% past 45° and 1500 mm | 88% past 45° and 1500 mm | 90%, 45°, 1500 mm |
+| confidence per m, per degree | 8.02, 0.242 | 8.23, 0.245 | 8, 0.25 |
+| held-out run (motor speed; IMU rate) | 2.99 rpm (noise 2.85); 0.46 deg/s (0.50) | 3.00 rpm (3.05); 0.52 deg/s (0.46) | |
 
 The motors (121 rpm, 0.15 A, 0.3, kp 2) and the battery (0.1 Ω) come back as vexsim's own, as they should, so `--apply` leaves them. Each fit takes under 3 minutes on 4 CPUs. A robot whose motor 9 runs backward and whose distance sensors on ports 1 and 8 are swapped stops at the device check, the error naming both.
 
@@ -370,7 +370,7 @@ It **passes** when:
 - the real end is within the pass marks of where the simulated runs ended (their mean), as a distance and as a heading; and
 - through the run, the code's own pose (its first logged pose, LemLib's on 1239E), real against simulated, is on average (RMS, time from the routine's `setPose`, the mean over the seeds) within the distance mark.
 
-The run is in the verdict because the end alone can't tell a calibrated simulator from an uncalibrated one on a routine whose motions and localization correct the robot's errors by its end. That was true of 1239E's Left 40 (below). With several real runs, their ends' mean and their RMS's mean are what's judged; each run is in the report, with the spread of the real ends against the simulated ones'.
+The run is in the verdict because the end alone can't always tell a calibrated simulator from an uncalibrated one: a routine's motions and localization can correct the robot's errors by its end. With several real runs, their ends' mean and their RMS's mean are what's judged; each run is in the report, with the spread of the real ends against the simulated ones'.
 
 **The pass marks** are 2 in and 2 degrees, unless the team sets its own in `.vexsim/calibration.yaml` (in the folder vexsim runs in, or the nearest one above it that has one):
 ```yaml
@@ -390,7 +390,7 @@ The command exits 0 when the check passes, 1 when it fails.
 
 | | the end, from the simulated | through the run (RMS) | at 2 in and 4 degrees |
 |---|---|---|---|
-| calibrated (the session's `--apply`) | 0.66 in, -0.8 degrees; 0.80 in, +1.6 degrees | 1.08 in; 1.45 in | passes |
-| vexsim's default config | 1.27 in, 0.0 degrees; 0.84 in, +2.4 degrees | 2.23 in; 2.49 in | fails |
+| calibrated (the session's `--apply`) | 0.64 in, +0.2 degrees; 0.83 in, -2.6 degrees | 0.55 in; 0.75 in | passes |
+| vexsim's default config | 3.77 in, -3.8 degrees; 4.45 in, -6.6 degrees | 2.57 in; 2.55 in | fails |
 
-Either way Left 40 ends where the real one did: LemLib's motions, the code's MCL and the stop at the buzzer correct a robot that's slower and turns differently. The uncalibrated simulation gets there at other times, though, up to 5 in from the real one mid-routine. Left 40's end heading varies by 3 to 4 degrees run to run, real or simulated, so the team's heading mark is 4.
+The calibrated simulation ends where the real robot did, and follows it through the run within an inch on average. The uncalibrated one gets there differently, 2.6 in from the real one through the run, and its end fails too: its three seeds end up to 5.2 in and 14 degrees from their mean, which vexsim warns of (MCL corrects the position, but nothing corrects the heading). The two real runs' end headings differ by 2.7 degrees, so the team's heading mark is 4.

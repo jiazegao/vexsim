@@ -68,8 +68,11 @@ def test_the_robot_has_every_device_the_code_uses():
     singles = sorted(m for m in code["motors"] if abs(m) != SKILLS_ONLY)
     in_config = sorted(p for name, m in mechanisms.items() for p in m.motors)
     assert singles == sorted([-19, 17, 18, -16]) and in_config == singles
-    # the 5.5 W motors: the drive's third a side (the team's README), and the claw's two
-    # (inferred from the 88 W motor rule, the robot config says why)
+    # the 5.5 W motors: every motor the code declares green or red (the team), the claw's
+    # two; and the drive's third a side (the team's README), whose groups declare them blue
+    text = CONFIGS.read_text()
+    declared = re.findall(r"pros::Motor \w+\((-?\d+), pros::MotorGearset::(\w+)\)", text)
+    assert sorted(int(p) for p, gears in declared if gears in ("green", "red")) == [-16, 18]
     small = [p for g in (*gearing.values(), *mechanisms.values()) for p in g.motors
              if g.motor_cartridge(p) == "5.5w"]  # fmt: skip
     assert sorted(small) == [-16, -13, 10, 18]

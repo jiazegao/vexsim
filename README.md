@@ -151,7 +151,7 @@ vexsim bench examples/scenarios/s_curve.yaml --seeds 20
 ### The example files
 | Folder | Contents |
 |---|---|
-| `examples/robots/` | `full_omni_6m` (6-motor full-omni tank with tracking wheels, IMU and a distance sensor: the main example), `traction_6m` (traction wheels in the middle), `xdrive_4m`, `mecanum_4m`, `hdrive_5m`, `lemlib_example` (the robot LemLib's example program configures), `1239e_2026-27` (a real team's robot, with mechanisms), `1239e_six_bar` (the same team's six-bar robot: a tracking wheel, six distance sensors, a six-bar lift with a claw, and 5.5 W motors among its 11 W ones) |
+| `examples/robots/` | `full_omni_6m` (6-motor full-omni tank with tracking wheels, IMU and a distance sensor: the main example), `traction_6m` (traction wheels in the middle), `xdrive_4m`, `mecanum_4m`, `hdrive_5m`, `lemlib_example` (the robot LemLib's example program configures), `1239e_2026-27` (a real team's robot, with mechanisms, its effector's on 5.5 W motors), `1239e_six_bar` (the same team's six-bar robot: a tracking wheel, six distance sensors, a six-bar lift with a claw, and 5.5 W motors among its 11 W ones) |
 | `examples/fields/` | `v5rc_empty` (walls only), `practice_elements` (a barrier, two goals, six balls), `1239e_2026-27` (the 2026-27 field as team 1239E models it), `1239e_six_bar` (the same field for the six-bar's lower sensors: its bases as tall as the team's code says, and the pins and cups) |
 | `examples/programs/` | `tour.py`: a Python program that runs every chassis motion, and numbers its stops on the field; `tank_drive.py`: tank driver control only, to drive or to follow a log |
 | `examples/inputs/` | `strafe_square.csv`: scripted controller input |

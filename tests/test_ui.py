@@ -783,7 +783,7 @@ def test_the_server_edits_configs_in_place(tmp_path):
         opened = client.get("/api/config", params={"path": "robot.yaml"}).json()
         assert opened["kind"] == "robot" and opened["check"]["issues"] == []
         assert opened["check"]["robot"]["sensors"][1]["port"] == 1
-        assert opened["check"]["places"]["sensors[1]"]["line"] == 58
+        assert opened["check"]["places"]["sensors[1]"]["line"] == 63
 
         # a drag on the diagram: one number changes, in place
         drag = {"location": "sensors[1].pos_in", "value": [5.25, 5.6937585]}
@@ -805,7 +805,7 @@ def test_the_server_edits_configs_in_place(tmp_path):
         typo = patched["text"].replace("height_in: 9.12}  # frontL", "hight_in: 9.12}  # frontL")
         check = client.post("/api/config/check", json={"kind": "robot", "text": typo}).json()
         assert check["robot"] is None
-        assert check["issues"][0]["span"]["line"] == 58
+        assert check["issues"][0]["span"]["line"] == 63
 
         # saving writes the text; a save from an old version is refused
         save = {"path": "robot.yaml", "text": patched["text"], "version": opened["version"]}

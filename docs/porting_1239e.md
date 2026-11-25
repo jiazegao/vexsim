@@ -6,7 +6,7 @@ This guide ports team 1239E's 2026-27 robot code ([jiazegao/1239e_2026-27](https
 - the field as the team's localization models it, in `examples/fields/1239e_2026-27.yaml`;
 - `examples/scripts/evaluate_1239e.py`, which runs every routine and measures the localization against the simulated truth.
 
-All nine routines run to the end. With RCL and MCL, LemLib's pose ends within 1.5 in of the truth on every left-side routine and on skills, against 4–6 in with odometry alone. The simulation also turned up a likely bug in the right-side routines' MCL setup: see [step 9](#9-what-the-simulation-found).
+All nine routines run to the end. With RCL and MCL, LemLib's pose ends within 2 in of the truth on every left-side routine and on skills, against 4–6 in with odometry alone. The simulation also turned up a likely bug in the right-side routines' MCL setup: see [step 9](#9-what-the-simulation-found).
 
 ![LemLib's pose vs. the true pose through each routine, with and without RCL and MCL](img/1239e_localization.png)
 
@@ -92,8 +92,10 @@ startMcl: pose (60, 0, 90); start the simulated robot with --start=60,0,0
 | `ScaledIMU imu(16, 360.0, 360.91)` | IMU on port 16 with `scale_error: 0.002528`, so the team's correction has the error it was measured for |
 | `RclSensor(&frontL_dist, -5.69, 4.66, 0, ...)` | `{type: distance, port: 1, pos_in: [4.66, 5.69], heading_deg: 0, height_in: 9.12}` |
 | `liftMotors({-7, 21})`, `LIFT_GEAR_RATIO 120` deg/in, heights 0–50 in | mechanism `lift`: blue, stops at 0 and 6300°, a 0.3 N·m load (assumed: about 2.5 kg on a 1 in spool) |
-| `effectorRotateMotor(-4)`, 4 motor degrees per wrist degree, 0–165° | mechanism `effector_wrist`: green, `ratio: "12:48"`, stops at 0 and 190° (upper stop assumed) |
-| `frontIntakeMotor(20)`, `effectorIntakeMotor(-5)` | mechanisms `front_intake` (blue), `effector_intake` (green) |
+| `effectorRotateMotor(-4)`, green, 4 motor degrees per wrist degree, 0–165° | mechanism `effector_wrist`: a 5.5 W motor (`cartridge: 5.5w`), `ratio: "12:48"`, stops at 0 and 190° (upper stop assumed) |
+| `frontIntakeMotor(20)`, blue; `effectorIntakeMotor(-5)`, green | mechanisms `front_intake` (blue) and `effector_intake` (a 5.5 W motor) |
+
+**The 5.5 W motors.** Every motor the team's code declares green or red is a 5.5 W motor (the team says so), so the effector's two are. With them the robot's nine motors come to 88 W, the V5RC motor rule's limit, and count as eight in the brain's sharing of current, so no motor is held below its 2.5 A. Until phase 17 added the 5.5 W motor they were green 11 W motors here, and the brain shared its 20 A among nine, 2.2 A each, the drive's included: the results below are the 5.5 W motors'.
 
 **Converting sensor mounts.** RCL gives `(h, v, a)`: inches right and forward of the center, and an angle clockwise from forward. vexsim uses inches forward and left, and degrees counter-clockwise: `pos_in: [v, -h]`, `heading_deg: -a`. MCL's `sensor_mounts` table (forward, left, counter-clockwise radians) gives the same numbers, which checks the conversion. Its comments give each sensor's height.
 
@@ -123,10 +125,10 @@ vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1
 For a right-side routine, use `--start=-60,0,180`; the console's `startMcl:` line says which. `--headless` prints how far LemLib's pose was from the truth:
 ```
 [   2.01] startMcl: pose (60, 0, 90); start the simulated robot with --start=60,0,0
-autonomous finished at t = 17.41 s
-  true pose      x   39.50  y   18.87  heading  204.1
-  estimated pose x   39.36  y   19.07  heading  204.1
-  the robot code's pose vs. the true one during autonomous: mean 1.24 in, max 5.82 in (at 7.3 s), final 0.26 in; heading mean 0.51, max 4.6 deg
+autonomous finished at t = 17.39 s
+  true pose      x   39.51  y   19.52  heading  204.3
+  estimated pose x   39.45  y   19.21  heading  204.3
+  the robot code's pose vs. the true one during autonomous: mean 1.58 in, max 7.58 in (at 12.7 s), final 0.35 in; heading mean 0.51, max 4.7 deg
 ```
 `--record run.csv` logs the true pose, LemLib's (`est_*`), every motor, and each mechanism's angle (`lift_deg`, `effector_wrist_deg`, ...). For example, in Left 40 the wrist steps through the code's 90°, 165° and 60° angles, and `setLift(8)` raises the lift to about 960 motor degrees.
 
@@ -168,15 +170,15 @@ Results with 6 seeds and all four modes (`--seeds 6 --tracking rcl+mcl,mcl,rcl,o
 
 | Routine | Time (s) | RCL + MCL: mean / max / final | MCL only | RCL reset only | Odometry only |
 |---|---:|---:|---:|---:|---:|
-| Left 40 | 15.4 | 1.6 / 7.5 / 1.5 | 1.6 / 7.7 / 3.1 | 4.7 / 7.7 / 6.1 | 4.7 / 7.5 / 5.9 |
-| Left 30 | 13.7 | 2.6 / 7.8 / 0.8 | 1.2 / 5.3 / 0.7 | 3.5 / 5.1 / 3.4 | 3.8 / 5.4 / 3.7 |
-| Left 30_10 | 16.9 | 1.2 / 5.7 / 0.3 | 2.3 / 7.9 / 4.2 | 3.4 / 6.4 / 5.7 | 3.7 / 6.6 / 5.9 |
-| skills | 17.3 | 1.3 / 6.9 / 0.6 | 4.0 / 11.4 / 0.7 | 3.3 / 4.7 / 4.5 | 3.5 / 4.9 / 4.7 |
-| Right 40 | 15.8 | 3.8 / 9.9 / 5.6 | 3.4 / 9.0 / 6.0 | 4.9 / 7.9 / 5.9 | 5.0 / 8.1 / 6.0 |
-| Right 30 | 13.3 | 6.2 / 16.2 / 8.9 | 4.4 / 13.0 / 10.2 | 4.5 / 6.6 / 6.4 | 4.5 / 6.7 / 6.4 |
-| Right 30_10 | 15.5 | 10.4 / 25.4 / 16.1 | 3.3 / 10.9 / 0.7 | 1.8 / 4.1 / 3.1 | 1.8 / 4.2 / 3.2 |
-| Right 20_10 | 13.7 | 6.8 / 16.8 / 2.5 | 5.1 / 15.0 / 3.6 | 3.5 / 6.0 / 5.9 | 3.7 / 6.2 / 5.9 |
-| alliance1pin | 8.1 | 1.6 / 3.9 / 0.8 | 2.8 / 6.5 / 4.0 | 1.2 / 2.1 / 1.9 | 1.2 / 2.1 / 1.6 |
+| Left 40 | 15.3 | 1.5 / 6.0 / 1.7 | 1.4 / 5.5 / 2.2 | 4.5 / 7.0 / 5.4 | 4.5 / 6.8 / 5.2 |
+| Left 30 | 13.7 | 2.6 / 7.9 / 0.8 | 1.4 / 6.0 / 0.9 | 3.8 / 5.5 / 3.9 | 4.1 / 5.7 / 4.1 |
+| Left 30_10 | 16.9 | 1.0 / 4.2 / 0.3 | 1.2 / 5.0 / 0.3 | 3.8 / 6.6 / 5.8 | 4.0 / 6.9 / 6.1 |
+| skills | 17.3 | 1.6 / 7.5 / 0.6 | 1.6 / 7.3 / 0.7 | 3.6 / 4.9 / 4.6 | 3.8 / 5.1 / 4.8 |
+| Right 40 | 15.8 | 3.0 / 8.5 / 3.3 | 2.7 / 7.6 / 2.1 | 4.4 / 6.8 / 4.5 | 4.4 / 6.9 / 4.5 |
+| Right 30 | 13.3 | 4.3 / 10.8 / 3.3 | 8.8 / 21.6 / 16.0 | 4.6 / 6.8 / 6.5 | 4.7 / 6.8 / 6.6 |
+| Right 30_10 | 15.5 | 3.2 / 9.6 / 0.7 | 5.5 / 12.3 / 7.4 | 2.0 / 4.3 / 3.6 | 2.0 / 4.4 / 3.6 |
+| Right 20_10 | 13.6 | 5.5 / 13.4 / 1.3 | 5.5 / 12.3 / 4.3 | 3.5 / 5.4 / 5.1 | 3.6 / 5.6 / 5.1 |
+| alliance1pin | 8.1 | 2.2 / 5.4 / 0.5 | 2.0 / 5.1 / 0.6 | 1.4 / 2.2 / 1.9 | 1.4 / 2.1 / 1.7 |
 
 The plot at the top shows seed 0 in every mode. The 216 runs take about 3 minutes on 4 cores.
 
@@ -189,11 +191,11 @@ The browser app (`vexsim ui`) has this evaluation saved as sweeps, on its *Sweep
 - **No other robots, no game pieces,** and no compute time: on the brain, 2048 particles take part of each 30 ms cycle.
 
 ## 9. What the simulation found
-**On the left side, RCL and MCL do their job.** LemLib's drive-motor odometry ends 4–6 in off, mostly from fast turns, when the omni wheels skid sideways and the motor encoders can't tell. MCL pulls it back to within 1.5 in by the end. Mid-routine peaks of 6–8 in, right after the hardest turns, last about a second.
+**On the left side, RCL and MCL do their job.** LemLib's drive-motor odometry ends 4–6 in off, mostly from fast turns, when the omni wheels skid sideways and the motor encoders can't tell. MCL pulls it back to within 2 in by the end. Mid-routine peaks of 4–8 in come right after the hardest turns, and mostly last about a second.
 
-**The RCL start reset is accurate but small.** On its own it removes the placement error along x, and its mean error is the same as odometry alone's or a little below. Its effect on MCL is mixed: MCL without it does better on some routines (Right 30_10 ends 0.7 in off instead of 16) and worse on others (Left 30_10, skills, alliance1pin). The reset moves MCL's starting estimate by under an inch, so this is MCL's sensitivity to where it starts (below), not a problem with RCL.
+**The RCL start reset is accurate but small.** On its own it removes the placement error along x, and its mean error is the same as odometry alone's or a little below. Its effect on MCL is mixed: MCL without it does better on some routines (Left 30 averages 1.4 in instead of 2.6, and Right 40 ends 2.1 in off instead of 3.3) and much worse on others (Right 30 ends 16 in off instead of 3.3, Right 30_10 7.4 instead of 0.7). The reset moves MCL's starting estimate by under an inch, so this is MCL's sensitivity to where it starts (below), not a problem with RCL.
 
-**On the right side, MCL often makes it worse than odometry alone.** `Right 30_10` averages 10.4 in with RCL and MCL, and 1.8 in with odometry alone. The likely cause is `rightAutonObstacles`, the masks for the right-side routines. They are `leftAutonObstacles` rotated **90°**: every point (x, y) becomes (−y, x). But the right-side start, (−60, 0) facing −x, is the left-side start rotated **180°**. So the masks fit a robot starting at the top of the field. At the right-side start they leave MCL two of its five sensors, where the left side gets four, and as the robot moves they hide some useful beams while letting through some that cross the far half.
+**On the right side, MCL often makes it worse than odometry alone, until the end.** Its peaks are higher on every right-side routine (5.4 to 13.4 in on average, against 2.1 to 6.9 with odometry alone), and `Right 20_10` averages 5.5 in with RCL and MCL against 3.6 with odometry alone. It still ends closer on each: 0.5 to 3.3 in, against 1.7 to 6.6. The likely cause is `rightAutonObstacles`, the masks for the right-side routines. They are `leftAutonObstacles` rotated **90°**: every point (x, y) becomes (−y, x). But the right-side start, (−60, 0) facing −x, is the left-side start rotated **180°**. So the masks fit a robot starting at the top of the field. At the right-side start they leave MCL two of its five sensors, where the left side gets four, and as the robot moves they hide some useful beams while letting through some that cross the far half.
 
 Rotating the left masks 180° instead, `(x, y) -> (-x, -y)`, gives:
 ```cpp
@@ -208,18 +210,20 @@ With those masks, same seeds:
 
 | Routine | Team's masks: mean / max / final | 180° masks: mean / max / final |
 |---|---:|---:|
-| Right 30 | 6.2 / 16.2 / 8.9 | **1.3** / 6.5 / 4.4 |
-| Right 30_10 | 10.4 / 25.4 / 16.1 | **0.9** / 3.8 / **0.6** |
-| alliance1pin | 1.6 / 3.9 / 0.8 | **0.4** / 1.1 / **0.6** |
-| Right 20_10 | 6.8 / 16.8 / 2.5 | 5.1 / 16.5 / 2.5 |
-| Right 40 | 3.8 / 9.9 / 5.6 | 4.2 / 12.6 / **2.0** |
+| Right 30 | 4.3 / 10.8 / 3.3 | **1.3** / 7.7 / 5.1 |
+| Right 30_10 | 3.2 / 9.6 / 0.7 | **1.1** / **4.6** / 0.6 |
+| alliance1pin | 2.2 / 5.4 / 0.5 | **0.5** / **1.1** / 0.6 |
+| Right 20_10 | 5.5 / 13.4 / 1.3 | **2.6** / 10.1 / 3.1 |
+| Right 40 | 3.0 / 8.5 / 3.3 | 2.3 / 11.2 / 7.0 |
+
+The mean error drops on all five routines, and the peaks on four. Right 30, Right 20_10 and Right 40 end further off on average, though. On three of Right 30's six seeds, LemLib stays within about 2 in of the truth until the routine's last fast drive, and then MCL pulls it 9–10 in behind the robot; with odometry alone, LemLib follows that drive. One Right 40 run loses track (below).
 
 The port keeps the team's masks, since this is their call. The fix is worth trying on the real robot: compare MCL's SD-card logs for a right-side routine with each set of masks.
 
-**MCL can lose track after a fast turn, and then can't find its way back.** The remaining bad runs (4 of the 30 with the 180° masks averaged over 5 in; it happens on the left side too, as in Left 30 with seed 2) follow one pattern:
+**MCL can lose track after a fast turn, and then stay lost for seconds, or to the end.** The worst runs (2 of the 30 with the 180° masks averaged over 5 in; it happens on the left side too, as in Left 30 with seed 2) follow one pattern:
 1. During a fast turn, the drive-motor odometry slides several inches, and the distance readings, up to about 40 ms old, are compared with the current heading.
 2. The particle cloud ends up a few inches from the truth with none of its 2048 particles near the robot. With most beams masked, the few valid readings can't pull it back. Every particle disagrees with them about equally, so resampling changes nothing.
-3. Each update pulls LemLib toward the wrong estimate. In the Left 30 trace, the robot sits against the center post at x = 8.5 while LemLib's x walks from 25 to 30, though the back sensor, the only one unmasked, reads the wall 61 in away, where it really is.
+3. Each update pulls LemLib toward the wrong estimate. In the Left 30 trace, the robot sits against the center post at x = 8.5 while LemLib's x walks from 26 to 30, though the back sensor, the only one unmasked, reads the wall 61 in away, where it really is.
 
 Ideas to try, in the simulator first: skip MCL updates (or LemLib syncing) while turning fast; inject a few random particles, or call `uniform_reset()`, when every particle's weight collapses. Also, nothing in RCL or MCL corrects the heading (`THETA_SYNC_PROP` and `IMU_VARIANCE` are 0), so a robot placed 1° off stays 1° off all routine; the front pair, both facing the wall at the start, could measure it.
 
@@ -253,7 +257,7 @@ The port's `main.cpp`, `auton_selector.cpp` and `MclTracking.cpp` show each chan
 ## 12. The team's six-bar robot
 The `six-bar` branch of the team's repository (commit `e625439`, 2026-11-25) is the code for its next robot: a six-motor drive on 2.75 in omni wheels with a vertical tracking wheel, six distance sensors, and a six-bar lift with a claw, claw rollers and a front intake; two match routines (LEFT 5-PIN, RIGHT 5-PIN) and a skills routine. It's ported the same way, as a project of its own beside this one: [examples/pros_projects/1239e_six_bar](../examples/pros_projects/1239e_six_bar/README.md), with [`examples/robots/1239e_six_bar.yaml`](../examples/robots/1239e_six_bar.yaml) and [`examples/fields/1239e_six_bar.yaml`](../examples/fields/1239e_six_bar.yaml).
 
-1. **Take stock** (step 1). Nothing new to simulate: motors, an IMU, a rotation sensor as a tracking wheel, distance sensors, LemLib 0.5.6 with the team's `pid.hpp`, the LVGL selector. One thing the simulator can't do as the robot is built: pick up pins and cups. (The drive's two 5.5 W motors were simulated as 11 W ones until phase 17 added the 5.5 W motor.)
+1. **Take stock** (step 1). Nothing new to simulate: motors, an IMU, a rotation sensor as a tracking wheel, distance sensors, LemLib 0.5.6 with the team's `pid.hpp`, the LVGL selector. One thing the simulator can't do as the robot is built: pick up pins and cups. (Its four 5.5 W motors, the drive's two and the claw's, were simulated as 11 W ones until phase 17 added the 5.5 W motor.)
 2. **Copy and merge** (steps 2, 3 and 11). The branch left `main` after `fb5a42a`, the commit this port copied, so this port's edits carry over: a three-way merge of `fb5a42a`, this port and the branch, file by file (`git merge-file`), brought every `// vexsim:` edit and the switch to vexsim's logger in, with conflicts in five files where both had changed the same lines (the MCL log, which the port removed and the branch kept; the skills routine; `startMcl()`'s new check for distance sensors). `VEXSIM_AUTON` also takes `Skills`, for the selector's Skills button.
 3. **Describe the robot** (step 4), from `configs.hpp` and `MclTracking.hpp`: the drive's ports and 450 rpm, the 11.41 in track width, `TrackingWheel(&vertRotation, 2.75, 0)` on reversed port 9, and the six distance sensors, with the heights `configs.hpp`'s notes give (2.08 to 5.53 in). The lift is the match robot's, motor 19 alone: the team's README says motor 20 is plugged in for skills only.
 4. **Describe the field** (step 5). Heights matter more here. This port's field made every base 6 in, which only had to fall between its robot's 4.19 and 9.12 in sensors; the six-bar's are 2.1 to 5.5 in high, around and below the bases' tops, and its map's notes give the center base (5 in), the neutral bases (5.8 in) and the alliance bases (3.25 in). MCL's map now has the 12 pins and cups too, which the field has as fixed elements the robot drives through: as movable pieces, the ones a routine grabs got flung across the field.

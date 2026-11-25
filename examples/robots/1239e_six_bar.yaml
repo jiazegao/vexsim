@@ -49,10 +49,10 @@ mechanisms:
   # is 5000 ("max = 5000 motor deg"). Load, inertia and friction are assumed.
   lift: {motors: [-19], cartridge: blue, ratio: "12:84", inertia_kgm2: 0.0025,
          load_torque_nm: 0.5, friction_nm: 0.05, range_deg: [0, 714]}
-  # The claw's two motors are 5.5 W ones (inferred): the code declares them green, as a
-  # 5.5 W motor must be, and the motor rule's 88 W leaves room for them only so (the drive's
-  # 55 W, the lift's 19 and the intake's 17 at 11 W each: 77 W, and 11 for the two). If
-  # they're 11 W motors, write cartridge: green for both.
+  # The claw's two motors are 5.5 W ones: the code declares them green, and every motor the
+  # team's code declares green or red is a 5.5 W motor (the team). The match robot's motors
+  # come to 88 W, the motor rule's limit: the drive's 55, the lift's 19 and the intake's 17
+  # at 11 W each, and the claw's two at 5.5.
   # clawGrippersMotor(18), in motor degrees from closed: hardResetClaw() drives it
   # shut against its stop and calls that 0, and autonomous() assumes it starts at 13 (so
   # the stop is at -13 here). It opens to 200 (openClaw(200)); the open stop is assumed.

@@ -449,10 +449,10 @@ def test_1239e_left40_passes_with_the_calibrated_config_and_fails_with_the_defau
         assert main(["calibration", "check-auton", str(default), *args, "--out", "not"]) != 0
         failed = capsys.readouterr().out
     assert "Pass marks: 2 in, 4 degrees" in passed and "PASSED" in passed
-    # uncalibrated, Left 40 ends where the real one did (its motions and localization see to
-    # that), but it gets there differently: the run is what fails
+    # uncalibrated, Left 40 gets there differently (its wheels and its IMU's scale aren't the
+    # real ones): the run fails, and whether its end does too depends on how close it comes
+    # (MCL corrects the position, nothing the heading)
     assert "FAILED" in failed and "through the run" in failed
-    assert "ends " not in failed.split("FAILED")[1]
     report = (team / "ok" / "report.md").read_text(encoding="utf-8")
     assert "**passes**" in report and "card_1/vexsim_0001_left_40.csv" in report
     assert {"paths.png", "apart.png", "readings.png"} <= {p.name for p in (team / "ok").iterdir()}

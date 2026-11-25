@@ -51,6 +51,20 @@ def test_configs_are_clean():
     assert sum(not o.solid for o in field.obstacles) == 9  # the bases
 
 
+def test_the_motors_the_code_declares_green_or_red_are_5_5w():
+    """Every motor the team's code declares green or red is a 5.5 W motor (the team): here
+    the effector's two. With them the robot's nine motors come to the motor rule's 88 W."""
+    text = (PROJECT / "include" / "custom" / "configs.hpp").read_text()
+    declared = re.findall(r"pros::Motor \w+\((-?\d+), pros::MotorGearset::(\w+)\)", text)
+    robot = load_robot(ROBOT)
+    sets = (*robot.drivetrain.gearing.values(), *robot.mechanisms.values())
+    cartridge = {p: s.motor_cartridge(p) for s in sets for p in s.motors}
+    assert sorted(int(p) for p, gears in declared if gears in ("green", "red")) == [-5, -4]
+    for port, gears in declared:
+        assert cartridge[int(port)] == ("5.5w" if gears in ("green", "red") else gears), port
+    assert sum(s.power_w for s in sets) == 88.0
+
+
 def test_left_40_runs_and_localizes(port_exe, in_cache):
     evaluate = load_script()
     with in_cache():

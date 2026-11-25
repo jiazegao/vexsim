@@ -43,10 +43,15 @@ mechanisms:
   lift: {motors: [-7, 21], cartridge: blue, inertia_kgm2: 0.0004, load_torque_nm: 0.3,
          friction_nm: 0.03, range_deg: [0, 6300]}
   front_intake: {motors: [20], cartridge: blue, inertia_kgm2: 0.0002, friction_nm: 0.02}
-  effector_intake: {motors: [-5], cartridge: green, inertia_kgm2: 0.0001, friction_nm: 0.02}
+  # The effector's two motors, effectorIntakeMotor(-5) and effectorRotateMotor(-4), are
+  # 5.5 W motors: the code declares them green, and every motor the team's code declares
+  # green or red is a 5.5 W motor (the team). The robot's nine motors come to 88 W, the
+  # motor rule's limit, and count as eight in the brain's sharing of current, so none is
+  # held below its 2.5 A.
+  effector_intake: {motors: [-5], cartridge: 5.5w, inertia_kgm2: 0.0001, friction_nm: 0.02}
   # effectorRotateMotor: 4 motor degrees per effector degree (EFFECTOR_GEAR_RATIO), angles
   # 0-165 deg; hardResetEffector() drives it down against the stop at 0. Upper stop assumed.
-  effector_wrist: {motors: [-4], cartridge: green, ratio: "12:48", inertia_kgm2: 0.003,
+  effector_wrist: {motors: [-4], cartridge: 5.5w, ratio: "12:48", inertia_kgm2: 0.003,
                    friction_nm: 0.05, range_deg: [0, 190]}
 
 sensors:

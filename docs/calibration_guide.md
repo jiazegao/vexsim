@@ -231,8 +231,8 @@ It ends by listing the tests and where each one goes:
 6. Straight (3 runs)
    Facing the +x wall (right on the map).
    Its back 41 in from the -x wall (left on the map).
-   Its right side 43.5 in from the -y wall (bottom of the map).
-   Room to spare: 11.1 in.
+   Its right side 44 in from the -y wall (bottom of the map).
+   Room to spare: 10.7 in.
 ...
 ```
 If a test doesn't fit anywhere on your field, it says so (*Left out, with no room on this field*) and names what's in the way. Check the field's config ([section 3.7](#37-check-the-fields-config-against-your-field)): an element in the wrong place takes up room it doesn't really have.
@@ -244,7 +244,7 @@ The plan's maps are in `calibration/vexsim_calibration/plan/`, one for each test
 
 | The push lane (map 5) | A driving test's spot (map 6) | A distance sweep's spot (map 9) |
 |---|---|---|
-| ![Map 5: the push lane along the -y wall, its start and end lines taped across it](img/guide/map_push.png) | ![Map 6: the straight test's spot, the robot's back 41 in from the -x wall and its right side 43.5 in from the -y wall](img/guide/map_straight.png) | ![Map 9: the first distance sweep's spot, near the +x wall](img/guide/map_sweep.png) |
+| ![Map 5: the push lane along the -y wall, its start and end lines taped across it](img/guide/map_push.png) | ![Map 6: the straight test's spot, the robot's back 41 in from the -x wall and its right side 44 in from the -y wall](img/guide/map_straight.png) | ![Map 9: the first distance sweep's spot, near the +x wall](img/guide/map_sweep.png) |
 
 Each map shows:
 - the robot (orange) on its spot, an arrow at its front, and the two measurements that put it there: two of its sides (or corners) from two walls;
@@ -476,20 +476,20 @@ Calibration session calibration/2026-11-07: 18 runs of 1239E 2026-27
    ...
 
 3. Push: wheel diameters
-   wheels.left.diameter_in: 3.25 -> 3.2
-   wheels.right.diameter_in: 3.25 -> 3.2
+   wheels.left.diameter_in: 3.25 -> 3.195
+   wheels.right.diameter_in: 3.25 -> 3.195
 
 4. Drive: friction and rolling resistance
-   wheel.omni.longitudinal_mu: 0.9 -> 0.7458
+   wheel.omni.longitudinal_mu: 0.9 -> 0.7503
    wheel.omni.lateral_mu: 0.2 -> 0.25
-   wheel.omni.rolling_resistance: 0.1 -> 0.13
+   wheel.omni.rolling_resistance: 0.1 -> 0.1302
    ...
 
 The held-out run (vexsim_0016_arc.csv) matches within the sensors' noise.
 
-Drive model for vexsim's own motions: kS 2.011 V, kV 0.1227 V per in/s, kA 0.0256 V per in/s^2, kT 1.477 V (fits 1638 samples, R² 0.997); top speed 75.4 in/s
+Drive model for vexsim's own motions: kS 2.051 V, kV 0.1214 V per in/s, kA 0.0258 V per in/s^2, kT 1.477 V (fits 1604 samples, R² 0.997); top speed 75.3 in/s
 For the robot's routes, add to them:
-  drive: {kS: 2.011, kV: 0.1227, kA: 0.0256, kT: 1.477}
+  drive: {kS: 2.051, kV: 0.1214, kA: 0.0258, kT: 1.477}
 
 wrote calibration/2026-11-07/report/report.md (and changes.yaml, with the plots)
 16 change(s) to write: vexsim calibrate examples/robots/1239e_2026-27.yaml calibration/2026-11-07 --apply
@@ -505,7 +505,7 @@ Open `calibration/2026-11-07/report/report.md`: in VS Code, open the file, then 
 
 **First, the held-out run.** The fit uses every driving run but the last. Then it simulates that last run, which it never saw, and compares it with the real one. If they match within what the sensors' noise alone would leave, the calibrated simulator predicts a run it wasn't fitted to:
 
-> The held-out run (vexsim_0016_arc.csv), which the fit didn't use, matches within the sensors' noise: motor velocity 2.974 rpm (noise 2.847), motor current 0.0001985 A (noise 0.1), heading rate 0.4454 deg/s (noise 0.4956).
+> The held-out run (vexsim_0016_arc.csv), which the fit didn't use, matches within the sensors' noise: motor velocity 2.991 rpm (noise 2.847), motor current 0.0008546 A (noise 0.1), heading rate 0.4586 deg/s (noise 0.4956).
 
 ![The held-out arc: the logged motor speeds and IMU turn rate (black) under the simulated ones (blue)](img/guide/report_held_out.png)
 
@@ -542,7 +542,7 @@ The wheels' sizes go into the wheels, the IMU's error into the IMU, and the rest
 ### 7.2 For routes made in vexsim's maker
 The fit also measures how the real drive answers voltage, for the motions vexsim's autonomous maker drives (arcs and paths). If you make routes there, add the printed line to each route's file:
 ```yaml
-drive: {kS: 2.011, kV: 0.1227, kA: 0.0256, kT: 1.477}
+drive: {kS: 2.051, kV: 0.1214, kA: 0.0258, kT: 1.477}
 ```
 
 ---
@@ -582,29 +582,28 @@ void autonomous() {
 3. When the robot stops, **don't touch it.** Put a small piece of tape on the floor at two of its corners, front-left and back-right (they're furthest apart), each with the tape's corner exactly at the robot's corner.
 4. Now move the robot away, and measure each tape corner from two walls: from the -x or +x wall, whichever is nearer, and from the -y or +y wall. Measure square to the wall (along a tile seam), to the quarter inch. Write each down like this:
    ```
-   front-left: 27.25 from +x, 56.5 from +y; back-right: 19.75 from +x, 39.25 from +y
+   front-left: 27 from +x, 56.75 from +y; back-right: 19.5 from +x, 39.5 from +y
    ```
 5. Run it again, and measure again: two or three runs show how much the real robot varies.
 
 ### 8.3 Check it
 Make a folder `auton` in `calibration`, and copy the new logs from the card into it (with File Explorer or Finder). Then, one `--end` for each log, in the same order:
 ```
-vexsim calibration check-auton examples/robots/1239e_2026-27.yaml calibration/auton/vexsim_0001_left_40.csv calibration/auton/vexsim_0002_left_40.csv --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --end "front-left: 27.25 from +x, 56.5 from +y; back-right: 19.75 from +x, 39.25 from +y" --end "front-left: 26 from +x, 55.5 from +y; back-right: 19.25 from +x, 38 from +y"
+vexsim calibration check-auton examples/robots/1239e_2026-27.yaml calibration/auton/vexsim_0001_left_40.csv calibration/auton/vexsim_0002_left_40.csv --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --end "front-left: 27 from +x, 56.75 from +y; back-right: 19.5 from +x, 39.5 from +y" --end "front-left: 26.75 from +x, 57.25 from +y; back-right: 18.5 from +x, 40.5 from +y"
 ```
 It builds your code for the laptop, runs the routine in vexsim three times from where your code set the robot's pose, and compares:
 ```
 Pass marks: 2 in, 2 degrees (vexsim's defaults)
   left40, from 60, 0, 0 deg; 3 seeds
-  seed 0: ended at 46.96, 23.19, 207.6 deg
-  seed 1: ended at 47.33, 22.76, 206.6 deg
-  seed 2: ended at 47.35, 22.26, 202.5 deg
+  seed 0: ended at 46.86, 21.52, 204.8 deg
+  seed 1: ended at 46.58, 21.66, 204.9 deg
+  seed 2: ended at 46.84, 21.23, 204.0 deg
 
-vexsim_0001_left_40.csv: ended at 46.70, 22.33, 204.7 deg (measured); 0.66 in and -0.8 deg from the simulated end
-  through the run: 1.08 in from the simulated runs (RMS); first over the mark at 2.9 s
-vexsim_0002_left_40.csv: ended at 47.58, 23.45, 207.1 deg (measured); 0.80 in and +1.6 deg from the simulated end
-  through the run: 1.45 in from the simulated runs (RMS); first over the mark at 2.6 s
-simulated: ended at 47.22, 22.73, 205.6 deg (the seeds' mean)
-warning: the simulated runs alone end up to 0.5 in and 3.1 degrees from their mean: marks tighter than that (2 in, 2 degrees) can fail a run vexsim can't tell from its own
+vexsim_0001_left_40.csv: ended at 46.95, 22.08, 204.7 deg (measured); 0.64 in and +0.2 deg from the simulated end
+  through the run: 0.55 in from the simulated runs (RMS)
+vexsim_0002_left_40.csv: ended at 47.58, 21.33, 202.0 deg (measured); 0.83 in and -2.6 deg from the simulated end
+  through the run: 0.75 in from the simulated runs (RMS); first over the mark at 2.6 s
+simulated: ended at 46.76, 21.47, 204.6 deg (the seeds' mean)
 
 wrote calibration/auton/vexsim_0001_left_40_check/report.md (with its plots)
 PASSED: the simulated left40 matches the real one, within the marks.
@@ -619,9 +618,9 @@ Its report is in `calibration/auton/vexsim_0001_left_40_check/`: `report.md`, an
 
 ![How far apart the real and simulated runs were through the routine, against the 2 in mark](img/guide/check_apart.png)
 
-Here the runs are more than 2 in apart for about a second from 2.6 s, at a fast turn (a turn a few milliseconds early puts them inches apart for a moment), and close the rest of the way.
+Here the second run is more than 2 in apart for about half a second from 2.6 s, at a fast turn (a turn a few milliseconds early puts them inches apart for a moment), and the runs are close the rest of the way.
 
-The warning says that the simulated runs, on their own, end up to 3.1 degrees apart: a 2 degree mark could fail a run that vexsim couldn't tell from its own. That's why 1239E's heading mark is 4 (below).
+The second run ends 2.6 degrees from the simulated end, over the 2 degree mark, and the check still passes: it judges the real runs together, and their mean end is 0.56 in and 1.2 degrees from the simulated one. The two real runs end 2.7 degrees apart, which leaves a 2 degree mark little room. That's why 1239E's heading mark is 4 (below).
 
 *In the app:* on the *Autonomous check* tab, pick the robot, the field and the competition code's project. Tick the logs, copied into `calibration/auton` as above. Under each log, type where it ended, as you wrote it down; the app shows where that puts the robot. Then click *Check it*. *Play* plays a log on the field beside the simulated routine.
 
@@ -631,7 +630,7 @@ Set them in a file `calibration.yaml` in a folder `.vexsim` in the vexsim folder
 max_distance_in: 2
 max_heading_deg: 4
 ```
-Or for one check, add `--max-distance 2 --max-heading 4` to the command. Marks finer than a tape measure can tell (0.5 in, 1 degree) get a warning. In vexsim, 1239E's Left 40 ends 3 to 4 degrees differently from run to run, so 1239E's heading mark is 4. The first line of the check's output says which marks it used, and where they came from. *In the app:* type the marks at the top of the *Autonomous check* tab and click *Save as the team's*.
+Or for one check, add `--max-distance 2 --max-heading 4` to the command. Marks finer than a tape measure can tell (0.5 in, 1 degree) get a warning. In vexsim, 1239E's Left 40 ends a few degrees differently from run to run (2.7 between the two runs above), so 1239E's heading mark is 4. The first line of the check's output says which marks it used, and where they came from. *In the app:* type the marks at the top of the *Autonomous check* tab and click *Save as the team's*.
 
 ### 8.5 If it fails
 Read the report: when do the real and the simulated runs part?
