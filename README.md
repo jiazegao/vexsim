@@ -1308,6 +1308,17 @@ world.run_for(1.0)
 print(robot.body_velocity, robot.contacts.normal)
 ```
 
+**Which physics step** a robot takes ([Python or compiled](#the-physics-step-python-or-compiled)) is `VEXSIM_STEP`'s to say, or the script's:
+```python
+from vexsim.physics import compiled
+
+with compiled.use("python"):  # or "compiled", or "check": both, compared at every step
+    robot = Robot(load_robot("examples/robots/full_omni_6m.yaml"))
+    robot.run(0.5)  # a robot keeps the step it takes first
+print(robot.step_name)  # python
+print(compiled.describe())  # (True, "the compiled step, ...") where there is one
+```
+
 **Sensors and your own localizer** (readings in PROS units):
 ```python
 from vexsim.algorithms.localization import Pose, baseline_localizers

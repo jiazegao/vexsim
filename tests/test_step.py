@@ -9,6 +9,7 @@ compiler (see conftest.py for how the C++ tests skip without one; these do the s
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 import subprocess
@@ -30,7 +31,7 @@ from vexsim.physics import compiled
 from vexsim.physics.compiled import check as check_module
 from vexsim.physics.compiled import lib as lib_module
 from vexsim.physics.field import Walls
-from vexsim.physics.motor import BrakeMode, ControlMode, V5Motor
+from vexsim.physics.motor import BrakeMode, ControlMode, CoreConstants, V5Motor
 from vexsim.physics.power import IdealSupply
 from vexsim.physics.robot import Robot
 from vexsim.physics.thermal import MotorThermal
@@ -346,6 +347,33 @@ def test_what_a_program_replaces_is_read_again(library):
     assert step.worst < 1e-10
 
 
+def test_constants_replaced_after_the_first_step_are_the_ones_used(library):
+    """A motor's spec and a battery's, swapped on a robot that's already stepping: the block
+    held copies of what they said, and is told to read them again."""
+
+    def end(step: str, weaker: bool) -> tuple[float, float]:
+        with compiled.use(step):
+            robot = Robot(load_robot(ROOT / "examples" / "robots" / "full_omni_6m.yaml"))
+            robot.advance(0.001)
+            if weaker:  # half the torque, and a battery that sags three times as far
+                for motor in robot.motors.values():
+                    motor.spec = dataclasses.replace(motor.spec, natural_stall_torque_nm=2.0)
+                    motor.core = CoreConstants.from_spec(motor.spec)
+                battery = robot.power.battery
+                battery.spec = dataclasses.replace(battery.spec, internal_resistance_ohm=0.3)
+            for group in robot.groups:
+                group.set_voltage(12.0)
+            for _ in range(800):
+                robot.advance(0.001)
+            assert robot.step_name == ("python" if step == "python" else "compiled")
+            return robot.pose[0], float(robot.power.bus_voltage)
+
+    for weaker in (False, True):
+        python, both = end("python", weaker), end("check", weaker)
+        assert end("compiled", weaker) == pytest.approx(python, rel=1e-12) == both
+    assert end("compiled", True)[0] < 0.7 * end("compiled", False)[0]  # it went less far
+
+
 def test_a_robot_it_cant_take_steps_in_python(library):
     class Bigger(Robot):
         pass
@@ -606,6 +634,7 @@ def test_vexsim_ui_builds_the_step_off_to_the_side(library, tmp_path, fresh, mon
 
     from vexsim.ui.server import serving
 
+    monkeypatch.delenv("VEXSIM_STEP", raising=False)  # (CI sets it for some of its jobs)
     with using_cache(tmp_path / "cache"):
         thread = serving.prepare_step()
         thread.join(120)
