@@ -26,13 +26,20 @@ from pydantic import (
 
 from vexsim.geometry import Circle, Outline, Polygon, polygon_problem
 from vexsim.units import in_to_m
-from vexsim.v5 import CARTRIDGE_FREE_RPM, SMART_PORT_COUNT
+from vexsim.v5 import (
+    CARTRIDGE_FREE_RPM,
+    MOTOR_5_5W_POWER_W,
+    MOTOR_11W_POWER_W,
+    SMART_PORT_COUNT,
+)
 
 PositiveFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 Vec2 = tuple[FiniteFloat, FiniteFloat]
 Name = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 
-Cartridge = Literal["red", "green", "blue"]
+# An 11W motor's gear cartridge, or "5.5w": the 5.5W motor, which has none (its fixed
+# gearing gives 200 rpm)
+Cartridge = Literal["red", "green", "blue", "5.5w"]
 WheelType = Literal["omni", "traction", "mecanum"]
 DrivetrainType = Literal["differential", "xdrive", "mecanum", "hdrive"]
 NoisePreset = Literal["ideal", "default", "harsh"]
@@ -221,11 +228,66 @@ class WheelConfig(_Model):
         return self.roller_angle_deg or 0.0
 
 
-class GearGroupConfig(_Model):
+def _check_5_5w(motors: tuple[int, ...], cartridge: str, small: tuple[int, ...]) -> None:
+    """``motors_5_5w`` names some of ``motors``, among an 11W cartridge's."""
+    if not small:
+        return
+    if cartridge == "5.5w":
+        raise ValueError("cartridge 5.5w makes every motor a 5.5W one already: drop motors_5_5w")
+    ports, seen = {abs(p) for p in motors}, set()
+    for port in small:
+        if abs(port) not in ports:
+            raise ValueError(f"motors_5_5w names port {abs(port)}, which isn't among the motors")
+        if abs(port) in seen:
+            raise ValueError(f"motors_5_5w names port {abs(port)} twice")
+        seen.add(abs(port))
+    if seen == ports:
+        raise ValueError("every motor is in motors_5_5w: write cartridge: 5.5w instead")
+
+
+class _MotorSet:
+    """What a drive group and a mechanism say of their motors, beyond their ports."""
+
+    motors: tuple[int, ...]
+    cartridge: str
+    motors_5_5w: tuple[int, ...]
+
+    def motor_cartridge(self, port: int) -> str:
+        """The cartridge of the motor on ``port``, or "5.5w" for a 5.5W motor."""
+        if self.cartridge == "5.5w" or abs(port) in {abs(p) for p in self.motors_5_5w}:
+            return "5.5w"
+        return self.cartridge
+
+    def motor_gear(self, port: int) -> float:
+        """The speed of the motor on ``port`` for a unit of its cartridge motors' (the
+        group's or mechanism's own): 1, or for a 5.5W motor among an 11W cartridge's motors,
+        geared to turn it as fast at its rated 200 rpm as they do at theirs (1/3 among blue)."""
+        if self.cartridge != "5.5w" and self.motor_cartridge(port) == "5.5w":
+            return CARTRIDGE_FREE_RPM["5.5w"] / CARTRIDGE_FREE_RPM[self.cartridge]
+        return 1.0
+
+    @property
+    def power_w(self) -> float:
+        """Its motors' power together, as the V5RC motor rule counts it."""
+        return sum(
+            MOTOR_5_5W_POWER_W if self.motor_cartridge(p) == "5.5w" else MOTOR_11W_POWER_W
+            for p in self.motors
+        )
+
+
+class GearGroupConfig(_MotorSet, _Model):
     motors: Annotated[tuple[MotorPort, ...], Field(min_length=1)]
     cartridge: Cartridge
     ratio: GearRatio = 1.0
     wheels: Annotated[tuple[Name, ...], Field(min_length=1)]
+    # The 5.5W motors among an 11W cartridge's motors (by port): geared to turn the wheels as
+    # fast at their 200 rpm as the cartridge's motors do at their rated speed
+    motors_5_5w: tuple[MotorPort, ...] = ()
+
+    @model_validator(mode="after")
+    def _small_motors(self) -> GearGroupConfig:
+        _check_5_5w(self.motors, self.cartridge, self.motors_5_5w)
+        return self
 
     @property
     def speed_ratio(self) -> float:
@@ -252,13 +314,15 @@ class DrivetrainConfig(_Model):
         raise KeyError(name)
 
 
-class MechanismConfig(_Model):
+class MechanismConfig(_MotorSet, _Model):
     """Motors that drive something other than the wheels: a lift, an intake, an arm.
 
     The mechanism is one rotating output (a lift's spool, a roller, an arm's
     pivot) geared to its motors. Load values are at that output; positions are
     output degrees from where it starts, positive in its motors' positive
     direction (a negative port is reversed, as in the drive's gearing groups).
+    ``ratio`` gears its cartridge's motors; 5.5W motors among them (``motors_5_5w``)
+    are geared to turn it as fast at their 200 rpm as those do at their rated speed.
     """
 
     motors: Annotated[tuple[MotorPort, ...], Field(min_length=1)]
@@ -271,10 +335,16 @@ class MechanismConfig(_Model):
     friction_nm: Annotated[float, Field(ge=0, allow_inf_nan=False)] = 0.0  # Coulomb, at the output
     # Hard stops, in output degrees from the starting position (so low <= 0 <= high)
     range_deg: tuple[FiniteFloat, FiniteFloat] | None = None
+    motors_5_5w: tuple[MotorPort, ...] = ()  # the 5.5W motors among the cartridge's (by port)
 
     @property
     def speed_ratio(self) -> float:
         return ratio_value(self.ratio)
+
+    @model_validator(mode="after")
+    def _small_motors(self) -> MechanismConfig:
+        _check_5_5w(self.motors, self.cartridge, self.motors_5_5w)
+        return self
 
     @model_validator(mode="after")
     def _range_contains_start(self) -> MechanismConfig:

@@ -117,7 +117,7 @@ static double drive_voltage(double *m, double v_bus, double dt) {
 /* V5Motor.update: one step with the output shaft at omega; the torque at the output.
  * The supply is the robot's: its bus voltage read, the motor's draw added to its load. */
 static double motor_update(double *m, double *b, double omega, double dt) {
-	double previous_est, w_core, v_bus, volts, current;
+	double previous_est, w_core, v_bus, v_drive, volts, current;
 	int limited = 0;
 
 	m[M_VELOCITY] = omega;
@@ -128,11 +128,12 @@ static double motor_update(double *m, double *b, double omega, double dt) {
 
 	w_core = omega * m[M_RATIO];
 	v_bus = py_max(b[R_BUS_VOLTAGE], 0.0);
+	v_drive = py_min(v_bus, m[M_MAX_DRIVE_V]); /* a 5.5W motor's 8 V, else the battery's */
 	if ((int)m[M_MODE] == MODE_STOPPED && (int)m[M_BRAKE_MODE] == BRAKE_COAST) {
 		volts = 0.0, current = 0.0;
 	} else {
 		double i_limit;
-		volts = py_min(py_max(drive_voltage(m, v_bus, dt), -v_bus), v_bus);
+		volts = py_min(py_max(drive_voltage(m, v_drive, dt), -v_drive), v_drive);
 		current = (volts - m[M_KE] * w_core) / m[M_RESISTANCE_OHM];
 		/* V5Motor.effective_current_limit_a */
 		i_limit = py_min(m[M_CURRENT_LIMIT], m[M_SUPPLY_CURRENT_CAP]) * derate_factor(m);
@@ -160,7 +161,7 @@ static void mechanism_advance(double *k, double *motors, double *b, double dt) {
 
 	for (i = 0; i < count; i++) {
 		double *m = motors + (first + i) * M_SIZE;
-		torque += m[M_SIGN] * motor_update(m, b, m[M_SIGN] * w, dt);
+		torque += m[M_SIGN] * m[M_GEAR] * motor_update(m, b, m[M_SIGN] * m[M_GEAR] * w, dt);
 	}
 	w_free = w + dt * (torque - k[K_LOAD]) / k[K_INERTIA];
 	grip = dt * k[K_FRICTION] / k[K_INERTIA]; /* the most friction can change the speed */
@@ -174,7 +175,7 @@ static void mechanism_advance(double *k, double *motors, double *b, double dt) {
 	k[K_ANGLE] = angle, k[K_SPEED] = w;
 	for (i = 0; i < count; i++) { /* the encoders follow the output, stops included */
 		double *m = motors + (first + i) * M_SIZE;
-		m[M_POSITION] = m[M_SIGN] * angle;
+		m[M_POSITION] = m[M_SIGN] * m[M_GEAR] * angle;
 	}
 }
 
@@ -380,7 +381,8 @@ EXPORT int vexsim_step(double *b, const vexsim_arrays *a, double dt) {
 	for (i = 0; i < drive_motors; i++) {
 		double *m = motors + i * M_SIZE;
 		int dof = (int)m[M_DOF];
-		forces[dof] += m[M_SIGN] * motor_update(m, b, m[M_SIGN] * qdot[dof], dt);
+		double g = m[M_SIGN] * m[M_GEAR]; /* 1 or -1, or a 5.5W motor's share among faster ones */
+		forces[dof] += g * motor_update(m, b, g * qdot[dof], dt);
 	}
 	for (i = 0; i < mechanisms; i++) mechanism_advance(mechanism + i * K_SIZE, motors, b, dt);
 

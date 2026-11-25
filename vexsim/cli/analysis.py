@@ -154,7 +154,12 @@ def add_analysis(sub) -> None:
             "move_voltage(12000), and write a plot (--out) and/or CSV (--csv)."
         ),
     )
-    p.add_argument("--cartridge", choices=["red", "green", "blue"], default="green")
+    p.add_argument(
+        "--cartridge",
+        choices=["red", "green", "blue", "5.5w"],
+        default="green",
+        help="an 11W motor's cartridge, or 5.5w for the 5.5W motor (default green)",
+    )
     p.add_argument(
         "--supply-voltage", type=float, default=12.8, help="battery voltage (default 12.8)"
     )

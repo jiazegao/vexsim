@@ -13,7 +13,7 @@ from vexsim.physics.motor import BrakeMode
 
 # A robot made to take the step's branches: omni and traction wheels (the middle ones
 # dropped, so wheels lift off), motors mounted both ways, a mechanism with stops, a load
-# and friction.
+# and friction, and 5.5W motors (held to 8 V) among faster ones and on their own.
 CHECK_ROBOT = {
     "version": 1,
     "body": {"mass_kg": 6.8, "footprint_in": [15, 14], "cg_in": [0.3, -0.2, 4.0]},
@@ -31,14 +31,17 @@ CHECK_ROBOT = {
         ],
         "gearing": {
             "left": {"motors": [1, -2, 3], "cartridge": "blue", "ratio": "36:48",
-                     "wheels": ["lf", "lm", "lb"]},
+                     "wheels": ["lf", "lm", "lb"], "motors_5_5w": [3]},
             "right": {"motors": [-4, 5, -6], "cartridge": "blue", "ratio": "36:48",
-                      "wheels": ["rf", "rm", "rb"]},
+                      "wheels": ["rf", "rm", "rb"], "motors_5_5w": [-6]},
         },
     },
     "mechanisms": {
         "lift": {"motors": [7, -8], "cartridge": "red", "ratio": "12:60", "inertia_kgm2": 0.02,
-                 "load_torque_nm": 1.5, "friction_nm": 0.2, "range_deg": [0, 90]},
+                 "load_torque_nm": 1.5, "friction_nm": 0.2, "range_deg": [0, 90],
+                 "motors_5_5w": [-8]},
+        "intake": {"motors": [9], "cartridge": "5.5w", "inertia_kgm2": 0.0002,
+                   "friction_nm": 0.02},
     },
 }  # fmt: skip
 
@@ -56,9 +59,11 @@ def self_check(lib: Library, steps: int = 400) -> float:
         raise StepMismatch(f"it can't take vexsim's own check robot: {step.why}")
     left, right, lift = robot.group("left"), robot.group("right"), robot.mechanisms["lift"]
     lifters = [motor for _, _, motor in lift.motors]
+    ((_, _, roller),) = robot.mechanisms["intake"].motors
 
-    def launch() -> None:  # wheels spin, the current limit holds
+    def launch() -> None:  # wheels spin, the current limit holds, the 5.5W ones at 8 V
         left.set_voltage(12.0), right.set_voltage(12.0)
+        roller.set_voltage(12.0)
 
     def turn() -> None:  # the traction wheels scrub
         left.set_voltage(-12.0), right.set_voltage(9.0)
@@ -104,6 +109,7 @@ def self_check(lib: Library, steps: int = 400) -> float:
     def coast() -> None:
         right.brake_mode = BrakeMode.COAST
         left.stop(), right.stop()
+        roller.set_velocity(-15.0)
 
     script = [launch, turn, raise_lift, spin, hold, push, stall_lift, hot, in_the_air, down,
               opposite, coast]  # fmt: skip

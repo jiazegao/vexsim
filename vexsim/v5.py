@@ -4,9 +4,11 @@ SMART_PORT_COUNT = 21
 
 MOTOR_MAX_MV = 12000
 MOTOR_11W_POWER_W = 11.0
+MOTOR_5_5W_POWER_W = 5.5
 
-# Output free speed of the V5 11W motor for each gear cartridge.
-CARTRIDGE_FREE_RPM = {"red": 100.0, "green": 200.0, "blue": 600.0}
+# Rated output speed of the V5 11W motor for each gear cartridge, and of the 5.5W motor
+# ("5.5w"), which has no cartridge: its gearing is fixed at 200 rpm.
+CARTRIDGE_FREE_RPM = {"red": 100.0, "green": 200.0, "blue": 600.0, "5.5w": 200.0}
 
 # Competition limits. These come from the V5RC game manual and can change by
 # season, so the config checker only warns about them.

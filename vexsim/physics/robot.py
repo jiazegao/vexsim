@@ -69,9 +69,10 @@ class DriveGroup:
             motor.set_voltage(sign * volts)
 
     def set_velocity(self, rad_s: float) -> None:
-        """Motor shaft speed target (rad/s); the motors' own controllers track it."""
+        """Motor shaft speed target (rad/s); the motors' own controllers track it (a 5.5W
+        motor among faster ones, the speed its gearing gives it for that)."""
         for _, sign, motor in self.motors:
-            motor.set_velocity(sign * rad_s)
+            motor.set_velocity(sign * motor.gear * rad_s)
 
     def stop(self) -> None:
         for _, _, motor in self.motors:
@@ -142,7 +143,7 @@ class Robot:
         for k, (name, gear) in enumerate(config.drivetrain.gearing.items()):
             members = []
             for port in gear.motors:
-                motor = V5Motor(gear.cartridge, spec=self.params.motor, thermal=self.params.thermal)
+                motor = self._motor(gear.motor_cartridge(port), gear.motor_gear(port))
                 self.power.attach(motor)
                 self.motors[abs(port)] = motor
                 members.append((abs(port), 1 if port > 0 else -1, motor))
@@ -153,7 +154,7 @@ class Robot:
                 0.5 * specs[i].mass_kg * self.wheel_radius[i] ** 2 for i in group.wheels
             )
             group.inertia_kgm2 = (
-                sum(m.reflected_inertia_kgm2 for _, _, m in members)
+                sum(m.reflected_inertia_kgm2 * m.gear**2 for _, _, m in members)
                 + wheel_inertia * group.ratio**2
             )
             self.groups.append(group)
@@ -162,7 +163,7 @@ class Robot:
         for name, mech in config.mechanisms.items():
             members = []
             for port in mech.motors:
-                motor = V5Motor(mech.cartridge, spec=self.params.motor, thermal=self.params.thermal)
+                motor = self._motor(mech.motor_cartridge(port), mech.motor_gear(port))
                 self.power.attach(motor)
                 self.motors[abs(port)] = motor
                 members.append((abs(port), 1 if port > 0 else -1, motor))
@@ -224,6 +225,15 @@ class Robot:
         self._compiled: Any = None
 
     # --- construction helpers ---------------------------------------------------------
+
+    def _motor(self, cartridge: str, gear: float) -> V5Motor:
+        """A motor with this cartridge (or "5.5w"), geared to its group or mechanism so."""
+        params = self.params
+        motor = V5Motor(
+            cartridge, spec=params.motor_spec(cartridge), thermal=params.thermal_spec(cartridge)
+        )
+        motor.gear = gear
+        return motor
 
     def _build_contact_matrix(self, n: int) -> np.ndarray:
         rows = np.zeros((CHANNELS * len(self.wheel_names), n))
@@ -336,7 +346,8 @@ class Robot:
         for group in self.groups:
             speed = qdot[group.index]
             for _, sign, motor in group.motors:
-                forces[group.index] += sign * motor.update(sign * speed, dt)
+                g = sign * motor.gear  # 1 or -1, or a 5.5W motor's share among faster ones
+                forces[group.index] += g * motor.update(g * speed, dt)
         for mechanism in self.mechanisms.values():
             mechanism.advance(dt)
 

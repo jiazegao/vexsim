@@ -98,7 +98,7 @@ SharedMotor = _view(
         "_velocity_est": M["velocity_est"], "_accel_est": M["accel_est"],
         "_current_limit": M["current_limit"], "supply_current_cap": M["supply_current_cap"],
     },
-    watched=("spec", "core", "thermal", "supply", "ratio", "rated_speed"),
+    watched=("spec", "core", "thermal", "supply", "ratio", "rated_speed", "gear"),
     current_limited=_flag(M["current_limited"]),
     _mode=_choice(M["mode"], ControlMode),
     _brake_mode=_choice(M["brake_mode"], BrakeMode),

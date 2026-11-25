@@ -9,7 +9,9 @@ with ``J`` the motors' rotor inertia plus the load's, ``G`` the output speed
 over the motor speed, ``load`` a constant torque at the output (a lift's
 weight) and Coulomb friction. Friction is applied implicitly (exact stiction,
 no chatter at the 1 ms step). Hard stops end the travel inelastically: the
-output stops dead, and motors pushing into the stop stall there.
+output stops dead, and motors pushing into the stop stall there. A 5.5W motor
+among an 11W cartridge's motors turns at its own speed for the shaft's
+(``V5Motor.gear``), and gives its torque so.
 
 A mechanism doesn't push the chassis (its mass is part of the body's). Its
 motors draw from the battery with the rest.
@@ -30,7 +32,7 @@ class Mechanism:
         self.ratio = config.speed_ratio  # output speed / motor shaft speed
         self.motors = motors  # (port, mount sign, motor)
         self.inertia = (
-            sum(m.reflected_inertia_kgm2 for _, _, m in motors)
+            sum(m.reflected_inertia_kgm2 * m.gear**2 for _, _, m in motors)
             + config.inertia_kgm2 * self.ratio**2
         )
         self.load = config.load_torque_nm * self.ratio  # at the motor shaft
@@ -53,7 +55,10 @@ class Mechanism:
 
     def advance(self, dt: float) -> None:
         w = self.speed
-        torque = sum(sign * motor.update(sign * w, dt) for _, sign, motor in self.motors)
+        torque = sum(
+            sign * motor.gear * motor.update(sign * motor.gear * w, dt)
+            for _, sign, motor in self.motors
+        )
         w_free = w + dt * (torque - self.load) / self.inertia
         grip = dt * self.friction / self.inertia  # the most friction can change the speed
         w = 0.0 if abs(w_free) <= grip else w_free - math.copysign(grip, w_free)
@@ -64,4 +69,4 @@ class Mechanism:
             angle, w = self.low, max(w, 0.0)
         self.angle, self.speed = angle, w
         for _, sign, motor in self.motors:  # the encoders follow the output, stops included
-            motor.position = sign * angle
+            motor.position = sign * motor.gear * angle

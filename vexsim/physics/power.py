@@ -72,7 +72,8 @@ class PowerSystem:
 
     @property
     def per_motor_current_cap(self) -> float:
-        n = len(self.motors)
+        # VEXos (1.1.3 on) counts a 5.5W motor as half an 11W one here
+        n = sum(getattr(m, "rated_power_w", 11.0) / 11.0 for m in self.motors)
         if n <= self.full_current_motor_count:
             return float("inf")
         return self.current_budget_a / n

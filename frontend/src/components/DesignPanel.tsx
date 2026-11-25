@@ -45,7 +45,7 @@ const DRIVE_TYPES: readonly (readonly [RobotConfig["drivetrain"]["type"], string
 ];
 const WHEEL_TYPES: readonly WheelConfig["type"][] = ["omni", "traction", "mecanum"];
 const SIDES: readonly string[] = ["left", "right"]; // a tank drive's or an H-drive's motor groups
-const CARTRIDGES = ["red", "green", "blue"] as const;
+const CARTRIDGES = ["red", "green", "blue", "5.5w"] as const;
 const NOISE = ["ideal", "default", "harsh"] as const;
 const SENSOR_TYPES: readonly (readonly [SensorType, string])[] = [
   ["imu", "IMU"],

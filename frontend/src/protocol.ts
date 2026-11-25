@@ -914,15 +914,17 @@ export interface WheelConfig {
 
 export interface GearGroupConfig {
   motors: number[];
-  cartridge: "red" | "green" | "blue";
+  cartridge: "red" | "green" | "blue" | "5.5w";
+  motors_5_5w?: number[];
   ratio?: string | number;
   wheels: string[];
 }
 
-/** Motors that drive something other than the wheels: a lift, an intake, an arm. The mechanism is one rotating output (a lift's spool, a roller, an arm's pivot) geared to its motors. Load values are at that output; positions are output degrees from where it starts, positive in its motors' positive direction (a negative port is reversed, as in the drive's gearing groups). */
+/** Motors that drive something other than the wheels: a lift, an intake, an arm. The mechanism is one rotating output (a lift's spool, a roller, an arm's pivot) geared to its motors. Load values are at that output; positions are output degrees from where it starts, positive in its motors' positive direction (a negative port is reversed, as in the drive's gearing groups). `ratio` gears its cartridge's motors; 5.5W motors among them (`motors_5_5w`) are geared to turn it as fast at their 200 rpm as those do at their rated speed. */
 export interface MechanismConfig {
   motors: number[];
-  cartridge: "red" | "green" | "blue";
+  cartridge: "red" | "green" | "blue" | "5.5w";
+  motors_5_5w?: number[];
   ratio?: string | number;
   inertia_kgm2?: number;
   load_torque_nm?: number;

@@ -75,6 +75,50 @@ torque_out  = G * torque_core,   w_core = G * w_out,   G = 36 / 18 / 6 (red / gr
   - `BRAKE`: windings shorted, so back-EMF brakes the motor, with a time constant of about 0.13 s at typical loads.
   - `HOLD`: closed-loop hold of the stopped position.
 
+## V5 Smart Motor (5.5W): the same model, its own numbers
+![Simulated torque, current and power vs. speed, the 5.5W motor](img/motor_curves_5_5w.png)
+
+`vexsim motor-curves --cartridge 5.5w --out docs/img/motor_curves_5_5w.png` regenerates this chart.
+
+The smaller V5 motor (VEX 276-4842): half the 11W motor's power, and a fixed 200 rpm output. It takes no cartridges, and the firmware treats it as a green one (18:1, 900 ticks a turn). Configs write it as `cartridge: 5.5w`, or name the 5.5W motors among an 11W cartridge's in `motors_5_5w` ([conventions.md](conventions.md#robot-config-semantics)).
+
+**What's known of it, against the 11W motor** (phase 17's research, [PLAN.md section 19](../PLAN.md#19-the-55-w-motor-phase-17), 2026-11-25):
+
+| | 11W | 5.5W |
+|---|---|---|
+| Output | 100, 200 or 600 rpm, by cartridge | 200 rpm, fixed ([VEX][p55], [SIGBots wiki][sig]) |
+| Power | 11 W continuous; VEX's curve peaks at 11.4 W | 5.5 W continuous; VEX's curve peaks at 6 W near 130 rpm ([KB][kb55]); measured, 5.0 W ([forum][test55]) |
+| Torque | 2.1 N·m at stall (red) | 0.5 N·m ([KB][kb55]); VEX's curve: 0.52, flat to 106 rpm, then straight down to 0.2 at 200 rpm; measured, 0.47 at most ([forum][test55]) |
+| Current | limited to 2.5 A | the same 2.5 A ([KB][kb55]); "the brain sees no difference" (James Pearman, VEX, [forum][first55]) |
+| Voltage | the battery's | held to about 8 V: it was made for VEX EXP's 7.2 V battery, so any command from 8 to 12 V gives the same free speed (VEX staff, [forum][pros55]; vexide's `EXP_MAX_VOLTAGE = 8.0`) |
+| Free speed under voltage commands | 121% of rated at 12.8 V (red, the fit above) | about 150% of rated, and its power peaks near 190 rpm, not VEX's 125 ([forum][curves55], measured 2025) |
+| Weight | 155 g | 114 g |
+
+**Calibration targets** (output side, at its 8 V drive):
+
+| Quantity | Value | Source |
+|---|---|---|
+| Natural free speed | 300 rpm | 150% of rated, measured ([forum][curves55]) |
+| Natural stall torque | 0.637 N·m | so that it peaks at 5.0 W (measured), at 150 rpm |
+| Natural stall current | 3.433 A | so that the 2.5 A limit gives 0.47 N·m (measured) |
+| Most voltage on its windings | 8 V | VEX staff on the forum; vexide |
+| No-load current, Coulomb share | 0.15 A, 30% | as the 11W motor's (estimates) |
+| Rotor inertia (core) | 1.0e-6 kg·m² | half the 11W motor's (estimate) |
+| Current limit, control loops | as the 11W motor's | VEX / estimates |
+
+**What it gives** (checked in `tests/test_motor_5_5w.py`): 0.47 N·m at stall and 2.5 A; 5.0 W at 150 rpm; under `move_velocity`, 200 rpm with 0.21 N·m left there (VEX's curve: 0.2); free at 300 rpm under any voltage command from 8 to 12 V, and at 224 rpm under 6 V.
+
+**Not matched:** the measured power peak near 190 rpm. A DC motor's line peaks at half its free speed, and the model doesn't bend it; between 150 and 200 rpm it's within a tenth of the measured power.
+
+**Its heat** (`thermal_5_5w`): nothing published, so the 11W motor's heat capacities scaled by its weight (114/155) and its heat paths by its smaller surface (×1.23): **estimates**. At its current limit it warms a little faster than an 11W motor.
+
+**Among 11W motors.** A 5.5W motor named in a group's or mechanism's `motors_5_5w` is geared to turn it as fast at its 200 rpm as the cartridge's motors turn it at theirs: in a blue 36:48 drive, 2.25:1 up, to the same 450 rpm at the wheels, at a third of the blue motors' speed. That's how a team gears one so it doesn't fight the others; a config can't say another gearing. What follows from it (`tests/test_motor_5_5w.py`):
+- A 6-motor blue drive with one 5.5W motor a side has 0.81 of the torque of an all-11W one at a standstill.
+- Under velocity commands, both kinds hold their rated speeds (600 and 200 rpm), so the wheels' 450 rpm.
+- Under voltage commands (LemLib's `move`), the 5.5W motor, free at 150% of its rated speed, runs the blue motors (113% at 12 V) a little past their free speed: lifted, the drive spins at 705 rpm at the blue motors, against 680 without it, the blue motors held back a little and the 5.5W motor carrying the load. That's the "fighting" teams report heating their 5.5W motors.
+
+Overrides: `motor_5_5w.*` and `thermal_5_5w.*`, as `motor.*` and `thermal.*` are the 11W motor's.
+
 ## Thermal model and derating: `vexsim/physics/thermal.py`
 The model has two nodes:
 - **Winding:** I²R heat enters here (heat capacity 12 J/K).
@@ -104,7 +148,7 @@ State of charge is tracked by counting charge, and the sim never charges the bat
 
 ## Power distribution: `vexsim/physics/power.py`
 - **Bus voltage:** the battery's terminal voltage under the total draw, plus the brain's 0.3 A (**estimate**). Motors see the previous step's bus voltage. That 1 ms lag stands in for bus capacitance and avoids an algebraic loop.
-- **Current sharing:** with more than 8 motors plugged in, each motor's current limit becomes 20 A ÷ N. Community-reported ([VEX Forum][share]), not official.
+- **Current sharing:** with more than 8 motors plugged in, each motor's current limit becomes 20 A ÷ N. Community-reported ([VEX Forum][share]), not official. A 5.5W motor counts as half of one, as VEXos 1.1.3 counts it ([forum][vexos113]).
 - **Regeneration:** a motor generating power can feed other motors on the bus, but never charges the battery.
 
 ## Wheel contact: `vexsim/physics/wheel.py`
@@ -217,7 +261,7 @@ Lifts, intakes and arms: motors that drive something other than the wheels (`mec
 
     J dw/dt = sum of motor torques - G * (load + friction)
 
-- `J` is the motors' rotor inertia plus the load's (`inertia_kgm2`, at the output), and `G` the output speed over the motor speed (`ratio`).
+- `J` is the motors' rotor inertia plus the load's (`inertia_kgm2`, at the output), and `G` the output speed over the motor speed (`ratio`). A 5.5W motor among an 11W cartridge's motors turns at its own speed for the shaft's (2 among red ones, 1/3 among blue), so its inertia counts by that squared, its torque by that once, and its encoder reads its own shaft.
 - `load_torque_nm` is a constant torque pulling the output toward negative angles, such as a lift's weight times its spool radius. It is constant, so an arm whose gravity torque changes with angle is approximated by its average.
 - `friction_nm` is Coulomb friction at the output, applied implicitly: a load lighter than the friction stays put, without creeping or chattering at the 1 ms step.
 - **Hard stops** (`range_deg`, output degrees from the starting position) end the travel inelastically. A motor pushing into a stop stalls there at its current limit, which is what code that homes a mechanism by driving into a stop relies on. The motors' encoders follow the output, stops included.
@@ -391,6 +435,14 @@ A calibration session ([calibration.md](calibration.md#a-calibration-session-the
 12. **Wall bounce (`field.wall_restitution`).** Film the robot coasting into a wall at a known speed, then measure the rebound speed from the video.
 
 [fit]: https://www.vexforum.com/t/v5-smart-motor-estimating-performance-parameters/135200
+[kb55]: https://kb.vex.com/hc/en-us/articles/10002101702932-Understanding-V5-Smart-Motor-5-5W-Performance
+[p55]: https://www.vexrobotics.com/276-4842.html
+[sig]: https://wiki.purduesigbots.com/vex-electronics/vex-electronics/motors
+[first55]: https://www.vexforum.com/t/first-look-at-vex-5-5w-v5-smart-motors/89682
+[curves55]: https://www.vexforum.com/t/11w-5-5w-v5-motor-torque-speed-curves-based-on-real-world-data/145625
+[test55]: https://www.vexforum.com/t/testing-v5-motor-performance/122610
+[pros55]: https://www.vexforum.com/t/defining-pros-small-motor/117654
+[vexos113]: https://www.vexforum.com/t/vexos-version-1-1-3-for-v5-issues/122428
 [kb]: https://kb.vex.com/hc/en-us/articles/360044325872-Understanding-V5-Smart-Motor-Performance
 [derate]: https://www.vexforum.com/t/v5-overheating-threshold/64984
 [share]: https://www.vexforum.com/t/10-motor-current-limiting-question/113733

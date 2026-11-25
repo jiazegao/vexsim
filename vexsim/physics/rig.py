@@ -144,7 +144,8 @@ def torque_speed_curve(
 
     ``command="velocity"`` asks for full rated speed (move_velocity at max) and
     is swept up to rated speed. ``command="voltage"`` applies +12 V
-    (move_voltage(12000)) and is swept up to its natural free speed.
+    (move_voltage(12000)) and is swept up to its natural free speed: at the 12 V, or at the
+    most its drive gives (a 5.5W motor's 8 V).
     """
     if command not in ("velocity", "voltage"):
         raise ValueError("command must be 'velocity' or 'voltage'")
@@ -152,7 +153,7 @@ def torque_speed_curve(
     if command == "velocity":
         top = probe.rated_speed
     else:
-        volts = min(probe.spec.max_command_v, supply_voltage)
+        volts = min(probe.spec.max_command_v, supply_voltage, probe.spec.max_drive_v)
         top = free_speed(probe, volts)
     speeds = np.linspace(0.0, top, points)
     rows = []

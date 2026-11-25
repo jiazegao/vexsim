@@ -44,6 +44,17 @@ class ThermalSpec:
             raise ValueError("derate_start_c must be above ambient_c")
 
 
+@dataclass(frozen=True)
+class Thermal55Spec(ThermalSpec):
+    """The 5.5W motor's: nothing published, so the 11W motor's heat capacities scaled by its
+    weight (114 g against 155) and its heat paths by its smaller surface (x1.23): estimates."""
+
+    winding_heat_capacity_j_per_k: float = 8.8
+    housing_heat_capacity_j_per_k: float = 36.8
+    winding_to_housing_k_per_w: float = 1.84
+    housing_to_ambient_k_per_w: float = 4.91
+
+
 class MotorThermal:
     def __init__(self, spec: ThermalSpec | None = None, initial_c: float | None = None):
         self.spec = spec or ThermalSpec()

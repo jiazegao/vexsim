@@ -86,8 +86,9 @@ def plot(curves: list[TorqueSpeedCurve], path: str | Path) -> Path:
     )
     axes[0].legend(frameon=False, loc="upper right")
     axes[-1].set_xlabel("Shaft speed (rpm)")
+    motor = "V5 5.5W motor" if cartridge == "5.5w" else f"V5 11W motor, {cartridge} cartridge"
     fig.suptitle(
-        f"V5 11W motor, {cartridge} cartridge, {volts:g} V supply (simulated dynamometer)",
+        f"{motor}, {volts:g} V supply (simulated dynamometer)",
         color=TEXT_PRIMARY,
         fontsize=11,
     )

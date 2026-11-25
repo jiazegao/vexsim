@@ -74,6 +74,15 @@ mechanisms:
 - Angles are output degrees from where the mechanism starts. `range_deg: [low, high]` are its hard stops, so `low <= 0 <= high`. A lift that starts at the bottom has `low: 0`.
 - `inertia_kgm2`, `load_torque_nm` (pulls toward negative angles) and `friction_nm` are at the output. All default to 0.
 
+**5.5 W motors.** `cartridge: 5.5w` makes every motor of a gearing group or a mechanism a 5.5 W motor, geared by `ratio` from its fixed 200 rpm. A group or mechanism of 11 W motors names the 5.5 W ones among its `motors` in `motors_5_5w` (by port; the sign doesn't matter there): those are geared to turn it as fast at their 200 rpm as the cartridge's motors turn it at their rated speed, so `ratio` stays the 11 W motors' gearing.
+```yaml
+gearing:
+  left: {motors: [-15, -14, -13], cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb],
+         motors_5_5w: [-13]}   # 13 is a 5.5 W motor, geared 2.25:1 up to the same 450 rpm
+mechanisms:
+  claw: {motors: [18], cartridge: 5.5w}
+```
+
 **Validation**
 - Typos in keys are errors, and the message suggests the closest valid key.
 - Duplicate keys are errors. Plain YAML silently keeps the last one.

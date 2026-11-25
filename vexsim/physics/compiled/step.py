@@ -43,9 +43,9 @@ from vexsim.physics.compiled.views import (
     _release,
 )
 from vexsim.physics.mechanism import Mechanism
-from vexsim.physics.motor import CoreConstants, MotorSpec, V5Motor
+from vexsim.physics.motor import CoreConstants, Motor55Spec, MotorSpec, V5Motor
 from vexsim.physics.power import PowerSystem
-from vexsim.physics.thermal import MotorThermal, ThermalSpec
+from vexsim.physics.thermal import MotorThermal, Thermal55Spec, ThermalSpec
 
 
 class _Arrays(ctypes.Structure):
@@ -99,9 +99,11 @@ def why_not(robot: Any) -> str | None:
                 return f"a {type(motor).__name__} isn't a plain V5Motor"
             if type(motor.thermal) not in (MotorThermal, SharedThermal):
                 return f"a {type(motor.thermal).__name__} isn't a plain MotorThermal"
-            if type(motor.spec) is not MotorSpec or type(motor.core) is not CoreConstants:
+            if type(motor.spec) not in (MotorSpec, Motor55Spec):
                 return "a motor's constants aren't vexsim's own"
-            if type(motor.thermal.spec) is not ThermalSpec:
+            if type(motor.core) is not CoreConstants:
+                return "a motor's constants aren't vexsim's own"
+            if type(motor.thermal.spec) not in (ThermalSpec, Thermal55Spec):
                 return "a motor's thermal constants aren't vexsim's own"
             if motor.supply is not robot.power:
                 return "a motor's supply isn't the robot's"
@@ -221,6 +223,7 @@ class Compiled:
                 self.thermals[i] = thermal
             v[at + M["sign"]] = sign
             v[at + M["dof"]] = place if i < len(self.drive) else -1
+            v[at + M["gear"]] = motor.gear
             v[at + M["ratio"]], v[at + M["rated_speed"]] = motor.ratio, motor.rated_speed
             for name in CORE:
                 v[at + M[name]] = getattr(motor.core, name)

@@ -11,7 +11,7 @@ import math
 from vexsim.config.issues import ConfigIssue, Severity
 from vexsim.config.robot import RobotConfig
 from vexsim.physics.kinematics import DriveKinematics
-from vexsim.v5 import MOTOR_11W_POWER_W, MOTOR_POWER_BUDGET_W, STARTING_SIZE_LIMIT_IN
+from vexsim.v5 import MOTOR_POWER_BUDGET_W, STARTING_SIZE_LIMIT_IN
 
 _EPS = 1e-9
 PLAUSIBLE_MASS_KG = (2.0, 15.0)
@@ -254,13 +254,14 @@ def check_robot(cfg: RobotConfig) -> list[ConfigIssue]:
                 "the wheels; the robot would tip over",
             )
 
-    # Motor budget
+    # Motor budget: the drive's motors, each by its power (11W, or a 5.5W motor's)
     n_motors = sum(len(g.motors) for g in dt.gearing.values())
-    if n_motors * MOTOR_11W_POWER_W > MOTOR_POWER_BUDGET_W + _EPS:
+    drive_w = sum(g.power_w for g in dt.gearing.values())
+    if drive_w > MOTOR_POWER_BUDGET_W + _EPS:
         add(
             "warning",
             "drivetrain.gearing",
-            f"{n_motors} drive motors ({n_motors * MOTOR_11W_POWER_W:g} W) exceed the usual "
+            f"{n_motors} drive motors ({drive_w:g} W) exceed the usual "
             f"{MOTOR_POWER_BUDGET_W:g} W V5RC motor budget; check this season's game manual",
         )
 

@@ -37,18 +37,18 @@ MOTOR: tuple[str, ...] = (
     "mode", "brake_mode", "voltage_cmd", "velocity_cmd", "position_cmd", "max_speed",
     "hold_target", "integral_v", "velocity_est", "accel_est", "current_limit",
     "supply_current_cap", "winding_c", "housing_c",
-    "sign", "dof",
+    "sign", "dof", "gear",
     "ratio", "rated_speed",
     "resistance_ohm", "kt", "ke", "coulomb_nm", "viscous_nm_s", "smoothing_rad_s",
     "velocity_kp", "velocity_ki", "velocity_filter_s", "integral_gate", "position_kp",
-    "voltage_cap",
+    "voltage_cap", "max_drive_v",
     "ambient_c", "winding_heat_capacity_j_per_k", "housing_heat_capacity_j_per_k",
     "winding_to_housing_k_per_w", "housing_to_ambient_k_per_w", "derate_start_c",
     "derate_step_c",
 )  # fmt: skip
 CORE = ("resistance_ohm", "kt", "ke", "coulomb_nm", "viscous_nm_s", "smoothing_rad_s")
 SPEC = ("velocity_kp", "velocity_ki", "velocity_filter_s", "integral_gate", "position_kp",
-        "voltage_cap")  # fmt: skip
+        "voltage_cap", "max_drive_v")  # fmt: skip
 THERMAL = MOTOR[MOTOR.index("ambient_c") :]
 
 MECHANISM: tuple[str, ...] = (

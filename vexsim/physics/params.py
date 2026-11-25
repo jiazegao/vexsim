@@ -3,7 +3,8 @@
 A key ``<group>.<name>`` replaces one scalar field of that group's spec
 dataclass, e.g. ``motor.free_current_a: 0.2``, ``battery.internal_resistance_ohm: 0.15``,
 ``wheel.omni.lateral_mu: 0.08`` or ``field.wall_restitution: 0.1``. Sensor keys
-(``sensor.imu.scale_error``) apply on top of each sensor's noise preset.
+(``sensor.imu.scale_error``) apply on top of each sensor's noise preset. ``motor`` and
+``thermal`` are the 11W motor's; ``motor_5_5w`` and ``thermal_5_5w`` the 5.5W motor's.
 """
 
 from __future__ import annotations
@@ -18,13 +19,15 @@ from vexsim.devices.specs import SPEC_TYPES
 from vexsim.physics.battery import BatterySpec
 from vexsim.physics.chassis import ChassisSpec
 from vexsim.physics.field import FieldSpec
-from vexsim.physics.motor import MotorSpec
-from vexsim.physics.thermal import ThermalSpec
+from vexsim.physics.motor import Motor55Spec, MotorSpec
+from vexsim.physics.thermal import Thermal55Spec, ThermalSpec
 from vexsim.physics.wheel import MecanumWheelSpec, OmniWheelSpec, TractionWheelSpec, WheelSpec
 
 PARAM_GROUPS: dict[str, type] = {
     "motor": MotorSpec,
     "thermal": ThermalSpec,
+    "motor_5_5w": Motor55Spec,
+    "thermal_5_5w": Thermal55Spec,
     "battery": BatterySpec,
     "chassis": ChassisSpec,
     "wheel.omni": OmniWheelSpec,
@@ -76,6 +79,8 @@ def check_overrides(overrides: Mapping[str, Any]) -> list[tuple[str, str, str]]:
 class PhysicsParams:
     motor: MotorSpec
     thermal: ThermalSpec
+    motor_5_5w: Motor55Spec
+    thermal_5_5w: Thermal55Spec
     battery: BatterySpec
     chassis: ChassisSpec
     omni_wheel: OmniWheelSpec
@@ -91,6 +96,13 @@ class PhysicsParams:
             raise KeyError(key)
         return float(getattr(getattr(self, _FIELD_FOR_GROUP[group]), name))
 
+    def motor_spec(self, cartridge: str) -> MotorSpec:
+        """The constants of a motor with this cartridge ("5.5w": the 5.5W motor's)."""
+        return self.motor_5_5w if cartridge == "5.5w" else self.motor
+
+    def thermal_spec(self, cartridge: str) -> ThermalSpec:
+        return self.thermal_5_5w if cartridge == "5.5w" else self.thermal
+
     def wheel(self, wheel_type: str) -> WheelSpec:
         specs = {
             "omni": self.omni_wheel,
@@ -103,6 +115,8 @@ class PhysicsParams:
 _FIELD_FOR_GROUP = {
     "motor": "motor",
     "thermal": "thermal",
+    "motor_5_5w": "motor_5_5w",
+    "thermal_5_5w": "thermal_5_5w",
     "battery": "battery",
     "chassis": "chassis",
     "wheel.omni": "omni_wheel",

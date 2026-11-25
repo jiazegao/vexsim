@@ -290,7 +290,8 @@ body:
 
 **Gearing groups** tie motors to wheels; all wheels in a group turn together.
 - `motors`: smart ports. A **negative port means reversed**, as in PROS 4, and a group's positive direction always rolls its wheels forward.
-- `cartridge`: `red` (100 rpm), `green` (200) or `blue` (600).
+- `cartridge`: `red` (100 rpm), `green` (200) or `blue` (600), for the 11 W motor; or `5.5w` for the 5.5 W motor, which has no cartridge (a fixed 200 rpm, half the power, [models.md](docs/models.md#v5-smart-motor-55w-the-same-model-its-own-numbers)).
+- `motors_5_5w` (optional): the 5.5 W motors among an 11 W cartridge's `motors`, by port, as in a drive that mixes them. They're geared to turn the wheels as fast at their 200 rpm as the cartridge's motors do at theirs: in a blue 36:48 group, 2.25:1 up, to the same 450 rpm.
 - `ratio`: wheel speed / motor speed. `"36:48"` means 36 teeth on the motor side driving 48 on the wheel side (0.75×). A bare number works too. Write it quoted or not: vexsim reads `36:48` as text, where plain YAML would read the number 2208.
 
 | `type` | Gearing groups | Checks |
@@ -307,7 +308,7 @@ Motors that drive something other than the wheels. Each mechanism is one output 
 
 | Key | Meaning (all at the output) |
 |---|---|
-| `motors`, `cartridge` | as for gearing groups; positive is the motors' positive direction |
+| `motors`, `cartridge`, `motors_5_5w` | as for gearing groups; positive is the motors' positive direction |
 | `ratio` | output speed / motor speed: `"12:48"` is a 4:1 reduction (default 1) |
 | `inertia_kgm2` | the load's inertia (the motors' own is added) |
 | `load_torque_nm` | a constant torque pulling toward negative angles: a lift's weight times its spool radius |
@@ -335,6 +336,8 @@ Odometry offsets are measured from the footprint center: a vertical wheel by its
 |---|---|
 | `motor` | `reference_voltage_v` 12.8, `natural_free_rpm` 121, `natural_stall_torque_nm` 3.99, `natural_stall_current_a` 4.69, `free_current_a` 0.15, `coulomb_fraction` 0.3, `current_limit_a` 2.5, `max_command_v` 12, `rotor_inertia_kgm2` 2e-6, `friction_smoothing_rad_s` 2, `velocity_kp` 2, `velocity_ki` 20, `velocity_filter_s` 0.002, `integral_gate` 0.25, `position_kp` 15 (output values are the red cartridge's) |
 | `thermal` | `ambient_c` 25, `winding_heat_capacity_j_per_k` 12, `housing_heat_capacity_j_per_k` 50, `winding_to_housing_k_per_w` 1.5, `housing_to_ambient_k_per_w` 4, `derate_start_c` 55, `derate_step_c` 5 |
+| `motor_5_5w` | the 5.5 W motor's: as `motor`'s but `reference_voltage_v` 8, `natural_free_rpm` 300, `natural_stall_torque_nm` 0.637, `natural_stall_current_a` 3.433, `rotor_inertia_kgm2` 1e-6, `max_drive_v` 8 (output values at its 200 rpm). `max_drive_v` is the most voltage a motor puts on its windings; the 11 W motor's is the battery's (`.inf`) |
+| `thermal_5_5w` | the 5.5 W motor's: as `thermal`'s but `winding_heat_capacity_j_per_k` 8.8, `housing_heat_capacity_j_per_k` 36.8, `winding_to_housing_k_per_w` 1.84, `housing_to_ambient_k_per_w` 4.91 |
 | `battery` | `capacity_mah` 1100, `internal_resistance_ohm` 0.1 |
 | `chassis` | `wheel_stiffness_n_per_m` 20000, `gravity_m_s2` 9.81 |
 | `wheel.omni` | `longitudinal_mu` 0.9, `slip_velocity_m_s` 0.03, `lateral_mu` 0.2 (**controls drift**), `lateral_velocity_m_s` 0.02, `rolling_resistance` 0.1, `rolling_velocity_m_s` 0.02, `mass_kg` 0.06 |
@@ -1046,7 +1049,7 @@ These three are also the browser app's *Analyze* page ([section 7](#7-the-browse
 vexsim motor-curves --cartridge red --out red.png      # torque, current, power vs. speed
 vexsim motor-curves --cartridge blue --csv             # the data as CSV
 ```
-Options: `--cartridge red|green|blue`, `--supply-voltage` (default 12.8), `--points` (default 61).
+Options: `--cartridge red|green|blue|5.5w` (`5.5w`: the 5.5 W motor), `--supply-voltage` (default 12.8), `--points` (default 61).
 
 ![Simulated V5 motor curves, red cartridge](docs/img/motor_curves_red.png)
 
@@ -1399,7 +1402,7 @@ vexsim/
 | `cli/` | Every `vexsim` command: parses arguments, loads configs, wires the pieces below together, and prints results. A module a group of commands, each with its part of the parser: `analysis` (validate-config, motor-curves, drift, odometry), `running` (run, plot, replay), `projects` (build, doctor, routines, route), `bench`, `calibration` (calibration, logger), `calibrate` (calibrate, calibration-routine) and `app` (ui, shortcut, vscode). `parser.py` puts the parser together (`build_parser`) and has `main(argv)`, which returns the exit code; both are imported from `vexsim.cli`. |
 | `__main__.py` | Makes `python -m vexsim` work. |
 | `units.py` | Conversions between VEX units and SI (`in_to_m`, `rpm_to_rad_s`, `mv_to_v`, ...). The simulator computes in SI and converts only at its boundaries. |
-| `v5.py` | V5 constants: 21 smart ports, cartridge speeds (100/200/600 rpm), ±12000 mV, 11 W per motor, the 88 W motor budget, the 18 in starting size. |
+| `v5.py` | V5 constants: 21 smart ports, cartridge speeds (100/200/600 rpm, and the 5.5 W motor's 200), ±12000 mV, 11 W and 5.5 W per motor, the 88 W motor budget, the 18 in starting size. |
 | `geometry.py` | Robot shapes: `Outline`, the union of rectangles, circles and polygons. Its outside edge exactly (segments and arcs, holes included), inside tests, signed distances, the contacts of discs (`discs`: a circle in a notch touches both sides), how far it reaches, bounds, area and moments (Green's theorem), overlap with a convex polygon, and loops to draw. `polygon_problem` says what's wrong with an outline. |
 | `mcllog.py` | MCL logs as 1239E's code writes them: `parse` reads the updates (each sensor's reading and ray, the particles, the time, the estimate and its spread), `MclLog` gives a log's path to follow, its summary, and each update as drawings. |
 | `workers.py` | `process_pool`: worker processes for the benchmark, the calibration fit and sweeps, each of which exits when the process that made the pool ends (a cancelled job's workers don't go on simulating for nobody). |
@@ -1580,6 +1583,7 @@ This is a summary; [docs/models.md](docs/models.md) gives every parameter's sour
 
 ### Motor
 - Modeled at the motor core: `I = (V − ke·ω)/R`, clamped to the current limit; torque `kt·I` minus Coulomb and viscous friction; the cartridge multiplies torque by 36, 18 or 6 (red, green, blue). Fitted to VEX's published curve: about 2.1 N·m stall at the 2.5 A limit (red), rated speed held up to about a third of stall torque, about 12.7 W peak.
+- The 5.5 W motor is the same model with its own numbers, fitted to what's been measured of it: 0.47 N·m at the 2.5 A limit, 5.0 W at its peak, 200 rpm under velocity commands, 300 rpm free under voltage commands, its drive held to 8 V ([models.md](docs/models.md#v5-smart-motor-55w-the-same-model-its-own-numbers)).
 - **Firmware:** `move_velocity` is capped at rated speed and runs a feedforward plus PI loop that can use the full battery voltage, so it holds speed under load. `move_voltage` isn't speed-capped (12 V spins about 13% past rated). Position mode and `HOLD` add a position loop. A zero command stops with the brake mode: `COAST` (windings open), `BRAKE` (shorted: back-EMF braking) or `HOLD`.
 - **Heat:** I²R heats a winding node that leaks to the housing, where the temperature sensor is. Above about 55 °C the firmware cuts current to 1/2, 1/4, 1/8, then 0. A stalled motor reaches the first step after about 160 s.
 

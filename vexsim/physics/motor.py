@@ -1,4 +1,4 @@
-"""V5 Smart Motor (11W) model.
+"""V5 Smart Motor models: the 11W motor, and the 5.5W one.
 
 Electrical model at the motor core (before the gear cartridge). Winding
 inductance is neglected; its time constant is far below the 1 ms step.
@@ -17,6 +17,10 @@ published curve: rated speed is held up to about a third of stall torque,
 2.1 N*m at the current limit (red cartridge), and roughly 12.7 W peak power.
 Parameter sources and which values are estimates: docs/models.md.
 
+The 5.5W motor (``cartridge "5.5w"``) is the same model with its own numbers
+(``Motor55Spec``): a fixed 200 rpm output, the same 2.5 A limit, and a drive
+held to 8 V whatever the battery, as VEX made it for its EXP system's battery.
+
 All quantities are SI and refer to the output shaft unless named *_core.
 """
 
@@ -25,19 +29,24 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar
 
 from vexsim.physics.power import IdealSupply, Supply
-from vexsim.physics.thermal import MotorThermal, ThermalSpec
+from vexsim.physics.thermal import MotorThermal, Thermal55Spec, ThermalSpec
 from vexsim.units import rpm_to_rad_s
 from vexsim.v5 import CARTRIDGE_FREE_RPM
 
-CARTRIDGE_RATIO = {"red": 36, "green": 18, "blue": 6}
-_REFERENCE_RATIO = CARTRIDGE_RATIO["red"]  # the spec's output-side numbers are for red
+# The core's turns per output turn. The 5.5W motor has no cartridge: its fixed gearing gives
+# 200 rpm, and the firmware treats it as green's (18:1, 900 ticks a turn).
+CARTRIDGE_RATIO = {"red": 36, "green": 18, "blue": 6, "5.5w": 18}
 
 
 @dataclass(frozen=True)
 class MotorSpec:
     """Characteristics of the V5 11W motor. Output-side values are for the red cartridge."""
+
+    reference_ratio: ClassVar[int] = 36  # the output its output-side values are at (red's)
+    group: ClassVar[str] = "motor"  # its overrides' group
 
     reference_voltage_v: float = 12.8  # V5 battery nominal; the curve fit assumes it
     natural_free_rpm: float = 121.0  # uncapped free speed at reference voltage (fit)
@@ -57,21 +66,48 @@ class MotorSpec:
     # Voltage commands held to this fraction of the rated speed, as a firmware that caps
     # them would (0: not capped). A free spin at 12 V tells: capped motors stop at rated speed.
     voltage_cap: float = 0.0
+    # The most voltage the motor puts on its windings, whatever the battery gives and the
+    # command asks (inf: the battery's)
+    max_drive_v: float = math.inf
 
     def __post_init__(self) -> None:
+        group = self.group
         for name, value in vars(self).items():
-            if name in ("coulomb_fraction", "voltage_cap"):
+            if name in ("coulomb_fraction", "voltage_cap", "max_drive_v"):
                 continue
             if not (math.isfinite(value) and value > 0):
-                raise ValueError(f"motor.{name} must be positive, got {value}")
+                raise ValueError(f"{group}.{name} must be positive, got {value}")
         if not 0.0 <= self.coulomb_fraction <= 1.0:
-            raise ValueError("motor.coulomb_fraction must be in [0, 1]")
+            raise ValueError(f"{group}.coulomb_fraction must be in [0, 1]")
         if self.free_current_a >= self.natural_stall_current_a:
-            raise ValueError("motor.free_current_a must be below natural_stall_current_a")
+            raise ValueError(f"{group}.free_current_a must be below natural_stall_current_a")
         if self.current_limit_a > self.natural_stall_current_a:
-            raise ValueError("motor.current_limit_a cannot exceed natural_stall_current_a")
+            raise ValueError(f"{group}.current_limit_a cannot exceed natural_stall_current_a")
         if not (math.isfinite(self.voltage_cap) and self.voltage_cap >= 0):
-            raise ValueError("motor.voltage_cap must be 0 (no cap) or more")
+            raise ValueError(f"{group}.voltage_cap must be 0 (no cap) or more")
+        if not (self.max_drive_v > 0) or math.isnan(self.max_drive_v):
+            raise ValueError(f"{group}.max_drive_v must be positive (inf: the battery's)")
+
+
+@dataclass(frozen=True)
+class Motor55Spec(MotorSpec):
+    """Characteristics of the V5 5.5W motor. Output-side values are at its fixed 200 rpm.
+
+    Fitted to what's been measured of it, and to VEX's curve where nothing has (sources in
+    docs/models.md): voltage commands spin it free at about 150% of its rated speed; it
+    peaks at 5.0 W; it holds 0.47 N*m at the 2.5 A limit. Its drive is held to 8 V: it was
+    made for VEX EXP's 7.2 V battery, so any command from 8 to 12 V gives the same.
+    """
+
+    reference_ratio: ClassVar[int] = 18  # its fixed gearing, as the firmware has it (green's)
+    group: ClassVar[str] = "motor_5_5w"
+
+    reference_voltage_v: float = 8.0  # its drive's limit: the fit is at full drive
+    natural_free_rpm: float = 300.0  # 150% of rated (measured)
+    natural_stall_torque_nm: float = 0.637  # so that it peaks at 5.0 W (measured)
+    natural_stall_current_a: float = 3.433  # so that 2.5 A gives 0.47 N*m (measured)
+    rotor_inertia_kgm2: float = 1.0e-6  # half the 11W motor's (estimate)
+    max_drive_v: float = 8.0
 
 
 @dataclass(frozen=True)
@@ -91,8 +127,8 @@ class CoreConstants:
         # Natural line at the reference voltage, referred to the core:
         #   stall: kt*I_s - coulomb = T_s,  I_s = V/R
         #   free:  kt*I_f = coulomb + viscous*w_f,  I_f = (V - ke*w_f)/R
-        stall_torque = spec.natural_stall_torque_nm / _REFERENCE_RATIO
-        free_speed = rpm_to_rad_s(spec.natural_free_rpm) * _REFERENCE_RATIO
+        stall_torque = spec.natural_stall_torque_nm / spec.reference_ratio
+        free_speed = rpm_to_rad_s(spec.natural_free_rpm) * spec.reference_ratio
         stall_current = spec.natural_stall_current_a
         free_current = spec.free_current_a
         c = spec.coulomb_fraction
@@ -130,7 +166,7 @@ class ControlMode(Enum):
 
 
 class V5Motor:
-    """One V5 11W motor: firmware control loops, current limiting, thermal derating.
+    """One V5 motor, 11W or 5.5W: firmware control loops, current limiting, thermal derating.
 
     The owner integrates the shaft dynamics. Each tick it calls
     ``update(omega, dt)`` with the output shaft speed and applies the returned
@@ -150,12 +186,18 @@ class V5Motor:
             raise ValueError(
                 f"cartridge must be one of {sorted(CARTRIDGE_RATIO)}, got {cartridge!r}"
             )
-        self.spec = spec or MotorSpec()
+        small = cartridge == "5.5w"
+        self.spec = spec or (Motor55Spec() if small else MotorSpec())
         self.core = CoreConstants.from_spec(self.spec)
         self.cartridge = cartridge
+        self.rated_power_w = 5.5 if small else 11.0
         self.ratio = CARTRIDGE_RATIO[cartridge]
         self.rated_speed = rpm_to_rad_s(CARTRIDGE_FREE_RPM[cartridge])
-        self.thermal = MotorThermal(thermal)
+        # Its shaft's speed for a unit of its group's or mechanism's: 1, or for a 5.5W motor
+        # among faster cartridges' motors, geared to turn it as fast at its rated speed as
+        # they do at theirs (a third among blue ones). Set by the robot.
+        self.gear = 1.0
+        self.thermal = MotorThermal(thermal or (Thermal55Spec() if small else None))
         self.supply: Supply = supply or IdealSupply(self.spec.reference_voltage_v)
         self.supply_current_cap = math.inf  # set by PowerSystem when the brain shares current
 
@@ -293,11 +335,12 @@ class V5Motor:
 
         w_core = omega * self.ratio
         v_bus = max(self.supply.bus_voltage, 0.0)
+        v_drive = min(v_bus, self.spec.max_drive_v)  # a 5.5W motor's 8 V, else the battery's
         limited = False
         if self._mode is ControlMode.STOPPED and self._brake_mode is BrakeMode.COAST:
             volts, current = 0.0, 0.0
         else:
-            volts = min(max(self._drive_voltage(v_bus, dt), -v_bus), v_bus)
+            volts = min(max(self._drive_voltage(v_drive, dt), -v_drive), v_drive)
             current = (volts - core.ke * w_core) / core.resistance_ohm
             i_limit = self.effective_current_limit_a
             if abs(current) > i_limit:

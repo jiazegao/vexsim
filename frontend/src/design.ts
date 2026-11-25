@@ -422,7 +422,8 @@ export function describePart(part: ShapePart): string {
   return `Rectangle ${shown(part.size_in[0])} × ${shown(part.size_in[1])} in ${at}${turned}`;
 }
 
-export const CARTRIDGE_RPM: Record<string, number> = { red: 100, green: 200, blue: 600 };
+/** Rated output speed of an 11 W motor by its cartridge, and of the 5.5 W motor ("5.5w"). */
+export const CARTRIDGE_RPM: Record<string, number> = { red: 100, green: 200, blue: 600, "5.5w": 200 };
 
 /** A gear ratio's value: the output's speed over the motor's ("36:48" is 0.75). */
 export function ratioValue(ratio: string | number | null | undefined): number {

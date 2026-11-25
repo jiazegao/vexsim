@@ -44,6 +44,8 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
     width = max(9, *(len(g) for g in dt.gearing))
     for gname, group in dt.gearing.items():
         ports = ", ".join(str(p) for p in group.motors)
+        if group.motors_5_5w:
+            ports += " (5.5W: " + ", ".join(str(p) for p in group.motors_5_5w) + ")"
         diameters = sorted({names[w].diameter_in for w in group.wheels if w in names})
         speeds = ", ".join(
             f"{d:g} in -> {group.wheel_free_rpm / 60.0 * math.pi * d:.1f} in/s" for d in diameters
@@ -63,6 +65,8 @@ def robot_summary(cfg: RobotConfig) -> list[str]:
     for k, (mname, mech) in enumerate(cfg.mechanisms.items()):
         label = "  mechanisms  " if k == 0 else "              "
         ports = ", ".join(str(p) for p in mech.motors)
+        if mech.motors_5_5w:
+            ports += " (5.5W: " + ", ".join(str(p) for p in mech.motors_5_5w) + ")"
         output_rpm = CARTRIDGE_FREE_RPM[mech.cartridge] * mech.speed_ratio
         detail = f"motors {ports} | {mech.cartridge} | ratio {mech.ratio} -> {output_rpm:g} rpm"
         if mech.range_deg is not None:
