@@ -102,6 +102,35 @@ configurations:
     mode: driver
     start: [0, -48, 90]
 
+  - name: '1239E six-bar: LEFT 5-PIN'
+    robot: examples/robots/1239e_six_bar.yaml
+    program: examples/pros_projects/1239e_six_bar
+    routine: left5pin
+    field: examples/fields/1239e_six_bar.yaml
+    start: [57, 6.75, 0]
+
+  - name: '1239E six-bar: RIGHT 5-PIN'
+    robot: examples/robots/1239e_six_bar.yaml
+    program: examples/pros_projects/1239e_six_bar
+    routine: right5pin
+    field: examples/fields/1239e_six_bar.yaml
+    start: [6.75, 57, 90]
+
+  - name: '1239E six-bar: Skills'
+    robot: examples/robots/1239e_six_bar.yaml
+    program: examples/pros_projects/1239e_six_bar
+    routine: safe_skills
+    field: examples/fields/1239e_six_bar.yaml
+    mode: skills
+    start: [57, 0, 0]
+
+  - name: '1239E six-bar: driver'
+    robot: examples/robots/1239e_six_bar.yaml
+    program: examples/pros_projects/1239e_six_bar
+    field: examples/fields/1239e_six_bar.yaml
+    mode: driver
+    start: [0, -48, 90]
+
   - name: Replay an MCL log (Python tank drive)
     robot: examples/robots/traction_6m.yaml
     program: examples/programs/tank_drive.py

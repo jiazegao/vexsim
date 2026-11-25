@@ -82,6 +82,7 @@ jobs:
           done
           vexsim validate-config examples/robots/full_omni_6m.yaml --field examples/fields/practice_elements.yaml --strict -q
           vexsim validate-config examples/robots/1239e_2026-27.yaml --field examples/fields/1239e_2026-27.yaml --strict -q
+          vexsim validate-config examples/robots/1239e_six_bar.yaml --field examples/fields/1239e_six_bar.yaml --strict -q
 
       - name: Plots
         shell: bash  # stop at the first failing command (Windows pwsh only checks the last)
@@ -102,6 +103,7 @@ jobs:
           vexsim calibrate examples/robots/full_omni_6m.yaml calibration_run.txt --max-iterations 3 --out calibration
           vexsim run examples/robots/1239e_2026-27.yaml --program examples/pros_projects/1239e_2026-27 --field examples/fields/1239e_2026-27.yaml --routine left40 --headless --record 1239e_left40.csv --screenshot 1239e_left40.png
           python examples/scripts/evaluate_1239e.py --autons "Left 40,Right 30_10" --seeds 1 --workers 2 --plot 1239e_localization.png
+          vexsim run examples/robots/1239e_six_bar.yaml --program examples/pros_projects/1239e_six_bar --field examples/fields/1239e_six_bar.yaml --routine left5pin --headless --record 1239e_six_bar_left5pin.csv --screenshot 1239e_six_bar_left5pin.png
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'windows-latest' && matrix.python == '3.13'
@@ -124,6 +126,8 @@ jobs:
             1239e_left40.png
             1239e_left40.csv
             1239e_localization.png
+            1239e_six_bar_left5pin.png
+            1239e_six_bar_left5pin.csv
             bench/
             bench_lemlib/
 

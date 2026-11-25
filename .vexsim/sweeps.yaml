@@ -40,3 +40,15 @@ sweeps:
     seeds: 3
     placement_sd: [0.5, 0.5, 1]
     max_seconds: 75
+
+  - name: '1239E six-bar: RCL + MCL vs odometry'
+    description: 'The six-bar robot''s routines (examples/pros_projects/1239e_six_bar): RCL + MCL against odometry alone'
+    runs:
+      - '1239E six-bar: LEFT 5-PIN'
+      - '1239E six-bar: RIGHT 5-PIN'
+      - '1239E six-bar: Skills'
+    vary:
+      VEXSIM_TRACKING: [rcl+mcl, odom]
+    seeds: 6
+    placement_sd: [0.5, 0.5, 1]
+    max_seconds: 75

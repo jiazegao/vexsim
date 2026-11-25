@@ -1,0 +1,55 @@
+# The 2026-27 field for team 1239E's six-bar robot (examples/pros_projects/1239e_six_bar):
+# the elements of the six-bar code's MCL map (MclTracking.hpp) and RCL obstacles
+# (configs.hpp), as tall as the map's notes say, with the pins and cups where they start.
+#
+# The notes give heights as which sensors see over an element: "> 5 inch is high" for the
+# center base, "<= 5.8 inch is visible" for the neutral bases, "<= 3.25 inch is visible"
+# for the alliance bases. The six-bar's sensors are 2.1 to 5.5 in high, so the heights
+# decide what they see (examples/fields/1239e_2026-27.yaml assumed 6 in for every base,
+# between that robot's 4.19 and 9.12 in sensors). Bases are low, so the robot drives over
+# them (solid: false).
+#
+# Pins and cups: MCL's map has one at each of 12 places, as a cross 4 in across, that every
+# sensor sees. Here each is a 4 in circle every sensor sees, which the robot drives
+# through (solid: false), not a piece: vexsim's mechanisms don't pick anything up, and as
+# pieces the ones a routine grabs were pushed and flung across the field (a flung one in a
+# sensor's beam pulled MCL 18 in off). So a grabbed one stays where it was, as MCL's map
+# keeps it (the port's README says why).
+#
+# Positions are inches from the field center (+x and +y as in docs/conventions.md).
+version: 1
+name: 2026-27 field (1239E six-bar)
+size_in: [140.4, 140.4]         # FIELD_HALF_LENGTH = 70.2: their field, measured
+elements:
+  # Match loaders against the side walls, 4 x 4 in (MCL's match_loaders)
+  - {type: obstacle, name: match loader 1, shape: rect, pos_in: [ 68.35,  58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  - {type: obstacle, name: match loader 2, shape: rect, pos_in: [-68.35,  58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  - {type: obstacle, name: match loader 3, shape: rect, pos_in: [-68.35, -58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  - {type: obstacle, name: match loader 4, shape: rect, pos_in: [ 68.35, -58.75], size_in: [3.7, 4], color: "#6b6b6b"}
+  # Center: a pole every sensor sees (high_center_base), on a square base (low_center_base)
+  - {type: obstacle, name: center base, shape: rect, pos_in: [0, 0], size_in: [5.611, 5.611], height_in: 5, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: center pole, shape: circle, pos_in: [0, 0], diameter_in: 3.187, color: "#6b6b6b"}
+  # Neutral bases, 5 x 5 in (neutral_bases)
+  - {type: obstacle, name: neutral base 1, shape: rect, pos_in: [-47, 23.5], size_in: [5, 5], height_in: 5.8, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: neutral base 2, shape: rect, pos_in: [-23.5, 47], size_in: [5, 5], height_in: 5.8, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: neutral base 3, shape: rect, pos_in: [47, -23.5], size_in: [5, 5], height_in: 5.8, solid: false, color: "#9a9a9a"}
+  - {type: obstacle, name: neutral base 4, shape: rect, pos_in: [23.5, -47], size_in: [5, 5], height_in: 5.8, solid: false, color: "#9a9a9a"}
+  # Alliance bases, 5 x 5 in (alliance_bases)
+  - {type: obstacle, name: alliance base 1, shape: rect, pos_in: [23.5, 47], size_in: [5, 5], height_in: 3.25, solid: false, color: "#a98bc4"}
+  - {type: obstacle, name: alliance base 2, shape: rect, pos_in: [47, 23.5], size_in: [5, 5], height_in: 3.25, solid: false, color: "#a98bc4"}
+  - {type: obstacle, name: alliance base 3, shape: rect, pos_in: [-23.5, -47], size_in: [5, 5], height_in: 3.25, solid: false, color: "#a98bc4"}
+  - {type: obstacle, name: alliance base 4, shape: rect, pos_in: [-47, -23.5], size_in: [5, 5], height_in: 3.25, solid: false, color: "#a98bc4"}
+  # Pins and cups (pins_and_cups), in the map's order: setPinAndCupVisibility(i, ...)
+  # names the i-th here
+  - {type: obstacle, name: pin or cup 0,  pos_in: [-47.5,  47.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 1,  pos_in: [-23.5,  23.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 2,  pos_in: [ 47.5,  47.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 3,  pos_in: [ 23.5,  23.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 4,  pos_in: [-47.5, -47.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 5,  pos_in: [-23.5, -23.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 6,  pos_in: [ 47.5, -47.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 7,  pos_in: [ 23.5, -23.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 8,  pos_in: [  0.0,  23.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 9,  pos_in: [  0.0, -23.5], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 10, pos_in: [ 23.5,   0.0], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}
+  - {type: obstacle, name: pin or cup 11, pos_in: [-23.5,   0.0], shape: circle, diameter_in: 4, solid: false, color: "#d4a017"}

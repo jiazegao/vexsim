@@ -1,0 +1,77 @@
+# Team 1239E's 2026-27 six-bar robot, for examples/pros_projects/1239e_six_bar (the team's
+# six-bar branch): a six-motor drive on 2.75 in omni wheels, a tracking wheel, six distance
+# sensors, and a six-bar lift with a claw and a front intake.
+#
+# Ports, wheel size, gearing, track width, the tracking wheel and every distance sensor's
+# mounting come from the team's code (include/custom/configs.hpp and MclTracking.hpp).
+# Marked "assumed" where the code doesn't say: measure those on the robot and replace them.
+#
+# Units: inches, degrees, kg, rpm. Robot frame: +x forward, +y left, angles
+# counter-clockwise from +x (docs/conventions.md). The team's RCL code gives sensor
+# offsets as (right, forward) and angles clockwise from forward: (h, v, a) here is
+# pos_in [v, -h], heading_deg -a.
+
+version: 1
+name: 1239E six-bar
+
+body:
+  mass_kg: 7.0                  # assumed
+  footprint_in: [14, 14.5]      # assumed; must contain the sensors at y +/-6.76, x -5.83
+  cg_in: [0, 0, 5]              # assumed
+  battery: v5_default
+
+drivetrain:
+  type: differential
+  # lemlib::Drivetrain(&leftMotors, &rightMotors, 11.4135 in track width, 2.75 in wheels,
+  # 450 rpm, horizontal drift 2: LemLib's value for all omni wheels). Three wheels a side
+  # and their 4.5 in spacing are assumed.
+  wheels:
+    - {name: lf, pos_in: [ 4.5,  5.70675], type: omni, diameter_in: 2.75}
+    - {name: lm, pos_in: [ 0.0,  5.70675], type: omni, diameter_in: 2.75}
+    - {name: lb, pos_in: [-4.5,  5.70675], type: omni, diameter_in: 2.75}
+    - {name: rf, pos_in: [ 4.5, -5.70675], type: omni, diameter_in: 2.75}
+    - {name: rm, pos_in: [ 0.0, -5.70675], type: omni, diameter_in: 2.75}
+    - {name: rb, pos_in: [-4.5, -5.70675], type: omni, diameter_in: 2.75}
+  gearing:
+    # leftMotors({-15, -14, -13}) and rightMotors({8, 7, 10}), blue, 450 rpm at the wheels:
+    # 36:48. The team's README says the third motor a side (13 and 10) is a 5.5 W motor;
+    # vexsim simulates the 11 W motor only, so here all six are 11 W, and the simulated drive
+    # has about a fifth more torque than the real one (the same top speed).
+    left:  {motors: [-15, -14, -13], cartridge: blue, ratio: "36:48", wheels: [lf, lm, lb]}
+    right: {motors: [8, 7, 10],      cartridge: blue, ratio: "36:48", wheels: [rf, rm, rb]}
+
+mechanisms:
+  # liftMotors({-19, 20}), blue, 12:84 (LIFT_GEAR_RATIO: 7 motor degrees per lift degree).
+  # Motor 20 is plugged in for skills only (the team's README), so this is the match robot,
+  # with motor 19 alone: for skills, add 20 to motors. The lift starts at the bottom, its
+  # hard stop; LIFT_HEIGHTS reach 4900 motor degrees (700 here) and the code says the top
+  # is 5000 ("max = 5000 motor deg"). Load, inertia and friction are assumed.
+  lift: {motors: [-19], cartridge: blue, ratio: "12:84", inertia_kgm2: 0.0025,
+         load_torque_nm: 0.5, friction_nm: 0.05, range_deg: [0, 714]}
+  # clawGrippersMotor(18), green, in motor degrees from closed: hardResetClaw() drives it
+  # shut against its stop and calls that 0, and autonomous() assumes it starts at 13 (so
+  # the stop is at -13 here). It opens to 200 (openClaw(200)); the open stop is assumed.
+  claw: {motors: [18], cartridge: green, inertia_kgm2: 0.0005, friction_nm: 0.05,
+         range_deg: [-13, 207]}
+  claw_rollers: {motors: [-16], cartridge: green, inertia_kgm2: 0.0001, friction_nm: 0.02}
+  front_intake: {motors: [17], cartridge: blue, inertia_kgm2: 0.0002, friction_nm: 0.02}
+
+sensors:
+  # ScaledIMU imu(6, 360.0, 360.0): no scale correction yet, so this IMU's scale error isn't
+  # measured; vexsim draws one, as a real IMU has one.
+  - {type: imu, port: 6, pos_in: [0, 0]}
+  # pros::Rotation vertRotation(-9): a 2.75 in vertical tracking wheel on the center line
+  # (lemlib::TrackingWheel(&vertRotation, 2.75, 0)). The code reverses it. A vertical
+  # wheel reads the same anywhere along the center line; mid-robot is assumed.
+  - type: rotation
+    port: 9
+    reversed: true
+    tracking_wheel: {pos_in: [0, 0], heading_deg: 0, diameter_in: 2.75}
+  # Distance sensors: DISTANCE_COLLECTION's ports, RclSensor(h, v, a) and MCL's
+  # sensor_mounts for where they point, and the heights in configs.hpp's notes on them.
+  - {type: distance, port: 2,  pos_in: [ 2.754921,  6.500079], heading_deg: 0,    height_in: 3.327301}  # front
+  - {type: distance, port: 21, pos_in: [-5.374094, -4.756890], heading_deg: 180,  height_in: 3.025004}  # back
+  - {type: distance, port: 3,  pos_in: [ 0.289449,  6.759719], heading_deg: 90,   height_in: 2.077872}  # left
+  - {type: distance, port: 5,  pos_in: [ 0.289449, -6.759720], heading_deg: -90,  height_in: 2.077872}  # right
+  - {type: distance, port: 4,  pos_in: [-5.833577,  6.104867], heading_deg: 135,  height_in: 5.525}     # back left
+  - {type: distance, port: 11, pos_in: [-5.833577, -6.104868], heading_deg: -135, height_in: 5.525}     # back right
