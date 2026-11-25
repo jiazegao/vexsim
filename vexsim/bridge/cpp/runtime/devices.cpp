@@ -48,6 +48,7 @@ enum class Mode { none, voltage, velocity, position };
 
 struct MotorPort {
 	int cartridge = 0;  // physical gear ratio (36, 18, 6) from the robot config; 0 before INIT
+	bool exp = false;   // a 5.5W motor: its gearing is green's (18), whatever the code declares
 	int gearset = -1;   // motor_gearset_e_t the code declared; -1 = never set (matches the cartridge)
 	int units = pros::E_MOTOR_ENCODER_DEGREES;
 	int brake = pros::E_MOTOR_BRAKE_COAST;
@@ -154,8 +155,26 @@ MotorPort* motor(std::int8_t port) {
 int sign(std::int8_t port) { return port < 0 ? -1 : 1; }
 
 int declared_ratio(const MotorPort& m) {
+	if (m.exp) return 18;  // a 5.5W motor is green only: a declared gearing changes nothing
 	if (m.gearset >= 0) return ratio_of(m.gearset);
 	return m.cartridge ? m.cartridge : 18;
+}
+
+// The code declared other gearing than the motor's. As on a real motor, an 11W motor's speeds
+// and positions are scaled; a 5.5W motor's gearing is fixed at green, so it changes nothing.
+void warn_gearing(int p, const MotorPort& m) {
+	if (m.gearset < 0 || ratio_of(m.gearset) == m.cartridge) return;
+	const std::string port = "port " + std::to_string(p) + ": ";
+	if (m.exp) {
+		host_warn_once("gearing" + std::to_string(p),
+		               port + "a 5.5W motor, which is green (200 rpm) only: the code's " +
+		                   cartridge_name(ratio_of(m.gearset)) + " gearing changes nothing");
+	} else {
+		host_warn_once("gearing" + std::to_string(p),
+		               port + "the code declares the " + cartridge_name(ratio_of(m.gearset)) +
+		                   " cartridge, but the robot config has " + cartridge_name(m.cartridge) +
+		                   "; as on a real motor, speeds and positions are scaled");
+	}
 }
 
 // Declared-gearing output per physical output (the firmware only knows the declared ratio).
@@ -311,7 +330,11 @@ void devices_register(int port, const std::string& kind, const std::string& deta
 	         : kind == "gps"      ? Kind::gps
 	                              : Kind::none;
 	D().kind[port] = k;
-	if (k == Kind::motor) D().motor[port].cartridge = detail == "red" ? 36 : detail == "blue" ? 6 : 18;
+	if (k == Kind::motor) {
+		MotorPort& m = D().motor[port];
+		m.exp = detail == "5.5w";  // the 5.5W motor: green's gearing, fixed
+		m.cartridge = detail == "red" ? 36 : detail == "blue" ? 6 : 18;
+	}
 }
 
 void devices_ready() {
@@ -322,12 +345,7 @@ void devices_ready() {
 		if (D().kind[p] != Kind::motor) continue;
 		if (m.brake != pros::E_MOTOR_BRAKE_COAST) m.pending_brake = std::to_string(m.brake);
 		if (m.current_limit != 2500) m.pending_limit = std::to_string(m.current_limit);
-		if (m.gearset >= 0 && ratio_of(m.gearset) != m.cartridge) {
-			host_warn_once("gearing" + std::to_string(p),
-			               "port " + std::to_string(p) + ": the code declares the " +
-			                   cartridge_name(ratio_of(m.gearset)) + " cartridge, but the robot config has " +
-			                   cartridge_name(m.cartridge) + "; as on a real motor, speeds and positions are scaled");
-		}
+		warn_gearing(p, m);
 	}
 }
 
@@ -698,13 +716,7 @@ int32_t motor_set_gearing(int8_t port, const motor_gearset_e_t gearset) {
 		return PROS_ERR;
 	}
 	m->gearset = gearset;
-	int p = std::abs(port);
-	if (D().ready && ratio_of(gearset) != m->cartridge) {
-		host_warn_once("gearing" + std::to_string(p),
-		               "port " + std::to_string(p) + ": the code declares the " + cartridge_name(ratio_of(gearset)) +
-		                   " cartridge, but the robot config has " + cartridge_name(m->cartridge) +
-		                   "; as on a real motor, speeds and positions are scaled");
-	}
+	if (D().ready) warn_gearing(std::abs(port), *m);
 	return PROS_SUCCESS;
 }
 
@@ -743,7 +755,9 @@ int32_t motor_get_voltage_limit(int8_t port) {
 }
 
 motor_type_e_t motor_get_type(int8_t port) {
-	return motor(port) ? E_MOTOR_TYPE_V5 : E_MOTOR_TYPE_INVALID;
+	MotorPort* m = motor(port);
+	if (!m) return E_MOTOR_TYPE_INVALID;
+	return m->exp ? E_MOTOR_TYPE_EXP : E_MOTOR_TYPE_V5;  // 5.5W : 11W
 }
 
 // ---- inertial sensor -------------------------------------------------------------------

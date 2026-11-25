@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Copied, ShapePart } from "../src/design";
 import {
+  cartridgeLabel,
   circleTo,
   copiedPart,
   copyOf,
@@ -27,6 +28,7 @@ import {
   ratioValue,
   readPorts,
   readRatio,
+  readSmallMotors,
   rectBetween,
   removeWheelEdits,
   renameWheelEdits,
@@ -202,6 +204,12 @@ describe("motors and sensors", () => {
     expect(readPorts("1, 2, -3")).toEqual([1, 2, -3]);
     expect(readPorts("4 5")).toEqual([4, 5]);
     for (const bad of ["", "0", "22", "1.5", "a"]) expect(readPorts(bad)).toBeNull();
+    // a group's 5.5 W motors: some of its ports, written as they are there; none is none
+    expect(readSmallMotors("3", [1, 2, -3])).toEqual([-3]);
+    expect(readSmallMotors(" ", [1, 2, -3])).toEqual([]);
+    for (const bad of ["4", "1, x", "0"]) expect(readSmallMotors(bad, [1, 2, -3])).toBeNull();
+    expect(cartridgeLabel("blue")).toBe("blue (600 rpm)");
+    expect(cartridgeLabel("5.5w")).toBe("5.5 W motor (200 rpm)");
     expect(readRatio("36:48")).toBe("36:48");
     expect(readRatio(" 36 : 48 ")).toBe("36:48");
     expect(readRatio("0.75")).toBe(0.75);

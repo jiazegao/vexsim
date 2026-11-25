@@ -50,7 +50,7 @@ class MotorCurvesJob(_Message):
     """``vexsim motor-curves``; its result is a ``MotorCurves``."""
 
     kind: Literal["motor_curves"]
-    cartridge: Literal["red", "green", "blue"] = "green"
+    cartridge: Literal["red", "green", "blue", "5.5w"] = "green"  # "5.5w": the 5.5W motor
     supply_voltage: Annotated[float, Field(ge=6, le=14)] = 12.8
     points: Annotated[int, Field(ge=5, le=401)] = 61
 

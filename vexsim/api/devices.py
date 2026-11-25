@@ -126,6 +126,10 @@ class Motor:
         r = self._reading()
         return bool(r and r.over_temp)
 
+    def get_type(self) -> str:
+        """``"exp"`` for a 5.5W motor, ``"v5"`` for an 11W one, as PROS 4's ``MotorType``."""
+        return "exp" if self._device.motor.cartridge == "5.5w" else "v5"
+
 
 class MotorGroup:
     """Several motors commanded together; getters report the first motor, like PROS 4."""

@@ -141,7 +141,10 @@ class CppProgram:
         devices = []
         for port, device in self._devices:
             if isinstance(device, MotorDevice):
-                devices.append((port, "motor", _CARTRIDGES.get(device.motor.ratio, "green")))
+                # its cartridge's name, or "5.5w" for the 5.5W motor
+                motor = device.motor
+                named = getattr(motor, "cartridge", None)
+                devices.append((port, "motor", named or _CARTRIDGES.get(motor.ratio, "green")))
             elif isinstance(device, ImuDevice):
                 devices.append((port, "imu", ""))
             elif isinstance(device, RotationDevice):

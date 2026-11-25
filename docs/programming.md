@@ -82,6 +82,7 @@ bot.print("text")  # console panel + terminal
 - Before a device's first sample, a reading returns `PROS_ERR_F` (infinity), as PROS does.
 - `Imu.reset()` starts a ~2 s calibration; poll `is_calibrating()` until it finishes.
 - `set_zero_position(p)` makes the motor's current position read `p` and `tare_position()` reads 0, as in PROS 4. The zero belongs to the motor on that port, so every object using the port sees it.
+- `get_type()` gives `"exp"` for a 5.5 W motor and `"v5"` for an 11 W one, as PROS 4's `MotorType`. A 5.5 W motor's drive is held to 8 V: `move_voltage(12000)` turns it as fast as `move_voltage(8000)`.
 - `Gps` follows PROS: meters, and heading clockwise from +y. `set_offset(x, y)` is where the sensor sits relative to the robot's center, with +y along its camera's direction; positions then refer to the robot's center ([conventions.md](conventions.md#sensor-readings)).
 - Every class and method is in `vexsim/api/devices.py`.
 

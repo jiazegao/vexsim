@@ -111,6 +111,50 @@ test("draws a new robot, gives it a drive and sensors, saves it and drives it, t
   }
 });
 
+test("gives a robot 5.5 W motors from its Design view: one a side among the drive's, and a claw of its own", async ({ page }) => {
+  await page.getByTestId("robot").selectOption({ label: "New robot…" });
+  await page.getByTestId("new-robot-name").fill("Half watts");
+  const made = await page.getByTestId("new-robot-path").inputValue();
+  const file = resolve(WORKSPACE, made);
+  try {
+    await page.getByTestId("new-robot-create").click();
+    await expect(page.getByTestId("design-panel")).toBeVisible();
+    await page.getByTestId("drive-preset").selectOption("tank6");
+    await expect(page.getByTestId("drivetrain.gearing.left.motors")).toHaveValue("1, 2, 3");
+    for (const [side, port] of [["left", "3"], ["right", "6"]]) {
+      const ports = page.getByTestId(`drivetrain.gearing.${side}.motors_5_5w`);
+      await ports.fill(port);
+      await ports.press("Enter");
+      await expect(ports).toHaveValue(new RegExp(`^-?${port}$`));
+    }
+    await page.getByTestId("add-mechanism").click();
+    const mechanism = page.locator('[data-testid^="mechanism-"]').first();
+    const cartridge = mechanism.getByRole("combobox", { name: /cartridge/ });
+    await cartridge.selectOption("5.5w");
+    await expect(cartridge).toHaveValue("5.5w"); // as the YAML now says
+    await expect(cartridge.locator("option:checked")).toHaveText("5.5 W motor (200 rpm)");
+    await expect(mechanism.getByTestId(/motors_5_5w$/)).toHaveCount(0); // a 5.5 W motor alone: no box
+    await expect(page.getByTestId("config-state")).toHaveText("no problems · unsaved changes");
+    await page.getByTestId("save-config").click();
+    await expect(page.getByTestId("config-notice")).toHaveText("Saved.");
+    const saved = readFileSync(file, "utf-8");
+    expect(saved).toMatch(/left: \{motors: \[1, 2, 3\], cartridge: blue, ratio: "36:48", wheels: \[lf, lm, lb\], motors_5_5w: \[3\]\}/);
+    expect(saved).toMatch(/cartridge: 5\.5w/);
+
+    // it drives, its 5.5 W motors with the rest
+    await page.getByTestId("page-simulate").click();
+    await expect(page.getByTestId("robot")).toHaveValue(made);
+    await page.getByTestId("run").click();
+    await expect(page.getByTestId("phase")).toContainText("opcontrol");
+    const [x0] = await truePose(page);
+    await page.keyboard.down("w");
+    await expect.poll(async () => (await truePose(page))[0], { timeout: 10_000 }).toBeGreaterThan(x0 + 10);
+    await page.keyboard.up("w");
+  } finally {
+    rmSync(file, { force: true });
+  }
+});
+
 test("a robot's Design view writes its forms into the YAML, which an undo takes back", async ({ page }) => {
   const path = "examples/robots/full_omni_6m.yaml";
   const original = readFileSync(resolve(WORKSPACE, path), "utf-8");

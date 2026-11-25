@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PortUser, ShapePart } from "../design";
 import {
   CARTRIDGE_RPM,
+  cartridgeLabel,
   DRIVE_PRESETS,
   describePart,
   describeUser,
@@ -20,6 +21,7 @@ import {
   ratioValue,
   readPorts,
   readRatio,
+  readSmallMotors,
   removeWheelEdits,
   renameWheelEdits,
   sensorName,
@@ -334,7 +336,7 @@ export function DesignPanel(props: {
                     ×
                   </button>
                 </div>
-                <Motors path={path} motors={group.motors} cartridge={group.cartridge} ratio={group.ratio} act={act} run={run} name={name} />
+                <Motors path={path} motors={group.motors} cartridge={group.cartridge} small={group.motors_5_5w ?? []} ratio={group.ratio} act={act} run={run} name={name} />
                 <Row label="Wheels" title="The wheels these motors turn">
                   <span className="checks">
                     {wheelNames.map((wheel) => (
@@ -411,7 +413,7 @@ export function DesignPanel(props: {
                     ×
                   </button>
                 </div>
-                <Motors path={path} motors={mechanism.motors} cartridge={mechanism.cartridge} ratio={mechanism.ratio} act={act} run={run} name={name} output="output" />
+                <Motors path={path} motors={mechanism.motors} cartridge={mechanism.cartridge} small={mechanism.motors_5_5w ?? []} ratio={mechanism.ratio} act={act} run={run} name={name} output="output" />
                 <Row label="Load" unit="kg·m²" title="The inertia of what it moves, at its output">
                   <Num label={`${name} load inertia (kg·m²)`} value={mechanism.inertia_kgm2 ?? 0} min={0} act={act} onSet={(v) => [set(`${path}.inertia_kgm2`, v)]} />
                 </Row>
@@ -673,12 +675,14 @@ function ShapeSection(props: { robot: RobotConfig; act: Act; run: (make: () => C
 
 // --- motors and sensors ------------------------------------------------------------------------
 
-/** A motor group's or a mechanism's motors: their ports, cartridge and gearing. */
+/** A motor group's or a mechanism's motors: their ports, cartridge (or the 5.5 W motor), the
+ * 5.5 W motors among an 11 W cartridge's, and gearing. */
 function Motors(props: {
   path: string;
   name: string;
   motors: number[];
   cartridge: (typeof CARTRIDGES)[number];
+  small: number[];
   ratio: string | number | undefined;
   act: Act;
   run: (make: () => ConfigEdit[]) => void;
@@ -696,21 +700,46 @@ function Motors(props: {
             act(() => {
               const ports = readPorts(text);
               if (!ports) throw new Error(`${name}'s motor ports are 1 to ${PORTS}, separated by commas (a negative one runs reversed): "${text}" aren't`);
-              return [set(`${path}.motors`, ports)];
+              // its 5.5 W motors that are still among them
+              const small = props.small.filter((s) => ports.some((p) => Math.abs(p) === Math.abs(s)));
+              const kept = small.length === props.small.length ? [] : [small.length && small.length < ports.length ? set(`${path}.motors_5_5w`, small) : remove(`${path}.motors_5_5w`)];
+              return [set(`${path}.motors`, ports), ...kept];
             })
           }
           testid={`${path}.motors`}
         />
       </Row>
       <Row label="Cartridge">
-        <select value={props.cartridge} onChange={(e) => props.run(() => [set(`${path}.cartridge`, e.target.value)])} aria-label={`${name} cartridge`}>
+        <select
+          value={props.cartridge}
+          onChange={(e) => props.run(() => [set(`${path}.cartridge`, e.target.value), ...(e.target.value === "5.5w" && props.small.length ? [remove(`${path}.motors_5_5w`)] : [])])}
+          aria-label={`${name} cartridge`}
+        >
           {CARTRIDGES.map((cartridge) => (
             <option key={cartridge} value={cartridge}>
-              {cartridge} ({CARTRIDGE_RPM[cartridge]} rpm)
+              {cartridgeLabel(cartridge)}
             </option>
           ))}
         </select>
       </Row>
+      {props.cartridge !== "5.5w" && props.motors.length > 1 && (
+        <Row label="5.5 W" title={`The ports of 5.5 W motors among these, separated by commas: geared to turn the ${props.output ?? "wheels"} as fast at their 200 rpm as the cartridge's motors do at theirs`}>
+          <Entry
+            value={props.small.join(", ")}
+            label={`${name} 5.5 W motor ports`}
+            wide
+            onCommit={(text) =>
+              act(() => {
+                const small = readSmallMotors(text, props.motors);
+                if (!small) throw new Error(`${name}'s 5.5 W motors are some of its ports (${props.motors.join(", ")}), separated by commas: "${text}" aren't`);
+                if (small.length && small.length >= props.motors.length) throw new Error(`Every motor of ${name} would be a 5.5 W one: choose the 5.5 W motor as its cartridge instead`);
+                return [small.length ? set(`${path}.motors_5_5w`, small) : remove(`${path}.motors_5_5w`)];
+              })
+            }
+            testid={`${path}.motors_5_5w`}
+          />
+        </Row>
+      )}
       <Row label="Ratio" title={`Gear teeth, motor : ${props.output ?? "wheel"} (36:48 turns it at 3/4 of the motors' speed), or a number`}>
         <Entry
           value={props.ratio === undefined || props.ratio === null ? "1" : String(props.ratio)}

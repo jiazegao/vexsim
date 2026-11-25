@@ -397,7 +397,9 @@ def test_every_run_is_recorded(tmp_path):
         wait_for(lambda: session.frame is not None and session.frame["t"] > 1)
     finally:
         session.stop()
-    wait_for(lambda: len(heard.of("recorded")) == 2)
+    # the second run's record is written as its session stops: a slow CI runner, on the Python
+    # step, has taken longer than the default 20 s
+    wait_for(lambda: len(heard.of("recorded")) == 2, timeout=60)
     second = heard.of("recorded")[1]["run"]
     assert second["ended"] == "stopped" and second["id"] != first["id"]
 

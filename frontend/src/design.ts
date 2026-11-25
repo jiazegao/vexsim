@@ -390,6 +390,21 @@ export function readPorts(text: string): number[] | null {
   return ports.length && ports.every((p) => Number.isInteger(p) && p !== 0 && Math.abs(p) <= PORTS) ? ports : null;
 }
 
+/** A motor group's or a mechanism's 5.5 W motors as typed: ports among its motors, written as
+ * they are there (null if they don't read, or one isn't among them); nothing typed is none. */
+export function readSmallMotors(text: string, motors: number[]): number[] | null {
+  if (!text.trim()) return [];
+  const ports = readPorts(text);
+  if (!ports) return null;
+  const mine = (port: number) => motors.find((m) => Math.abs(m) === Math.abs(port));
+  return ports.every((port) => mine(port) !== undefined) ? ports.map((port) => mine(port) as number) : null;
+}
+
+/** What a cartridge is called in a list: an 11 W motor's by its color, and the 5.5 W motor. */
+export function cartridgeLabel(cartridge: string): string {
+  return cartridge === "5.5w" ? `5.5 W motor (${CARTRIDGE_RPM[cartridge]} rpm)` : `${cartridge} (${CARTRIDGE_RPM[cartridge]} rpm)`;
+}
+
 /** A gear ratio as typed: "36:48" stays words, "0.75" a number. Null if it doesn't read. */
 export function readRatio(text: string): string | number | null {
   const trimmed = text.trim();

@@ -289,6 +289,10 @@ def test_the_server_runs_the_analyses(client):
         "voltage",
     ]
     assert curves.current_limit_a == 2.5 and curves.curves[0].speed_rpm[0] == 0
+    small = finished(client, {"kind": "motor_curves", "cartridge": "5.5w"})["result"]
+    small = MotorCurves.model_validate(small)  # the 5.5 W motor: 200 rpm, free at 300
+    assert small.cartridge == "5.5w" and small.current_limit_a == 2.5
+    assert max(small.curves[0].speed_rpm) == 200 and max(small.curves[1].speed_rpm) > 295
 
     robot = "examples/robots/full_omni_6m.yaml"
     job = finished(client, {"kind": "drift", "robot": robot, "lateral_mu": [0.4, 0.1]})

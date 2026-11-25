@@ -124,7 +124,7 @@ export interface DoctorJob {
 /** `vexsim motor-curves`; its result is a `MotorCurves`. */
 export interface MotorCurvesJob {
   kind: "motor_curves";
-  cartridge?: "red" | "green" | "blue";
+  cartridge?: "red" | "green" | "blue" | "5.5w";
   supply_voltage?: number;
   points?: number;
 }

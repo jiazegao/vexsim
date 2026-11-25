@@ -18,7 +18,7 @@ from vexsim.algorithms.localization.base import Pose
 from vexsim.bridge.build import BuildError, build_project
 from vexsim.bridge.host import HostError, RobotHost
 from vexsim.bridge.program import CppProgram
-from vexsim.config import load_robot
+from vexsim.config import RobotConfig, load_robot
 from vexsim.physics.motor import BrakeMode
 from vexsim.runtime.simulation import ScriptedInput, Simulation
 from vexsim.units import rad_s_to_rpm
@@ -289,6 +289,34 @@ def test_declared_gearing_scales_like_the_real_motor(test_exe):
     reported = float(re.search(r"reported (\S+) rpm", " ".join(out)).group(1))
     assert reported == pytest.approx(100, abs=5)
     assert rad_s_to_rpm(sim.robot.motors[1].velocity) == pytest.approx(3 * reported, rel=0.05)
+
+
+def test_a_5_5w_motor_says_so_keeps_green_gearing_and_its_8_volts(test_exe):
+    """Phase 17.2: motor_get_type() gives EXP for a 5.5 W motor and V5 for an 11 W one; its
+    gearing is green whatever the code declares (and vexsim says so once); and its drive is
+    held to 8 V, so 12 V turns it as fast as 8 V does."""
+    data = load_robot(ROBOT).model_dump(exclude_none=True)
+    data["mechanisms"] = {"intake": {"motors": [9], "cartridge": "5.5w", "inertia_kgm2": 2e-4}}
+    program = CppProgram(test_exe, env={"VEXSIM_TEST": "small_motor"})
+    sim = Simulation(RobotConfig.model_validate(data), program=program, seed=0, echo=None)
+    sim.start("driver")
+    try:
+        sim.run_for(4.6)
+    finally:
+        sim.close()
+    out = console(sim)
+    assert "types 0 1" in out  # E_MOTOR_TYPE_V5, E_MOTOR_TYPE_EXP
+    assert "gearing 1 2" in out  # green for the 5.5 W motor; port 1's blue
+    assert any("port 9: a 5.5W motor, which is green (200 rpm) only: the code's blue (600 rpm)"
+               " gearing changes nothing" in line for line in out)  # fmt: skip
+    speeds = {
+        int(mv): (float(rpm), int(on))
+        for mv, rpm, on in re.findall(r"at (\d+) mV: (\S+) rpm, (\d+) mV on it", " ".join(out))
+    }
+    assert speeds[12000][0] == pytest.approx(speeds[8000][0], abs=2)
+    assert speeds[8000][0] == pytest.approx(300, rel=0.03)  # free: 150% of its 200 rpm
+    assert speeds[6000][0] == pytest.approx(224, rel=0.03)
+    assert speeds[12000][1] == pytest.approx(8000, abs=60)  # what's on its windings
 
 
 def test_motor_group_setters_affect_only_the_first_motor(test_exe):

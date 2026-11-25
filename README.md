@@ -597,7 +597,7 @@ The logs [vexsim's logger](#vexsims-logger) writes play on the field too. They'r
   - its name;
   - the body: mass, inertia and center of gravity;
   - the drive: its type, and every wheel's name, place, heading, type and diameter;
-  - the motor groups: their ports (a negative port runs reversed), cartridge, gear ratio and the wheels each turns, with the wheel speed that gives. A tank drive's groups are `left` and `right`; an H-drive adds strafe groups.
+  - the motor groups: their ports (a negative port runs reversed), cartridge, gear ratio and the wheels each turns, with the wheel speed that gives. A tank drive's groups are `left` and `right`; an H-drive adds strafe groups. The cartridge list ends with the 5.5 W motor (a group of them), and a group of 11 W motors has a *5.5 W* box for the ports among them that are 5.5 W motors ([section 4](#drivetrain)), geared to its speed.
   - the mechanisms;
   - the sensors: each one's port and the fields its type has.
 
@@ -963,7 +963,7 @@ A copy the project already has is left as it is (the export says so, when it dif
 | `pros::Optical`, `Vision`, `Link`, `Serial` | not simulated yet: calls fail with `ENODEV`, and the first one logs a note |
 | SD card | not inserted: `pros::usd::is_installed()` reads 0 and files under `/usd/` don't open. With `--sd FOLDER`, the folder stands in for a card: `is_installed()` reads 1, and files the code opens under `/usd/` (`fopen`, C++ file streams) open in it |
 
-**PROS 4 behaviors reproduced, so they bite in the simulator too:** plain `MotorGroup` setters (`set_brake_mode`, `tare_position`) act on the first motor only, and the `_all` versions on every motor; `set_zero_position(p)` makes the current position read `p` and belongs to the port; declaring `green` on a `blue` cartridge makes `move_velocity(100)` spin 3× faster than meant (the console warns once); reversal is per object, while brake mode, limits, units, gearing and zero belong to the port.
+**PROS 4 behaviors reproduced, so they bite in the simulator too:** plain `MotorGroup` setters (`set_brake_mode`, `tare_position`) act on the first motor only, and the `_all` versions on every motor; `set_zero_position(p)` makes the current position read `p` and belongs to the port; declaring `green` on a `blue` cartridge makes `move_velocity(100)` spin 3× faster than meant (the console warns once); a 5.5 W motor is green whatever the code declares (`get_gearing()` says green, and the console says once that the code's gearing changes nothing), `get_type()` tells it from an 11 W one (`MotorType::exp`, `v5`), and its drive is held to 8 V, so `move_voltage(12000)` turns it as fast as `move_voltage(8000)`; reversal is per object, while brake mode, limits, units, gearing and zero belong to the port.
 
 ### How simulated time works for C++
 - **Lockstep.** Every PROS task is a thread, but only one runs at a time, and simulated time stands still while it runs. Time moves on only when every task is blocked in `pros::delay`, `delay_until`, a mutex or a notification wait. Runs are identical every time, at any speed.
@@ -1044,10 +1044,11 @@ if (const char* name = std::getenv("AUTON")) selected = find_routine(name);
 ## 10. Analysis commands: motor curves, drift, odometry
 These three are also the browser app's *Analyze* page ([section 7](#7-the-browser-app-vexsim-ui)).
 
-**`vexsim motor-curves`** measures the simulated V5 motor on a dynamometer, under `move_velocity(max)` and `move_voltage(12000)`:
+**`vexsim motor-curves`** measures a simulated V5 motor on a dynamometer, under `move_velocity(max)` and `move_voltage(12000)`:
 ```
 vexsim motor-curves --cartridge red --out red.png      # torque, current, power vs. speed
 vexsim motor-curves --cartridge blue --csv             # the data as CSV
+vexsim motor-curves --cartridge 5.5w --out small.png   # the 5.5 W motor
 ```
 Options: `--cartridge red|green|blue|5.5w` (`5.5w`: the 5.5 W motor), `--supply-voltage` (default 12.8), `--points` (default 61).
 

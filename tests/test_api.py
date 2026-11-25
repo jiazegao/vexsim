@@ -26,6 +26,14 @@ def test_readings_before_the_first_sample_are_pros_err():
     assert sim.bot.Imu(10).get_rotation() == PROS_ERR_F
 
 
+def test_a_motor_says_which_it_is():
+    """PROS 4's get_type(): "exp" for a 5.5 W motor, "v5" for an 11 W one (phase 17.2)."""
+    data = CONFIG.model_dump(exclude_none=True)
+    data["mechanisms"] = {"intake": {"motors": [9], "cartridge": "5.5w"}}
+    sim = Simulation(type(CONFIG).model_validate(data), echo=None)
+    assert sim.bot.Motor(9).get_type() == "exp" and sim.bot.Motor(-1).get_type() == "v5"
+
+
 def test_negative_port_reverses_commands_and_readings():
     sim = sim_with()
     raw, reversed_ = sim.bot.Motor(4), sim.bot.Motor(-4)

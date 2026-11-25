@@ -18,6 +18,7 @@ const CARTRIDGES: [string, string][] = [
   ["red", "red (100 rpm)"],
   ["green", "green (200 rpm)"],
   ["blue", "blue (600 rpm)"],
+  ["5.5w", "5.5 W motor (200 rpm)"],
 ];
 
 /** `vexsim motor-curves`, `drift` and `odometry` as charts: a motor on the dynamometer, a
@@ -63,7 +64,7 @@ function MotorTool(props: { active: boolean }) {
   const [volts, setVolts] = useState("12.8");
   const [problem, setProblem] = useState<RunProblem | null>(null);
   const job = useJob();
-  const run = async () => setProblem(await job.start({ kind: "motor_curves", cartridge: cartridge as "green", supply_voltage: Number(volts) }));
+  const run = async () => setProblem(await job.start({ kind: "motor_curves", cartridge: cartridge as "green" | "5.5w", supply_voltage: Number(volts) }));
   const { start } = job;
   const shown = job.job;
   useEffect(() => {
@@ -97,8 +98,8 @@ function MotorTool(props: { active: boolean }) {
       {result && (
         <>
           <p className="muted small">
-            A {result.cartridge} cartridge at {result.supply_voltage} V: what <code>move_velocity</code> at full speed and <code>move_voltage(12000)</code>{" "}
-            give, from stalled to free running.
+            {result.cartridge === "5.5w" ? "The 5.5 W motor" : `A ${result.cartridge} cartridge`} at {result.supply_voltage} V: what <code>move_velocity</code> at full speed and{" "}
+            <code>move_voltage(12000)</code> give, from stalled to free running{result.cartridge === "5.5w" ? " (its drive is held to 8 V)" : ""}.
           </p>
           <div className="charts" data-testid="motor-charts">
             {charts.map((c) => (

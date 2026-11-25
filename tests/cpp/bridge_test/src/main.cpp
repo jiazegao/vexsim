@@ -179,6 +179,17 @@ static void device_scenarios() {
 		right_drive.move_velocity(100);
 		pros::delay(1000);
 		printf("reported %.1f rpm\n", m.get_actual_velocity());
+	} else if (is("small_motor")) {
+		// The test's robot has a 5.5W motor on port 9, on a mechanism of its own: its type, its
+		// gearing (green, whatever the code declares), and its drive (8 V: 12 V gives the same)
+		pros::Motor small(9, pros::MotorGears::blue);
+		printf("types %d %d\n", (int)pros::Motor(1).get_type(), (int)small.get_type());
+		printf("gearing %d %d\n", (int)small.get_gearing(), (int)pros::Motor(1).get_gearing());
+		for (int mv : {12000, 8000, 6000}) {
+			small.move_voltage(mv);
+			pros::delay(1500);
+			printf("at %d mV: %.0f rpm, %d mV on it\n", mv, small.get_actual_velocity(), small.get_voltage());
+		}
 	} else if (is("group_brake")) {
 		left_drive.set_brake_mode(pros::MotorBrake::hold);  // PROS 4: only the first motor
 		right_drive.set_brake_mode_all(pros::E_MOTOR_BRAKE_BRAKE);

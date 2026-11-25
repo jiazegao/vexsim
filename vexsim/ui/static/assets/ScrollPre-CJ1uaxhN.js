@@ -1,0 +1,1 @@
+import{Gt as e,Kt as t}from"./index-DpP5tiut.js";var n=e();function r(e){let{label:r,...i}=e,a=t();return(0,n.jsx)(`pre`,{...i,ref:a,role:`group`,"aria-label":r})}export{r as t};
