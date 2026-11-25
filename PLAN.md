@@ -343,6 +343,9 @@ Python algorithms use the same device and port model as C++. A C++ algorithm run
 | 16.2 | **[done]** The rest of a millisecond: what Python still does every step (sensors, events, the loop), trimmed without changing a number | A Python program's run at least 3× faster than before the phase and Left 40 at least 1.7×, with results the same as 16.1's to the last bit |
 | 16.3 | **[done]** Where it shows: run records and the app say which step ran; the step built in the background when `vexsim ui` starts | A recorded run says which step made it; the first run after installing doesn't wait for the build |
 | port 2 | **[done]** 1239E's six-bar robot, from the team's `six-bar` branch: its code as a project of its own with the first port's edits merged in, a robot and a field for it, saved runs and a sweep | Its three routines run to the end; the robot has every device the code uses, where the code says; RCL and MCL evaluated against the truth ([its README](examples/pros_projects/1239e_six_bar/README.md)) |
+| 17.1 | The 5.5 W motor in the model and the configs ([section 19](#19-the-55-w-motor-phase-17)): its own numbers, an 8 V drive, mixed groups, the compiled step, `cartridge: 5.5w` | On vexsim's dynamometer the 5.5 W motor gives the numbers it was fitted to; a mixed drive's 5.5 W motors turn at the speed their gearing says and share the load; the two physics steps agree on it; no number of a robot without one changes |
+| 17.2 | Robot code and the app see it: the motor's type, its fixed gearing, the Design view, the editor, the Analyze page, the motor budget | A PROS program reads `E_MOTOR_TYPE_EXP` for a 5.5 W motor and can't change its gearing; a robot with 5.5 W motors is made and driven from the Design view |
+| 17.3 | 1239E's six-bar robot with its 5.5 W motors; a calibration session's free spin with them | Its routines run with them; its README's numbers are its sweep's again; the free spin fits the 11 W motors without the 5.5 W ones |
 
 ## 12. Risks and mitigations
 | Risk | Mitigation |
@@ -885,3 +888,54 @@ The simulator steps every millisecond in Python and NumPy. Phase 15.1 took what 
   - *The numbers* are in the README where the step is described ([its section on the two steps](README.md#the-physics-step-python-or-compiled), and the models' section on speed), and above, in 16.2's table.
   - *The checks:* a run recorded with each step says so, in its message and its file; an old record without the field reads; the server's thread builds and checks the library into an empty cache, and builds nothing in Python mode; `serve` starts it. In the browser: a run's hover names the compiled step (`e2e/app.spec.ts`); `tests/recording.test.ts`.
   - *In CI,* against the run before the phase: the Linux job on the compiled step takes 6.7 min (10.4 before), the Windows one 12.2 (14.7), the calibration sessions 7.0 (8.4); the two jobs on the Python step take what they took (8.6 and 13.9 min); and the new job that runs every test with both steps, compared at every step, 9.2.
+
+## 19. The 5.5 W motor (phase 17)
+VEX makes two V5 Smart Motors: the 11 W one vexsim has simulated from the start, and the 5.5 W one (276-4842), smaller, with half the power and a fixed 200 rpm output, which teams mix into drives and use for light mechanisms. 1239E's six-bar robot has two on its drive, simulated as 11 W ones until now. This phase adds it: its model, what robot code sees of it, and where the configs and the app name it.
+
+**What the research found** (2026-11-25). VEX's own pages, the forum and the PROS documentation are outside this environment's network, so they were read through web search; VEX's two graphs through the Purdue SIGBots wiki's copy of them (its source is on GitHub), and the software from the PROS kernel's and vexide's source:
+
+| | 11 W | 5.5 W |
+|---|---|---|
+| Output | 100, 200 or 600 rpm, by cartridge | 200 rpm, fixed: it takes no cartridges |
+| Encoder | 1800, 900 or 300 ticks a turn | 900, as the green cartridge |
+| Power | 11 W continuous; VEX's curve peaks at 11.4 W | 5.5 W continuous; VEX's curve peaks at 6 W near 130 rpm; measured, 5.0 W |
+| Torque | 2.1 N·m at stall (red), at the current limit | 0.5 N·m. VEX's curve: 0.52, flat to 106 rpm, then straight down to 0.2 at 200 rpm (the forum's measurer calls it idealized); measured, 0.47 at most |
+| Current | limited to 2.5 A | the same 2.5 A: "the brain sees no difference" (James Pearman, VEX, 2021) |
+| Voltage | the battery's | limited to about 8 V: it was made for VEX EXP's 7.2 V battery, and any command from 8 to 12 V gives the same free speed (VEX staff on the forum; vexide's `EXP_MAX_VOLTAGE = 8.0`) |
+| Free speed | the motor holds velocity commands to rated speed; voltage commands run over it | the same; voltage commands reach about 150% of rated (measured, 2025), and the measured power peaks near 190 rpm, not VEX's 125 |
+| The brain | shares the battery's current among more than 8 motors | VEXos 1.1.3 counts a 5.5 W motor as half an 11 W one in that |
+| Software | `motor_get_type()` gives `E_MOTOR_TYPE_V5` (0) | `E_MOTOR_TYPE_EXP` (1), from VEXos 1.1.3; green only (code declares it green; vexide refuses another gearing and reports green) |
+| Size | 155 g | 114 g |
+| Rules | V5RC 2026-27 R10: all the motors' power together at most 88 W, unplugged ones included | |
+
+Sources: VEX's knowledge base ("Understanding V5 Smart Motor (5.5W) Performance", "Understanding V5 Smart Motors") and product page (276-4842); the SIGBots wiki's motors page; the VEX Forum ("First look at VEX 5.5W V5 Smart Motors", "11w/5.5w V5 Motor Torque-Speed Curves - Based on Real World Data!", "Testing v5 motor performance", "Defining PROS small motor", "VEXos Version 1.1.3 for V5 issues"); PROS's `motors.h` and `vdml_motors.c`; vexide's `motor.rs`; the 2026-27 game manual's R10.
+
+**The model** (decided 2026-11-25):
+- The 11 W motor's model (a DC motor's line, the motor's own control loops, the current limit, its heat) with the 5.5 W motor's numbers, fitted to the measurements where there are any and to VEX's curve where not. Its line at full drive (8 V): 300 rpm free (150% of rated, measured) and 0.637 N·m at stall, so that it peaks at 5.0 W (measured), at 150 rpm; and a torque per amp that gives 0.47 N·m at the 2.5 A limit (measured). At 200 rpm that leaves 0.21 N·m, against VEX's 0.2.
+- Not matched: the measured peak near 190 rpm. A DC motor's line peaks at half its free speed, and vexsim's model doesn't bend it; between 150 and 200 rpm the line is within a tenth of the measured power.
+- Its drive is limited to 8 V, whatever the battery, in every mode. Commands still run to ±12 V (PROS's range), so from 8 to 12 V they give the same.
+- Free current, the friction's split and the control loops' tuning as the 11 W motor's (nothing measured); its rotor's inertia half the 11 W motor's (a smaller motor; an estimate). Its heat: nothing published, so the 11 W motor's heat capacities scaled by weight (114/155), and its heat paths by its smaller surface (×1.23): estimates.
+- `motor_5_5w.*` and `thermal_5_5w.*` override them, as `motor.*` and `thermal.*` do the 11 W motor's.
+
+**Configs** (decided 2026-11-25):
+- `cartridge: 5.5w` makes every motor of a drive group or a mechanism a 5.5 W motor, geared by `ratio` from its 200 rpm.
+- A group or mechanism of 11 W motors names the 5.5 W ones among its `motors` in `motors_5_5w`. They're geared to turn it as fast at their 200 rpm as its cartridge's motors turn it at theirs: in a blue 36:48 drive, 2.25:1 up, to the same 450 rpm. That's how a team gears them so they don't fight; a config can't say any other gearing.
+- The motor budget check (now the drive's motors, at 11 W each, against 88 W) counts each motor by its power.
+
+**What robot code sees** (decided 2026-11-25):
+- `motor_get_type()` and `get_type()` give `E_MOTOR_TYPE_EXP` (`MotorType::exp`) for a 5.5 W motor and `V5` for an 11 W one; the Python API's `get_type()` gives `"exp"` or `"v5"`.
+- A 5.5 W motor is green, and stays green: `set_gearing()` to another succeeds and changes nothing, and vexsim says so once; it reports green, in green's units.
+- In the brain's sharing of current among more than 8 motors, a 5.5 W motor counts as half.
+
+**17.1 The model and the configs**
+- `MotorSpec` for the 5.5 W motor, the 8 V drive limit, each motor's gearing within its group or mechanism (a third for a 5.5 W motor in a blue group), the configs' `5.5w` and `motors_5_5w`, the overrides, the brain's sharing, the compiled step with all of it, `vexsim motor-curves --cartridge 5.5w`, docs/models.md.
+- Done when: on vexsim's dynamometer the 5.5 W motor gives 0.47 N·m at stall and 2.5 A, 5.0 W at its peak, 200 rpm under a velocity command with 0.21 N·m there, and 300 rpm free from a 12 V command as from an 8 V one; a mixed drive's 5.5 W motors turn at the speed their gearing says and share the load by their lines; the two physics steps agree on robots with 5.5 W motors to phase 16's tolerance; and every existing test passes unchanged, no number of a robot without a 5.5 W motor changing.
+
+**17.2 Robot code and the app**
+- The C++ shim (the type, the fixed gearing and its warning), the Python API's `get_type()`, the Design view (5.5 W as a cartridge choice, and a mixed group's 5.5 W ports), the editor, the Analyze page's curves, the config summary, the motor budget; the built page.
+- Done when: a PROS program reads `E_MOTOR_TYPE_EXP` for a 5.5 W port and `E_MOTOR_TYPE_V5` for the others; `set_gearing(blue)` on it changes nothing and says so; `move_voltage(12000)` and `(8000)` turn it at the same speed; a robot with 5.5 W motors is made and driven from the Design view; the Analyze page draws the 5.5 W motor's curves.
+
+**17.3 The six-bar robot, and calibrating with 5.5 W motors**
+- 1239E's six-bar robot gets its 5.5 W drive motors (13 and 10); its sweep runs again and its README's numbers are the new ones.
+- A calibration session's free spin fits the 11 W motors without the 5.5 W ones, whose own numbers stay the model's; a drive of 5.5 W motors only fits theirs (`motor_5_5w.*`).
+- Done when: its routines run with them; its README's table is the new sweep's; the free spin of a simulated robot with both kinds recovers the 11 W motors' hidden changes as before.
